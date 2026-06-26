@@ -69,7 +69,7 @@
   - Whisper
   - OCR native
   - stable-diffusion.cpp
-  - Qwen TTS
+  - llama.cpp TTS / GGUF TTS
 - 必须保持 ggml 相关 native 资产的隔离与可诊断加载。
 - 不把 DeepSeek 本地 GGUF 写入默认 catalog 或默认配置。
 - 不重新引入 Kokoro 作为默认 TTS 路线。

@@ -10,8 +10,11 @@ native/
   llama.native/
   whisper.cpp/
   whisper.native/
+  paddleocr/
+  ocr.native/
   stable-diffusion.cpp/
   stable-diffusion.native/
+  tts.native/
   runtimes/
     win-x64/
       native/
@@ -20,6 +23,10 @@ native/
 ```
 
 `*.cpp/` 目录用于上游 backend 源码或子模块，`*.native/` 目录用于 Tomur 自己的 CMake、编译选项、清单和发布打包边界。
+
+OCR 主线固定为 PaddleOCR C++ runtime；R3 不设计第二 OCR runtime。
+
+TTS 主线固定为 llama.cpp TTS / GGUF TTS runtime，并作为 R3 已敲定方向。
 
 ## 单文件发布策略
 
@@ -43,3 +50,7 @@ Tomur 运行时应对这些文件做版本、checksum、存在性和加载探测
 `whisper.native` 的消费者运行时位于 `runtimes/<rid>/native/whisper/<backend>/`，并从同一 runtime 根目录解析共享 `ggml`。
 
 `stable-diffusion.native` 的消费者运行时位于 `runtimes/<rid>/native/stable-diffusion/<backend>/`，并从同一 runtime 根目录解析共享 `ggml`。
+
+`ocr.native` 的消费者运行时位于 `runtimes/<rid>/native/ocr/<backend>/`。PaddleOCR 自身依赖按 backend 隔离，不向顶层发布 `ggml*`。
+
+`tts.native` 的消费者运行时位于 `runtimes/<rid>/native/tts/<backend>/`，并从同一 runtime 根目录解析 `llama.native` 发布的共享 `llama` / `ggml`。
