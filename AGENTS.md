@@ -32,6 +32,13 @@
 - 默认本地状态使用文件系统与 SQLite-first 设计。
 - 用户面对的是 Tomur 本地程序，不要求理解底层 native backend、模型目录实现或内部适配层。
 
+## 命名约束
+
+- 不把项目名作为普通文件名、类名、record 名、接口名或枚举名的前缀。
+- 避免把产品名直接拼到 `Configuration`、`RuntimeStatus`、`ApiKeyStore` 等语义名之前；优先使用 `LocalConfiguration`、`RuntimeStatusResponse`、`ApiKeyStore` 这类上下文明确的名称。
+- 项目文件、命名空间、产品名、服务名、公开命令和文档中必要的产品称呼不受此约束影响。
+- 新增代码前应检查同目录既有命名风格，保持名称短、明确，并避免重复表达所在项目或文件夹上下文。
+
 ## API 优先级
 
 - 第一阶段先实现 API 级访问能力。

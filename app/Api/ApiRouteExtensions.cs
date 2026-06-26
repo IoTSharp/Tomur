@@ -22,6 +22,12 @@ public static class ApiRouteExtensions
             await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.VersionResponse);
         });
 
+        app.MapGet("/api/runtime/status", static async (HttpContext context, RuntimeDiagnosticsProvider diagnosticsProvider) =>
+        {
+            var response = diagnosticsProvider.GetRuntimeStatus();
+            await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.RuntimeStatusResponse);
+        });
+
         app.MapGet("/v1/models", static async (HttpContext context) =>
         {
             var response = new OpenAiModelListResponse(Array.Empty<OpenAiModelResponse>());
@@ -39,6 +45,7 @@ public static class ApiRouteExtensions
                 [
                     "/health",
                     "/api/version",
+                    "/api/runtime/status",
                     "/v1/models",
                     "/v1/chat/completions",
                     "/api/chat"
