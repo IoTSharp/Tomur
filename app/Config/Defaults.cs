@@ -5,6 +5,9 @@ namespace Tomur.Config;
 public static class Defaults
 {
     public const string ProductName = "Tomur";
+    public const string WindowsServiceName = "Tomur";
+    public const string LinuxServiceName = "tomur.service";
+    public const string MacLaunchAgentLabel = "dev.tomur.service";
     public const string DefaultHttpUrl = "http://127.0.0.1:5137";
     public const string DataDirectoryEnvironmentVariable = "TOMUR_DATA_DIR";
     public const int ConfigurationSchemaVersion = 1;
@@ -15,6 +18,8 @@ public static class Defaults
     public const string ModelsDirectoryName = "models";
     public const string LogsDirectoryName = "logs";
     public const string DatabaseFileName = "tomur.db";
+    public const string ModelInstallManifestFileName = "models.manifest.json";
+    public const string DownloadCacheDirectoryName = "_downloads";
 
     public static string Version { get; } = ResolveVersion();
 
@@ -26,7 +31,7 @@ public static class Defaults
             ?.InformationalVersion;
 
         return string.IsNullOrWhiteSpace(informationalVersion)
-            ? "0.4.0-r4"
+            ? "0.5.0-r5"
             : informationalVersion;
     }
 }

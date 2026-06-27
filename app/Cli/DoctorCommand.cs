@@ -1,0 +1,93 @@
+using Tomur.Config;
+using Tomur.Native;
+using Tomur.Runtime;
+
+namespace Tomur.Cli;
+
+internal static class DoctorCommand
+{
+    public static int Run(string[] args)
+    {
+        if (CommandLineHelpers.HasHelp(args))
+        {
+            WriteHelp();
+            return 0;
+        }
+
+        if (!PathOptions.TryFromArgs(args, out var pathOptions, out var pathError))
+        {
+            Console.Error.WriteLine(pathError);
+            return 1;
+        }
+
+        var paths = new DataPaths(pathOptions);
+        var diagnostics = new RuntimeDiagnosticsProvider(
+            new ConfigurationStore(paths),
+            paths,
+            new NativeBundleProbe(paths)).GetDoctorReport();
+
+        Console.WriteLine($"{Defaults.ProductName} doctor");
+        Console.WriteLine($"  Version: {diagnostics.Version}");
+        Console.WriteLine($"  Status: {diagnostics.Status}");
+        Console.WriteLine($"  OS: {diagnostics.OSDescription}");
+        Console.WriteLine($"  Architecture: {diagnostics.ProcessArchitecture}");
+        Console.WriteLine($"  Framework: {diagnostics.FrameworkDescription}");
+        Console.WriteLine($"  CPU: {diagnostics.Details.System.ProcessorCount} logical processors");
+        if (!string.IsNullOrWhiteSpace(diagnostics.Details.System.CpuName))
+        {
+            Console.WriteLine($"  CPU name: {diagnostics.Details.System.CpuName}");
+        }
+
+        if (diagnostics.Details.System.TotalMemoryBytes is not null)
+        {
+            Console.WriteLine($"  Memory: {CommandLineHelpers.FormatBytes((long)diagnostics.Details.System.TotalMemoryBytes.Value)}");
+        }
+
+        Console.WriteLine($"  Data directory: {diagnostics.Details.Paths.DataDirectory}");
+        Console.WriteLine($"  Config file: {diagnostics.Details.Configuration.Path}");
+        Console.WriteLine($"  Database: {diagnostics.Details.Database.Path}");
+        Console.WriteLine($"  Runtime directory: {diagnostics.Details.Paths.RuntimeDirectory}");
+        Console.WriteLine($"  Models directory: {diagnostics.Details.Paths.ModelsDirectory}");
+        Console.WriteLine($"  Logs directory: {diagnostics.Details.Paths.LogsDirectory}");
+        Console.WriteLine($"  Disk free: {CommandLineHelpers.FormatNullableBytes(diagnostics.Details.Disk.AvailableBytes)}");
+        Console.WriteLine($"  Proxy: {diagnostics.Details.Proxy.Status}");
+        Console.WriteLine($"  Port: {diagnostics.Details.Port.Status} ({diagnostics.Details.Port.Url})");
+        Console.WriteLine($"  API keys: {diagnostics.Details.ApiKeys.Status} ({diagnostics.Details.ApiKeys.ActiveKeyCount} active)");
+        Console.WriteLine($"  Native bundle: {diagnostics.NativeBundle.Status} ({diagnostics.NativeBundle.Rid})");
+        Console.WriteLine($"  Runtime: {diagnostics.Runtime.Status} / {diagnostics.Runtime.Code}");
+        Console.WriteLine();
+        Console.WriteLine("Diagnostics:");
+
+        foreach (var item in diagnostics.Diagnostics)
+        {
+            Console.WriteLine($"  [{item.Severity}] {item.Name}: {item.Message}");
+            if (!string.IsNullOrWhiteSpace(item.Value))
+            {
+                Console.WriteLine($"      Value: {item.Value}");
+            }
+
+            foreach (var action in item.Actions)
+            {
+                Console.WriteLine($"      Action: {action}");
+            }
+        }
+
+        return 0;
+    }
+
+    private static void WriteHelp()
+    {
+        Console.WriteLine($"""
+{Defaults.ProductName} doctor
+
+Usage:
+  tomur doctor [--data-dir <path>]
+
+Options:
+  --data-dir      Override the local data directory for this process.
+
+Prints local OS, data directory, SQLite, API key, port and runtime diagnostics.
+Run `tomur native prepare` to extract or repair native runtime files.
+""");
+    }
+}

@@ -49,9 +49,10 @@ public sealed class RuntimeDiagnosticsProvider
             "The requested model is not available in the local models directory.",
             string.IsNullOrWhiteSpace(model) ? null : model,
             [
-                "Place a supported model file under the Tomur models directory.",
+                "Run tomur pull recommended to install the default local model package set.",
+                "Place a supported model file under the Tomur models directory if you are importing manually.",
                 "Use /v1/models or /api/tags to inspect models currently visible to Tomur.",
-                "Model catalog and download automation are planned for R6."
+                "Use tomur list --catalog to inspect package ids."
             ]);
     }
 

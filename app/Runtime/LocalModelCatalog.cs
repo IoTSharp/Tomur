@@ -1,4 +1,5 @@
 using Tomur.Config;
+using Tomur.Models;
 
 namespace Tomur.Runtime;
 
@@ -14,6 +15,7 @@ public sealed class LocalModelCatalog
     };
 
     private readonly DataPaths paths;
+    private readonly ModelCatalog packageCatalog = new();
 
     public LocalModelCatalog(DataPaths paths)
     {
@@ -27,7 +29,20 @@ public sealed class LocalModelCatalog
             return [];
         }
 
+        var manifest = new InstallManifestStore(paths).Read();
+        var manifestAssetPaths = manifest.Packages
+            .SelectMany(static package => package.Assets.Select(static asset => asset.Path))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
         var descriptors = new List<LocalModelDescriptor>();
+        foreach (var package in manifest.Packages)
+        {
+            var descriptor = TryCreateManifestDescriptor(package);
+            if (descriptor is not null)
+            {
+                descriptors.Add(descriptor);
+            }
+        }
 
         foreach (var file in Directory.EnumerateFiles(paths.ModelsDirectory, "*", SearchOption.AllDirectories))
         {
@@ -37,10 +52,19 @@ public sealed class LocalModelCatalog
                 continue;
             }
 
+            var relativePath = BuildRelativePath(file);
+            if (manifestAssetPaths.Contains(relativePath) ||
+                relativePath.StartsWith($"{Defaults.DownloadCacheDirectoryName}/", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
             descriptors.Add(CreateDescriptor(file));
         }
 
         return descriptors
+            .GroupBy(static descriptor => descriptor.AbsolutePath, StringComparer.OrdinalIgnoreCase)
+            .Select(static group => group.First())
             .OrderBy(static descriptor => descriptor.Id, StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
@@ -55,14 +79,55 @@ public sealed class LocalModelCatalog
         var requested = NormalizeModelId(model);
         return ListModels().FirstOrDefault(descriptor =>
             string.Equals(descriptor.Id, requested, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(descriptor.PackageId, requested, StringComparison.OrdinalIgnoreCase) ||
             string.Equals(descriptor.Name, requested, StringComparison.OrdinalIgnoreCase) ||
             string.Equals(descriptor.FileName, requested, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private LocalModelDescriptor? TryCreateManifestDescriptor(InstalledModelPackage installedPackage)
+    {
+        if (!string.Equals(installedPackage.Status, "installed", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var package = packageCatalog.Find(installedPackage.Id);
+        var primaryPath = ResolveModelPath(installedPackage.PrimaryPath);
+        var info = new FileInfo(primaryPath);
+        if (!info.Exists)
+        {
+            return null;
+        }
+
+        var format = package?.Format ?? ResolveFormat(info.Extension);
+        var family = package?.Family ?? ResolveFamily(installedPackage.PrimaryPath, format);
+        var quantization = package?.Quantization ?? ResolveQuantizationLevel(info.Name);
+        var primaryAsset = installedPackage.Assets.FirstOrDefault(asset =>
+            string.Equals(asset.Path, installedPackage.PrimaryPath, StringComparison.OrdinalIgnoreCase));
+
+        return new LocalModelDescriptor(
+            installedPackage.ModelKey,
+            installedPackage.DisplayName,
+            Path.GetFileName(primaryPath),
+            BuildRelativePath(primaryPath),
+            info.FullName,
+            info.Length,
+            info.LastWriteTimeUtc,
+            format,
+            family,
+            string.IsNullOrWhiteSpace(quantization) ? "unknown" : quantization,
+            ResolveCapabilities(package?.Task, family),
+            installedPackage.Id,
+            installedPackage.Status,
+            installedPackage.License,
+            installedPackage.LicenseNotice,
+            primaryAsset?.Sha256Verified == true);
     }
 
     private LocalModelDescriptor CreateDescriptor(string file)
     {
         var info = new FileInfo(file);
-        var relativePath = Path.GetRelativePath(paths.ModelsDirectory, file).Replace('\\', '/');
+        var relativePath = BuildRelativePath(file);
         var id = NormalizeModelId(Path.ChangeExtension(relativePath, null) ?? relativePath);
         var name = Path.GetFileNameWithoutExtension(file);
         var format = ResolveFormat(info.Extension);
@@ -79,7 +144,18 @@ public sealed class LocalModelCatalog
             format,
             family,
             ResolveQuantizationLevel(name),
-            ResolveCapabilities(family));
+            ResolveCapabilities(null, family));
+    }
+
+    private string ResolveModelPath(string relativePath)
+    {
+        var normalizedPath = relativePath.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
+        return Path.GetFullPath(Path.Combine(paths.ModelsDirectory, normalizedPath));
+    }
+
+    private string BuildRelativePath(string file)
+    {
+        return Path.GetRelativePath(paths.ModelsDirectory, file).Replace('\\', '/');
     }
 
     private static string NormalizeModelId(string value)
@@ -157,8 +233,24 @@ public sealed class LocalModelCatalog
         return "unknown";
     }
 
-    private static IReadOnlyList<string> ResolveCapabilities(string family)
+    private static IReadOnlyList<string> ResolveCapabilities(string? task, string family)
     {
+        if (!string.IsNullOrWhiteSpace(task))
+        {
+            return task switch
+            {
+                "chat" => ["completion", "chat"],
+                "translation" => ["completion", "chat", "translation"],
+                "embeddings" => ["embedding"],
+                "reranking" => ["rerank"],
+                "transcription" => ["audio"],
+                "speech" => ["audio-output"],
+                "vision" => ["completion", "chat", "vision"],
+                "image-generation" => ["image"],
+                _ => []
+            };
+        }
+
         return family switch
         {
             "embedding" => ["embedding"],
@@ -182,4 +274,9 @@ public sealed record LocalModelDescriptor(
     string Format,
     string Family,
     string QuantizationLevel,
-    IReadOnlyList<string> Capabilities);
+    IReadOnlyList<string> Capabilities,
+    string? PackageId = null,
+    string? Status = null,
+    string? License = null,
+    string? LicenseNotice = null,
+    bool IsVerified = false);

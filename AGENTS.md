@@ -27,6 +27,7 @@
 
 - 首批实现只建立一个 C# 项目：`Tomur.csproj`。
 - `Tomur.csproj` 承载 CLI、本地 HTTP API、服务模式启动、native runtime 管理和 Web 静态资源托管。
+- `Program.cs` 必须承担进程入口、顶层命令分发和全局帮助；CLI 具体实现按类别放在 `app/Cli/`。
 - 在 API、native runtime、AOT 与发布流程稳定前，不拆分多个 C# 项目。
 - 不直接依赖外部服务器项目，不引入 PostgreSQL、RBAC、SSO、复杂审计、多租户治理或后台管理壳作为默认能力。
 - 默认本地状态使用文件系统与 SQLite-first 设计。
@@ -51,6 +52,15 @@
 - OpenAI / Ollama 兼容 API 是核心能力。
 - 未接通本地 runtime 时，API 必须返回清晰的未配置或不可用诊断，不得伪造推理结果。
 - Streaming、错误响应、模型未下载、runtime 不可用、上下文超限等协议行为必须明确设计。
+
+## 模型 Catalog 与下载
+
+- `tomur pull`、`tomur list` 和 `tomur ps` 属于 Tomur 单体公开命令。
+- 模型下载必须写入 Tomur 数据目录下的模型目录，并记录安装清单；不得把模型权重打包进程序二进制。
+- 下载必须支持断点续传、checksum 校验、proxy 配置、license 提示和硬件档位推荐。
+- `GET /api/models/catalog` 与 `GET /api/models/installed` 是本地模型资产管理 API；`/v1/models` 与 `/api/tags` 只暴露本地可见模型资产。
+- 校验失败或 bundle 必需资产缺失时，不得把模型标记为可用。
+- R6 只代表模型资产准备与可见性管理，不代表 R7/R8 推理能力已经完成。
 
 ## 运行时与发布
 
@@ -93,13 +103,16 @@
 - Tomur 必须支持交互式 CLI、本地 HTTP 服务和系统服务形态。
 - Windows 服务名保持为 `Tomur`。
 - Linux unit 名保持为 `tomur.service`。
+- macOS 使用 launchd user agent，label 保持为 `dev.tomur.service`。
 - 服务模式与 `tomur serve` 使用同一套 host 逻辑。
 - 服务安装、卸载、启动、停止和状态查询必须通过 C# CLI 实现，不新增 PowerShell、Python 或 shell 脚本作为主流程。
+- 无参数启动与 `tomur open` 是 Tomur 单体的双击启动路径；原生托盘图标必须在 Tomur 自身外壳中实现，不接线外部旧桌面项目。
 
 ## 本地目录约定
 
 - Windows 数据目录：`%LOCALAPPDATA%\Tomur`
 - Linux 数据目录：`~/.local/share/tomur`
+- macOS 数据目录：`~/Library/Application Support/Tomur`
 - runtime 缓存：`<data>/runtime`
 - 模型目录：`<data>/models`
 - SQLite 数据库：`<data>/tomur.db`

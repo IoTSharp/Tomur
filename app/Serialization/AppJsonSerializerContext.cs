@@ -1,10 +1,12 @@
 using System.Text.Json.Serialization;
 using Tomur.Api;
+using Tomur.Api.Models;
 using Tomur.Api.OpenAI;
 using Tomur.Api.Ollama;
 using Tomur.Config;
 using Tomur.Native;
 using Tomur.Runtime;
+using Tomur.Models;
 using Tomur.Services;
 using Tomur.Storage;
 
@@ -32,6 +34,19 @@ namespace Tomur.Serialization;
 [JsonSerializable(typeof(OllamaShowResponse))]
 [JsonSerializable(typeof(OllamaModelInfo))]
 [JsonSerializable(typeof(OllamaErrorResponse))]
+[JsonSerializable(typeof(ModelCatalogResponse))]
+[JsonSerializable(typeof(ModelHardwareProfileResponse))]
+[JsonSerializable(typeof(ModelCatalogPackageResponse))]
+[JsonSerializable(typeof(ModelCatalogAssetResponse))]
+[JsonSerializable(typeof(ModelCatalogBundleAssetResponse))]
+[JsonSerializable(typeof(InstalledModelsResponse))]
+[JsonSerializable(typeof(InstalledModelPackageResponse))]
+[JsonSerializable(typeof(InstalledModelAssetResponse))]
+[JsonSerializable(typeof(VisibleModelResponse))]
+[JsonSerializable(typeof(InstallManifest))]
+[JsonSerializable(typeof(InstalledModelPackage))]
+[JsonSerializable(typeof(InstalledModelAsset))]
+[JsonSerializable(typeof(ModelBundleAsset))]
 [JsonSerializable(typeof(LocalConfiguration))]
 [JsonSerializable(typeof(ServerConfiguration))]
 [JsonSerializable(typeof(PathConfiguration))]

@@ -78,6 +78,11 @@ public sealed class DataPaths
         }
 
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX) && !string.IsNullOrWhiteSpace(home))
+        {
+            return Path.Combine(home, "Library", "Application Support", Defaults.ProductName);
+        }
+
         if (!string.IsNullOrWhiteSpace(home))
         {
             return Path.Combine(home, ".local", "share", "tomur");

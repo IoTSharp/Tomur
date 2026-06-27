@@ -2,9 +2,11 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Tomur.Api.Models;
 using Tomur.Api.Ollama;
 using Tomur.Api.OpenAI;
 using Tomur.Config;
+using Tomur.Models;
 using Tomur.Native;
 using Tomur.Runtime;
 using Tomur.Serialization;
@@ -34,6 +36,18 @@ public static class ApiRouteExtensions
         {
             var response = diagnosticsProvider.GetRuntimeStatus().NativeBundle;
             await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.NativeBundleProbeResult);
+        });
+
+        app.MapGet("/api/models/catalog", static async (HttpContext context, DataPaths paths) =>
+        {
+            var response = CreateModelCatalogResponse(paths);
+            await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.ModelCatalogResponse);
+        });
+
+        app.MapGet("/api/models/installed", static async (HttpContext context, DataPaths paths, LocalModelCatalog localModelCatalog) =>
+        {
+            var response = CreateInstalledModelsResponse(paths, localModelCatalog);
+            await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.InstalledModelsResponse);
         });
 
         app.MapPost("/api/runtime/native/prepare", static async (
@@ -108,6 +122,8 @@ public static class ApiRouteExtensions
                     "/api/version",
                     "/api/runtime/status",
                     "/api/runtime/native",
+                    "/api/models/catalog",
+                    "/api/models/installed",
                     "POST /api/runtime/native/prepare",
                     "/api/runtime/native/{componentId}/{libraryName}",
                     "POST /api/runtime/native/{componentId}/{libraryName}/load",
@@ -138,6 +154,109 @@ public static class ApiRouteExtensions
 
         var response = new OpenAiModelListResponse(models);
         await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.OpenAiModelListResponse);
+    }
+
+    private static ModelCatalogResponse CreateModelCatalogResponse(DataPaths paths)
+    {
+        var hardware = HardwareProfile.Detect();
+        var catalog = new ModelCatalog();
+        var manifest = new InstallManifestStore(paths).Read();
+        var packages = catalog.GetAll()
+            .Select(package =>
+            {
+                var installed = manifest.Packages.FirstOrDefault(item => string.Equals(item.Id, package.Id, StringComparison.OrdinalIgnoreCase));
+                return new ModelCatalogPackageResponse(
+                    package.Id,
+                    package.ModelKey,
+                    package.DisplayName,
+                    package.Description,
+                    package.Segment,
+                    package.Task,
+                    package.Runtime,
+                    package.Family,
+                    package.Format,
+                    package.Quantization,
+                    package.License,
+                    package.SizeBytes,
+                    package.ParameterCount,
+                    package.PrimaryFileName,
+                    package.Recommended,
+                    package.Optional,
+                    package.Research,
+                    installed is not null,
+                    installed?.Status ?? "not-installed",
+                    package.MinimumMemoryBytes,
+                    package.HardwareTier,
+                    package.LicenseNotice,
+                    package.Tags,
+                    package.Assets.Select(static asset => new ModelCatalogAssetResponse(
+                        asset.RepositoryId,
+                        asset.RelativePath,
+                        asset.TargetRelativePath,
+                        asset.ExpectedSha256,
+                        asset.SourceKind.ToString())).ToArray(),
+                    package.BundleAssets.Select(static asset => new ModelCatalogBundleAssetResponse(
+                        asset.AssetKey,
+                        asset.Role,
+                        asset.IsRequired,
+                        asset.RelativePath,
+                        asset.FileName,
+                        asset.Format,
+                        asset.Quantization,
+                        asset.License,
+                        asset.SizeBytes,
+                        asset.ExpectedSha256,
+                        asset.Description)).ToArray());
+            })
+            .ToArray();
+
+        return new ModelCatalogResponse(
+            new ModelHardwareProfileResponse(
+                hardware.OSDescription,
+                hardware.ProcessArchitecture,
+                hardware.ProcessorCount,
+                hardware.TotalMemoryBytes,
+                hardware.Tier,
+                hardware.Recommendations),
+            packages);
+    }
+
+    private static InstalledModelsResponse CreateInstalledModelsResponse(DataPaths paths, LocalModelCatalog localModelCatalog)
+    {
+        var manifest = new InstallManifestStore(paths).Read();
+        return new InstalledModelsResponse(
+            paths.ModelsDirectory,
+            manifest.Packages.Select(static package => new InstalledModelPackageResponse(
+                package.Id,
+                package.ModelKey,
+                package.DisplayName,
+                package.Segment,
+                package.Directory,
+                package.PrimaryPath,
+                package.Status,
+                package.License,
+                package.LicenseNotice,
+                package.InstalledAtUtc,
+                package.UpdatedAtUtc,
+                package.Assets.Select(static asset => new InstalledModelAssetResponse(
+                    asset.Path,
+                    asset.SourceRepositoryId,
+                    asset.SourceRelativePath,
+                    asset.ExpectedSha256,
+                    asset.ActualSha256,
+                    asset.Sha256Verified,
+                    asset.SizeBytes)).ToArray())).ToArray(),
+            localModelCatalog.ListModels().Select(static model => new VisibleModelResponse(
+                model.Id,
+                model.Name,
+                model.PackageId,
+                model.RelativePath,
+                model.SizeBytes,
+                model.Format,
+                model.Family,
+                model.QuantizationLevel,
+                model.Capabilities,
+                model.IsVerified)).ToArray());
     }
 
     private static async Task HandleOpenAiChatCompletionsAsync(
