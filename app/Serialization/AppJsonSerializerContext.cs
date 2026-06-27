@@ -38,6 +38,8 @@ namespace Tomur.Serialization;
 [JsonSerializable(typeof(NativeBundleProbeResult))]
 [JsonSerializable(typeof(NativeComponentProbeResult))]
 [JsonSerializable(typeof(NativeLibraryProbeResult))]
+[JsonSerializable(typeof(NativeBundlePrepareResult))]
+[JsonSerializable(typeof(NativeBundleFilePrepareResult))]
 [JsonSerializable(typeof(NativeLibraryResolution))]
 [JsonSerializable(typeof(NativeLibraryLoadResult))]
 [JsonSerializable(typeof(SystemSnapshot))]

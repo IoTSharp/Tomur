@@ -28,6 +28,15 @@ public sealed class NativeLibraryLoader(INativeLibraryResolver resolver) : INati
                 resolution.Message);
         }
 
+        if (resolution.ChecksumStatus == "mismatch")
+        {
+            return new NativeLibraryLoadResult(
+                resolution,
+                false,
+                null,
+                "Native library checksum mismatch; run tomur native prepare before loading.");
+        }
+
         RegisterSearchPath(resolution.RuntimeRoot);
         RegisterSearchPath(resolution.ComponentRuntimePath);
 

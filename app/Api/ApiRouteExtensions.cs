@@ -35,6 +35,22 @@ public static class ApiRouteExtensions
             await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.NativeBundleProbeResult);
         });
 
+        app.MapPost("/api/runtime/native/prepare", static async (
+            HttpContext context,
+            INativeBundlePreparer nativeBundlePreparer) =>
+        {
+            var response = nativeBundlePreparer.Prepare();
+            var statusCode = response.Status == "error"
+                ? StatusCodes.Status503ServiceUnavailable
+                : StatusCodes.Status200OK;
+
+            await JsonHttpResponse.WriteAsync(
+                context,
+                response,
+                AppJsonSerializerContext.Default.NativeBundlePrepareResult,
+                statusCode);
+        });
+
         app.MapGet("/api/runtime/native/{componentId}/{libraryName}", static async (
             HttpContext context,
             INativeLibraryResolver libraryResolver,
@@ -89,6 +105,7 @@ public static class ApiRouteExtensions
                     "/api/version",
                     "/api/runtime/status",
                     "/api/runtime/native",
+                    "POST /api/runtime/native/prepare",
                     "/api/runtime/native/{componentId}/{libraryName}",
                     "POST /api/runtime/native/{componentId}/{libraryName}/load",
                     "/v1/models",

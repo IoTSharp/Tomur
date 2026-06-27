@@ -7,10 +7,6 @@ namespace Tomur.Native;
 
 public sealed class NativeBundleProbe : INativeBundleProbe
 {
-    private static readonly string[] WindowsExtensions = [".dll"];
-    private static readonly string[] LinuxExtensions = [".so"];
-    private static readonly string[] MacExtensions = [".dylib"];
-
     private readonly DataPaths paths;
 
     public NativeBundleProbe(DataPaths paths)
@@ -25,17 +21,18 @@ public sealed class NativeBundleProbe : INativeBundleProbe
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(runtimeDirectory);
 
-        var manifestPath = ResolveManifestPath();
+        var manifestPath = NativeBundlePaths.ResolveManifestPath();
         if (manifestPath is null)
         {
             return new NativeBundleProbeResult(
                 "error",
                 DateTimeOffset.UtcNow,
-                ResolveRid(),
+                NativeBundlePaths.ResolveRid(),
                 string.Empty,
                 string.Empty,
                 string.Empty,
-                runtimeDirectory,
+                string.Empty,
+                Path.GetFullPath(runtimeDirectory),
                 Array.Empty<NativeComponentProbeResult>(),
                 "Native bundle manifest was not found.");
         }
@@ -60,17 +57,18 @@ public sealed class NativeBundleProbe : INativeBundleProbe
             return ManifestError(manifestPath, "Native bundle manifest is empty.");
         }
 
-        var rid = ResolveRid();
-        var runtimeRoot = Path.Combine(Path.GetFullPath(runtimeDirectory), "runtimes", rid, "native");
+        var rid = NativeBundlePaths.ResolveRid();
+        var sourceRuntimeRoot = NativeBundlePaths.ResolveSourceRuntimeRoot(manifestPath, manifest, rid);
+        var runtimeRoot = NativeBundlePaths.ResolveManagedRuntimeRoot(runtimeDirectory, manifest, rid);
         var components = manifest.Components
-            .Select(component => ProbeComponent(component, runtimeRoot))
+            .Select(component => ProbeComponent(component, sourceRuntimeRoot, runtimeRoot))
             .ToArray();
         var status = ResolveStatus(components);
         var message = status switch
         {
             "ok" => "All required native bundle libraries are present.",
-            "warning" => "Required native libraries are present, but optional native libraries are missing.",
-            _ => "One or more required native bundle libraries are missing."
+            "warning" => "Required native libraries are present, but optional native libraries are missing or unverified.",
+            _ => "One or more required native bundle libraries are missing or damaged."
         };
 
         return new NativeBundleProbeResult(
@@ -80,6 +78,7 @@ public sealed class NativeBundleProbe : INativeBundleProbe
             manifest.BundleId,
             manifest.Version,
             manifestPath,
+            sourceRuntimeRoot,
             runtimeRoot,
             components,
             message);
@@ -90,31 +89,38 @@ public sealed class NativeBundleProbe : INativeBundleProbe
         return new NativeBundleProbeResult(
             "error",
             DateTimeOffset.UtcNow,
-            ResolveRid(),
+            NativeBundlePaths.ResolveRid(),
             string.Empty,
             string.Empty,
             manifestPath,
+            string.Empty,
             paths.RuntimeDirectory,
             Array.Empty<NativeComponentProbeResult>(),
             message);
     }
 
-    private static NativeComponentProbeResult ProbeComponent(NativeBundleComponent component, string runtimeRoot)
+    private static NativeComponentProbeResult ProbeComponent(
+        NativeBundleComponent component,
+        string sourceRuntimeRoot,
+        string runtimeRoot)
     {
-        var componentRoot = component.RuntimePath == "."
-            ? runtimeRoot
-            : Path.Combine(runtimeRoot, component.RuntimePath.Replace('/', Path.DirectorySeparatorChar));
+        var sourceComponentRoot = NativeBundlePaths.ResolveComponentRoot(sourceRuntimeRoot, component);
+        var componentRoot = NativeBundlePaths.ResolveComponentRoot(runtimeRoot, component);
         var libraries = component.Libraries
-            .Select(library => ProbeLibrary(library, componentRoot))
+            .Select(library => ProbeLibrary(library, sourceComponentRoot, componentRoot))
             .ToArray();
-        var requiredMissing = libraries.Any(static library => library.Required && !library.Exists);
-        var optionalMissing = libraries.Any(static library => !library.Required && !library.Exists);
-        var status = requiredMissing ? "error" : optionalMissing ? "warning" : "ok";
+        var requiredProblem = libraries.Any(static library =>
+            library.Required && (!library.Exists || library.ChecksumStatus == "mismatch"));
+        var requiredUnverified = libraries.Any(static library =>
+            library.Required && library.Exists && library.ChecksumStatus == "unverified");
+        var optionalIssue = libraries.Any(static library =>
+            !library.Required && (!library.Exists || library.ChecksumStatus is "mismatch" or "unverified"));
+        var status = requiredProblem ? "error" : requiredUnverified || optionalIssue ? "warning" : "ok";
         var message = status switch
         {
             "ok" => "Required and optional native libraries are present.",
-            "warning" => "Required native libraries are present, but optional libraries are missing.",
-            _ => "A required native library is missing."
+            "warning" => "Required native libraries are present, but some libraries are optional or unverified.",
+            _ => "A required native library is missing or failed checksum verification."
         };
 
         return new NativeComponentProbeResult(
@@ -132,83 +138,49 @@ public sealed class NativeBundleProbe : INativeBundleProbe
             message);
     }
 
-    private static NativeLibraryProbeResult ProbeLibrary(NativeBundleLibrary library, string componentRoot)
+    private static NativeLibraryProbeResult ProbeLibrary(
+        NativeBundleLibrary library,
+        string sourceComponentRoot,
+        string componentRoot)
     {
-        var candidates = BuildLibraryCandidates(library.Name, componentRoot);
-        var path = candidates.FirstOrDefault(File.Exists)
-            ?? TryFindVersionedUnixLibrary(library.Name, componentRoot)
-            ?? candidates[0];
-        if (!File.Exists(path))
+        var sourcePath = NativeBundlePaths.ResolveLibraryPath(library.Name, sourceComponentRoot);
+        var expectedSha256 = library.Sha256;
+        if (string.IsNullOrWhiteSpace(expectedSha256) && File.Exists(sourcePath) && new FileInfo(sourcePath).Length > 0)
         {
-            return new NativeLibraryProbeResult(library.Name, library.Required, path, false, null, null);
+            expectedSha256 = ComputeSha256(sourcePath);
+        }
+
+        var path = NativeBundlePaths.ResolveLibraryPath(library.Name, componentRoot);
+        if (!File.Exists(path) || new FileInfo(path).Length == 0)
+        {
+            return new NativeLibraryProbeResult(
+                library.Name,
+                library.Required,
+                path,
+                false,
+                File.Exists(path) ? new FileInfo(path).Length : null,
+                null,
+                expectedSha256,
+                "missing");
         }
 
         var info = new FileInfo(path);
+        var sha256 = ComputeSha256(path);
+        var checksumStatus = string.IsNullOrWhiteSpace(expectedSha256)
+            ? "unverified"
+            : string.Equals(sha256, expectedSha256, StringComparison.OrdinalIgnoreCase)
+                ? "ok"
+                : "mismatch";
+
         return new NativeLibraryProbeResult(
             library.Name,
             library.Required,
             path,
             true,
             info.Length,
-            ComputeSha256(path));
-    }
-
-    private static string[] BuildLibraryCandidates(string libraryName, string directory)
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            return BuildLibraryCandidates(libraryName, directory, WindowsExtensions, prefix: string.Empty);
-        }
-
-        if (OperatingSystem.IsMacOS())
-        {
-            return BuildLibraryCandidates(libraryName, directory, MacExtensions, prefix: "lib");
-        }
-
-        return BuildLibraryCandidates(libraryName, directory, LinuxExtensions, prefix: "lib");
-    }
-
-    private static string[] BuildLibraryCandidates(
-        string libraryName,
-        string directory,
-        IReadOnlyList<string> extensions,
-        string prefix)
-    {
-        var names = new List<string>(extensions.Count * 2);
-        foreach (var extension in extensions)
-        {
-            names.Add(Path.Combine(directory, $"{prefix}{libraryName}{extension}"));
-            if (prefix.Length > 0 && libraryName.StartsWith(prefix, StringComparison.Ordinal))
-            {
-                names.Add(Path.Combine(directory, $"{libraryName}{extension}"));
-            }
-        }
-
-        return names.Distinct(StringComparer.Ordinal).ToArray();
-    }
-
-    private static string? TryFindVersionedUnixLibrary(string libraryName, string directory)
-    {
-        if (OperatingSystem.IsWindows() || !Directory.Exists(directory))
-        {
-            return null;
-        }
-
-        var prefix = "lib";
-        var extension = OperatingSystem.IsMacOS() ? ".dylib" : ".so";
-        var patterns = new[]
-        {
-            $"{prefix}{libraryName}{extension}.*",
-            libraryName.StartsWith(prefix, StringComparison.Ordinal)
-                ? $"{libraryName}{extension}.*"
-                : string.Empty
-        };
-
-        return patterns
-            .Where(static pattern => pattern.Length > 0)
-            .SelectMany(pattern => Directory.EnumerateFiles(directory, pattern, SearchOption.TopDirectoryOnly))
-            .Order(StringComparer.Ordinal)
-            .FirstOrDefault();
+            sha256,
+            expectedSha256,
+            checksumStatus);
     }
 
     private static string ComputeSha256(string path)
@@ -231,43 +203,5 @@ public sealed class NativeBundleProbe : INativeBundleProbe
         }
 
         return "ok";
-    }
-
-    private static string ResolveRid()
-    {
-        var architecture = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture switch
-        {
-            System.Runtime.InteropServices.Architecture.Arm64 => "arm64",
-            _ => "x64"
-        };
-
-        if (OperatingSystem.IsWindows())
-        {
-            return $"win-{architecture}";
-        }
-
-        if (OperatingSystem.IsMacOS())
-        {
-            return $"osx-{architecture}";
-        }
-
-        return $"linux-{architecture}";
-    }
-
-    private static string? ResolveManifestPath()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null)
-        {
-            var manifestPath = Path.Combine(current.FullName, "native", "bundle.manifest.json");
-            if (File.Exists(manifestPath))
-            {
-                return manifestPath;
-            }
-
-            current = current.Parent;
-        }
-
-        return null;
     }
 }

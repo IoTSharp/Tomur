@@ -36,6 +36,15 @@ public static class LocalApiHost
             return 1;
         }
 
+        paths = paths.WithConfiguration(configuration.Configuration);
+        var prepareResult = new NativeBundlePreparer(paths).Prepare();
+        if (prepareResult.Status == "error")
+        {
+            Console.Error.WriteLine("Native runtime bundle could not be prepared.");
+            Console.Error.WriteLine($"  {prepareResult.Message}");
+            return 1;
+        }
+
         var serviceUrls = ResolveServiceUrls(args, configuration.Configuration, out var urlError);
         if (!string.IsNullOrWhiteSpace(urlError))
         {
@@ -67,6 +76,7 @@ public static class LocalApiHost
         builder.Services.AddSingleton(serverOptions);
         builder.Services.AddSingleton(configurationStore);
         builder.Services.AddSingleton<INativeBundleProbe>(nativeBundleProbe);
+        builder.Services.AddSingleton<INativeBundlePreparer, NativeBundlePreparer>();
         builder.Services.AddSingleton<INativeLibraryResolver, NativeLibraryResolver>();
         builder.Services.AddSingleton<INativeLibraryLoader, NativeLibraryLoader>();
         builder.Services.AddSingleton<RuntimeDiagnosticsProvider>();

@@ -303,7 +303,7 @@ public sealed class RuntimeDiagnosticsProvider
             nativeBundle.Status == "error" ? "warning" : nativeBundle.Status == "warning" ? "warning" : "ok",
             nativeBundle.Message,
             nativeBundle.RuntimeRoot,
-            nativeBundle.Status == "ok" ? [] : ["Build or extract the R3 native bundle for this RID."]));
+            nativeBundle.Status == "ok" ? [] : ["Run tomur native prepare to extract or repair the versioned runtime bundle."]));
 
         diagnostics.Add(ToDiagnostic(
             "runtime",

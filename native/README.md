@@ -43,6 +43,14 @@ Tomur 的 RID 发布默认使用 `PublishSingleFile=true`、`SelfContained=true`
 
 Tomur 运行时应对这些文件做版本、checksum、存在性和加载探测诊断，而不是依赖临时自解压目录作为稳定 runtime 根目录。
 
+R3 当前使用发布包中的 `native/runtimes/<rid>/native` 作为 source bundle。首次 `tomur serve` 或显式 `tomur native prepare` 会把 source bundle 准备到版本化目录：
+
+```text
+<data>/runtime/<bundle-id>/<version>/runtimes/<rid>/native
+```
+
+如果目标文件缺失、陈旧或 checksum 不一致，prepare 会从 source bundle 复制或替换；`POST /api/runtime/native/prepare` 提供同一套修复动作给后续 Runtime UI 使用。
+
 ## ggml 隔离
 
 `llama.native` 是顶层 `runtimes/<rid>/native/ggml*` 的唯一发布者。

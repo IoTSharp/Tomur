@@ -27,6 +27,10 @@ public sealed class NativeLibraryResolver(INativeBundleProbe probe) : INativeLib
                 result.RuntimeRoot,
                 string.Empty,
                 false,
+                null,
+                null,
+                null,
+                "missing",
                 "missing",
                 $"Native component '{componentId}' is not declared in the bundle manifest.");
         }
@@ -39,10 +43,14 @@ public sealed class NativeLibraryResolver(INativeBundleProbe probe) : INativeLib
                 component.Id,
                 libraryName,
                 result.Rid,
-                component.RuntimePath,
+                string.Empty,
                 result.RuntimeRoot,
                 component.RuntimePath,
                 false,
+                null,
+                null,
+                null,
+                "missing",
                 component.Status,
                 $"Native library '{libraryName}' is not declared for component '{component.Id}'.");
         }
@@ -55,9 +63,15 @@ public sealed class NativeLibraryResolver(INativeBundleProbe probe) : INativeLib
             result.RuntimeRoot,
             component.RuntimePath,
             library.Exists,
+            library.SizeBytes,
+            library.Sha256,
+            library.ExpectedSha256,
+            library.ChecksumStatus,
             component.Status,
-            library.Exists
+            library.Exists && library.ChecksumStatus != "mismatch"
                 ? "Native library was resolved from the managed runtime directory."
-                : "Native library is declared but not present in the managed runtime directory.");
+                : library.ChecksumStatus == "mismatch"
+                    ? "Native library is present but failed checksum verification; run tomur native prepare."
+                    : "Native library is declared but not present in the managed runtime directory.");
     }
 }
