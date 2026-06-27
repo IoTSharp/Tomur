@@ -23,10 +23,18 @@ internal static class ServeCommand
         Console.WriteLine($"{Defaults.ProductName} {Defaults.Version}");
         Console.WriteLine("Starting local API and opening the workspace...");
         Console.WriteLine();
-        return await RunAsync(args, configureServiceLifetime: false, openBrowser: true);
+        return await RunAsync(
+            args,
+            configureServiceLifetime: false,
+            openBrowser: true,
+            useTray: OperatingSystem.IsWindows() && !CommandLineHelpers.HasFlag(args, "--no-tray"));
     }
 
-    public static async Task<int> RunAsync(string[] args, bool configureServiceLifetime, bool openBrowser)
+    public static async Task<int> RunAsync(
+        string[] args,
+        bool configureServiceLifetime,
+        bool openBrowser,
+        bool useTray = false)
     {
         if (CommandLineHelpers.HasHelp(args))
         {
@@ -41,14 +49,36 @@ internal static class ServeCommand
         }
 
         var app = BuildApp(args, state, configureServiceLifetime);
+        TrayApplication? tray = null;
+        var serviceUrl = ResolveFirstUrl(state.ServerOptions.Urls);
         if (openBrowser)
         {
-            var url = ResolveFirstUrl(state.ServerOptions.Urls);
-            app.Lifetime.ApplicationStarted.Register(() => OpenBrowser(url));
+            app.Lifetime.ApplicationStarted.Register(() => OpenBrowser(serviceUrl));
         }
 
-        await app.RunAsync();
-        return 0;
+        if (useTray)
+        {
+            app.Lifetime.ApplicationStarted.Register(() =>
+            {
+                tray = TrayApplication.TryStart(serviceUrl, () => _ = app.StopAsync());
+                if (tray is not null)
+                {
+                    ConsoleWindow.HideIfOwnedByCurrentProcess();
+                }
+            });
+
+            app.Lifetime.ApplicationStopped.Register(() => tray?.Dispose());
+        }
+
+        try
+        {
+            await app.RunAsync();
+            return 0;
+        }
+        finally
+        {
+            tray?.Dispose();
+        }
     }
 
     public static string ResolveServiceUrls(string[] args, LocalConfiguration configuration, out string error)
@@ -180,6 +210,7 @@ internal static class ServeCommand
             if (arg.StartsWith("--data-dir=", StringComparison.OrdinalIgnoreCase) ||
                 arg.StartsWith("--urls=", StringComparison.OrdinalIgnoreCase) ||
                 arg.Equals("--open", StringComparison.OrdinalIgnoreCase) ||
+                arg.Equals("--no-tray", StringComparison.OrdinalIgnoreCase) ||
                 arg.Equals("--service", StringComparison.OrdinalIgnoreCase))
             {
                 continue;
@@ -259,6 +290,7 @@ Options:
   --urls <url>    Bind the local HTTP API service to the specified URL.
   --data-dir      Override the local data directory for this process.
   --open          Open the default browser after the local service starts.
+  --no-tray       Disable the Windows tray icon when using the interactive launch path.
 
 Default service URL:
   {Defaults.DefaultHttpUrl}

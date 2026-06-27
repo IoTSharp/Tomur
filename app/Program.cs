@@ -72,7 +72,7 @@ Usage:
   tomur
   tomur --help
   tomur --version
-  tomur open [--urls <url>] [--data-dir <path>]
+  tomur open [--urls <url>] [--data-dir <path>] [--no-tray]
   tomur serve [--urls <url>] [--data-dir <path>] [--open]
   tomur service install [--urls <url>] [--data-dir <path>] [--user]
   tomur service uninstall [--data-dir <path>] [--user]
@@ -88,7 +88,7 @@ Usage:
   tomur api-key list [--data-dir <path>]
 
 Commands:
-  open       Start the local service and open the workspace. This is also the no-argument double-click path.
+  open       Start the local service and open the workspace. This is also the no-argument double-click path. On Windows it also creates a tray icon unless --no-tray is set.
   serve      Start the local HTTP API service.
   service    Install, run and manage the OS service integration.
   doctor     Print local runtime diagnostics.
