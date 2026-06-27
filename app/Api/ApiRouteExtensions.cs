@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Tomur.Api.OpenAI;
 using Tomur.Api.Ollama;
 using Tomur.Config;
+using Tomur.Native;
 using Tomur.Runtime;
 using Tomur.Serialization;
 using Tomur.Services;
@@ -28,6 +29,47 @@ public static class ApiRouteExtensions
             await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.RuntimeStatusResponse);
         });
 
+        app.MapGet("/api/runtime/native", static async (HttpContext context, RuntimeDiagnosticsProvider diagnosticsProvider) =>
+        {
+            var response = diagnosticsProvider.GetRuntimeStatus().NativeBundle;
+            await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.NativeBundleProbeResult);
+        });
+
+        app.MapGet("/api/runtime/native/{componentId}/{libraryName}", static async (
+            HttpContext context,
+            INativeLibraryResolver libraryResolver,
+            string componentId,
+            string libraryName) =>
+        {
+            var response = libraryResolver.Resolve(componentId, libraryName);
+            var statusCode = response.Exists ? StatusCodes.Status200OK : StatusCodes.Status404NotFound;
+            await JsonHttpResponse.WriteAsync(
+                context,
+                response,
+                AppJsonSerializerContext.Default.NativeLibraryResolution,
+                statusCode);
+        });
+
+        app.MapPost("/api/runtime/native/{componentId}/{libraryName}/load", static async (
+            HttpContext context,
+            INativeLibraryLoader libraryLoader,
+            string componentId,
+            string libraryName) =>
+        {
+            var response = libraryLoader.Load(componentId, libraryName);
+            var statusCode = response.Loaded
+                ? StatusCodes.Status200OK
+                : response.Resolution.Exists
+                    ? StatusCodes.Status503ServiceUnavailable
+                    : StatusCodes.Status404NotFound;
+
+            await JsonHttpResponse.WriteAsync(
+                context,
+                response,
+                AppJsonSerializerContext.Default.NativeLibraryLoadResult,
+                statusCode);
+        });
+
         app.MapGet("/v1/models", static async (HttpContext context) =>
         {
             var response = new OpenAiModelListResponse(Array.Empty<OpenAiModelResponse>());
@@ -46,6 +88,9 @@ public static class ApiRouteExtensions
                     "/health",
                     "/api/version",
                     "/api/runtime/status",
+                    "/api/runtime/native",
+                    "/api/runtime/native/{componentId}/{libraryName}",
+                    "POST /api/runtime/native/{componentId}/{libraryName}/load",
                     "/v1/models",
                     "/v1/chat/completions",
                     "/api/chat"

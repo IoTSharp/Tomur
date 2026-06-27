@@ -1,4 +1,5 @@
 using Tomur.Config;
+using Tomur.Native;
 using Tomur.Runtime;
 using Tomur.Storage;
 
@@ -128,7 +129,8 @@ public static class CliApplication
         var paths = new DataPaths(pathOptions);
         var diagnostics = new RuntimeDiagnosticsProvider(
             new ConfigurationStore(paths),
-            paths).GetDoctorReport();
+            paths,
+            new NativeBundleProbe(paths)).GetDoctorReport();
 
         Console.WriteLine($"{Defaults.ProductName} doctor");
         Console.WriteLine($"  Version: {diagnostics.Version}");
@@ -157,6 +159,7 @@ public static class CliApplication
         Console.WriteLine($"  Proxy: {diagnostics.Details.Proxy.Status}");
         Console.WriteLine($"  Port: {diagnostics.Details.Port.Status} ({diagnostics.Details.Port.Url})");
         Console.WriteLine($"  API keys: {diagnostics.Details.ApiKeys.Status} ({diagnostics.Details.ApiKeys.ActiveKeyCount} active)");
+        Console.WriteLine($"  Native bundle: {diagnostics.NativeBundle.Status} ({diagnostics.NativeBundle.Rid})");
         Console.WriteLine($"  Runtime: {diagnostics.Runtime.Status} / {diagnostics.Runtime.Code}");
         Console.WriteLine();
         Console.WriteLine("Diagnostics:");

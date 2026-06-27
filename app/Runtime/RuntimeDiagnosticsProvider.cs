@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Runtime.InteropServices;
 using Tomur.Config;
+using Tomur.Native;
 using Tomur.Storage;
 
 namespace Tomur.Runtime;
@@ -11,15 +12,18 @@ public sealed class RuntimeDiagnosticsProvider
 
     private readonly ConfigurationStore configurationStore;
     private readonly DataPaths basePaths;
+    private readonly INativeBundleProbe nativeBundleProbe;
     private readonly ServerOptions serverOptions;
 
     public RuntimeDiagnosticsProvider(
         ConfigurationStore configurationStore,
         DataPaths basePaths,
+        INativeBundleProbe? nativeBundleProbe = null,
         ServerOptions? serverOptions = null)
     {
         this.configurationStore = configurationStore;
         this.basePaths = basePaths;
+        this.nativeBundleProbe = nativeBundleProbe ?? new NativeBundleProbe(basePaths);
         this.serverOptions = serverOptions ?? new ServerOptions();
     }
 
@@ -48,6 +52,7 @@ public sealed class RuntimeDiagnosticsProvider
             status.System.FrameworkDescription,
             status.Status,
             status.CheckedAt,
+            status.NativeBundle,
             status.Runtime,
             status.Diagnostics,
             status);
@@ -66,8 +71,9 @@ public sealed class RuntimeDiagnosticsProvider
         var disk = GetDiskState(paths.DataDirectory);
         var proxy = GetProxyState();
         var port = GetPortState(ResolveServiceUrls(configuration.Configuration));
+        var nativeBundle = nativeBundleProbe.Probe(paths.RuntimeDirectory);
         var runtime = GetRuntimeUnavailable(null);
-        var diagnostics = BuildDiagnostics(configuration, directories, database, apiKeys, disk, proxy, port, runtime);
+        var diagnostics = BuildDiagnostics(configuration, directories, database, apiKeys, disk, proxy, port, nativeBundle, runtime);
         var resolvedPathConfiguration = paths.ToPathConfiguration();
 
         return new RuntimeStatusResponse(
@@ -83,6 +89,7 @@ public sealed class RuntimeDiagnosticsProvider
             disk,
             proxy,
             port,
+            nativeBundle,
             runtime,
             diagnostics);
     }
@@ -225,6 +232,7 @@ public sealed class RuntimeDiagnosticsProvider
         DiskState disk,
         ProxyState proxy,
         PortState port,
+        NativeBundleProbeResult nativeBundle,
         RuntimeDiagnostic runtime)
     {
         var diagnostics = new List<DiagnosticItem>
@@ -288,6 +296,14 @@ public sealed class RuntimeDiagnosticsProvider
             port.Message,
             port.Url,
             port.Status != "ok" ? ["Start tomur serve with --urls <url> to choose another port."] : []));
+
+        diagnostics.Add(ToDiagnostic(
+            "native_bundle",
+            nativeBundle.Status,
+            nativeBundle.Status == "error" ? "warning" : nativeBundle.Status == "warning" ? "warning" : "ok",
+            nativeBundle.Message,
+            nativeBundle.RuntimeRoot,
+            nativeBundle.Status == "ok" ? [] : ["Build or extract the R3 native bundle for this RID."]));
 
         diagnostics.Add(ToDiagnostic(
             "runtime",

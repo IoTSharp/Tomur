@@ -1,0 +1,10 @@
+bin/
+obj/
+
+native/**/*.native/build/
+native/bin/
+native/include/
+native/lib/
+native/runtimes/
+native/**/.vs/
+native/**/CMakeUserPresets.json

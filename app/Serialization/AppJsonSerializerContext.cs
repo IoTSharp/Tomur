@@ -3,6 +3,7 @@ using Tomur.Api;
 using Tomur.Api.OpenAI;
 using Tomur.Api.Ollama;
 using Tomur.Config;
+using Tomur.Native;
 using Tomur.Runtime;
 using Tomur.Services;
 using Tomur.Storage;
@@ -30,6 +31,15 @@ namespace Tomur.Serialization;
 [JsonSerializable(typeof(RuntimeDiagnostic))]
 [JsonSerializable(typeof(RuntimeStatusResponse))]
 [JsonSerializable(typeof(DoctorReport))]
+[JsonSerializable(typeof(NativeBundleManifest))]
+[JsonSerializable(typeof(NativeBundleComponent))]
+[JsonSerializable(typeof(NativeBundleSource))]
+[JsonSerializable(typeof(NativeBundleLibrary))]
+[JsonSerializable(typeof(NativeBundleProbeResult))]
+[JsonSerializable(typeof(NativeComponentProbeResult))]
+[JsonSerializable(typeof(NativeLibraryProbeResult))]
+[JsonSerializable(typeof(NativeLibraryResolution))]
+[JsonSerializable(typeof(NativeLibraryLoadResult))]
 [JsonSerializable(typeof(SystemSnapshot))]
 [JsonSerializable(typeof(DirectoryState))]
 [JsonSerializable(typeof(DiskState))]

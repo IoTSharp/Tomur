@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using Tomur.Config;
+using Tomur.Native;
 using Tomur.Storage;
 
 namespace Tomur.Runtime;
@@ -17,5 +18,6 @@ public sealed record RuntimeStatusResponse(
     [property: JsonPropertyName("disk")] DiskState Disk,
     [property: JsonPropertyName("proxy")] ProxyState Proxy,
     [property: JsonPropertyName("port")] PortState Port,
+    [property: JsonPropertyName("native_bundle")] NativeBundleProbeResult NativeBundle,
     [property: JsonPropertyName("runtime")] RuntimeDiagnostic Runtime,
     [property: JsonPropertyName("diagnostics")] IReadOnlyList<DiagnosticItem> Diagnostics);

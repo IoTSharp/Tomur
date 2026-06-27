@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Tomur.Api;
 using Tomur.Config;
+using Tomur.Native;
 using Tomur.Runtime;
 using Tomur.Serialization;
 using Tomur.Services;
@@ -46,7 +47,8 @@ public static class LocalApiHost
         {
             Urls = serviceUrls
         };
-        var startupStatus = new RuntimeDiagnosticsProvider(configurationStore, paths, serverOptions).GetRuntimeStatus();
+        var nativeBundleProbe = new NativeBundleProbe(paths);
+        var startupStatus = new RuntimeDiagnosticsProvider(configurationStore, paths, nativeBundleProbe, serverOptions).GetRuntimeStatus();
         if (startupStatus.Status == "error")
         {
             Console.Error.WriteLine("Local runtime state could not be initialized.");
@@ -64,6 +66,9 @@ public static class LocalApiHost
         builder.Services.AddSingleton(paths);
         builder.Services.AddSingleton(serverOptions);
         builder.Services.AddSingleton(configurationStore);
+        builder.Services.AddSingleton<INativeBundleProbe>(nativeBundleProbe);
+        builder.Services.AddSingleton<INativeLibraryResolver, NativeLibraryResolver>();
+        builder.Services.AddSingleton<INativeLibraryLoader, NativeLibraryLoader>();
         builder.Services.AddSingleton<RuntimeDiagnosticsProvider>();
         builder.Services.AddSingleton<VersionProvider>();
         builder.Services.ConfigureHttpJsonOptions(options =>

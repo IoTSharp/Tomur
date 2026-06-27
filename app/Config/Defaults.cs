@@ -26,7 +26,7 @@ public static class Defaults
             ?.InformationalVersion;
 
         return string.IsNullOrWhiteSpace(informationalVersion)
-            ? "0.1.0-r1"
+            ? "0.3.0-r3"
             : informationalVersion;
     }
 }
