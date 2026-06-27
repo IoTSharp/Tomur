@@ -80,6 +80,7 @@ public static class LocalApiHost
         builder.Services.AddSingleton<INativeLibraryResolver, NativeLibraryResolver>();
         builder.Services.AddSingleton<INativeLibraryLoader, NativeLibraryLoader>();
         builder.Services.AddSingleton<RuntimeDiagnosticsProvider>();
+        builder.Services.AddSingleton<LocalModelCatalog>();
         builder.Services.AddSingleton<VersionProvider>();
         builder.Services.ConfigureHttpJsonOptions(options =>
         {

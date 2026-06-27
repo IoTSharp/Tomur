@@ -13,6 +13,16 @@ public sealed record OllamaErrorResponse(
         return new OllamaErrorResponse(diagnostic.Message, diagnostic.Code, diagnostic);
     }
 
+    public static OllamaErrorResponse ModelNotDownloaded(RuntimeDiagnostic diagnostic)
+    {
+        return new OllamaErrorResponse(diagnostic.Message, diagnostic.Code, diagnostic);
+    }
+
+    public static OllamaErrorResponse ContextLengthExceeded(RuntimeDiagnostic diagnostic)
+    {
+        return new OllamaErrorResponse(diagnostic.Message, diagnostic.Code, diagnostic);
+    }
+
     public static OllamaErrorResponse InvalidRequest(string message)
     {
         return new OllamaErrorResponse(message, "invalid_request", null);

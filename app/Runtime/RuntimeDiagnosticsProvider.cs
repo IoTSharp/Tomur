@@ -41,6 +41,33 @@ public sealed class RuntimeDiagnosticsProvider
             ]);
     }
 
+    public RuntimeDiagnostic GetModelNotDownloaded(string? model)
+    {
+        return new RuntimeDiagnostic(
+            "not_found",
+            "model_not_downloaded",
+            "The requested model is not available in the local models directory.",
+            string.IsNullOrWhiteSpace(model) ? null : model,
+            [
+                "Place a supported model file under the Tomur models directory.",
+                "Use /v1/models or /api/tags to inspect models currently visible to Tomur.",
+                "Model catalog and download automation are planned for R6."
+            ]);
+    }
+
+    public RuntimeDiagnostic GetContextLengthExceeded(string? model, int characterCount)
+    {
+        return new RuntimeDiagnostic(
+            "error",
+            "context_length_exceeded",
+            $"The request input is too large for the current R4 protocol limit ({characterCount} characters).",
+            string.IsNullOrWhiteSpace(model) ? null : model,
+            [
+                $"Reduce the request input below {Tomur.Api.CompatibilityProtocolLimits.MaxInputCharacters} characters.",
+                "Context window aware token accounting is planned with the local inference runtime."
+            ]);
+    }
+
     public DoctorReport GetDoctorReport()
     {
         var status = GetRuntimeStatus();
