@@ -13,14 +13,16 @@ public sealed class MultimodalRuntimeService
             Capability: "asr",
             NativeComponentId: "whisper",
             RequiredModelCapabilities: ["audio"],
-            ModelRequirement: "Install whisper-large-v3-turbo-q5 for local speech-to-text."),
+            ModelRequirement: "Install whisper-large-v3-turbo-q5 for local speech-to-text.",
+            ExecutionConnected: true),
         new(
             Id: "tts",
             DisplayName: "llama.cpp GGUF TTS",
             Capability: "tts",
             NativeComponentId: "tts",
             RequiredModelCapabilities: ["audio-output"],
-            ModelRequirement: "Install outetts-0.2-500m-q4km for local text-to-speech."),
+            ModelRequirement: "Install outetts-0.2-500m-q4km for local text-to-speech.",
+            ExecutionConnected: true),
         new(
             Id: "ocr",
             DisplayName: "PaddleOCR-VL",

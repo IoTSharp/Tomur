@@ -124,8 +124,10 @@ internal static class ServeCommand
         builder.Services.AddSingleton(state.ConfigurationStore);
         builder.Services.AddSingleton<INativeBundleProbe>(state.NativeBundleProbe);
         builder.Services.AddSingleton<INativeBundlePreparer, NativeBundlePreparer>();
-        builder.Services.AddSingleton<INativeLibraryResolver, NativeLibraryResolver>();
-        builder.Services.AddSingleton<INativeLibraryLoader, NativeLibraryLoader>();
+        builder.Services.AddSingleton<INativeLibraryResolver>(provider =>
+            new NativeLibraryResolver(provider.GetRequiredService<INativeBundleProbe>()));
+        builder.Services.AddSingleton<INativeLibraryLoader>(provider =>
+            new NativeLibraryLoader(provider.GetRequiredService<INativeLibraryResolver>()));
         builder.Services.AddSingleton<LlamaImportResolver>();
         builder.Services.AddSingleton<SessionManager>();
         builder.Services.AddSingleton<LocalInferenceService>();

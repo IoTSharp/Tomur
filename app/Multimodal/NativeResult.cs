@@ -11,6 +11,14 @@ public sealed record NativeImageResult(
     TimeSpan Elapsed,
     IReadOnlyList<string> Diagnostics);
 
+public sealed record NativeAudioResult(
+    byte[] Bytes,
+    string Format,
+    string MediaType,
+    int SampleRate,
+    TimeSpan Elapsed,
+    IReadOnlyList<string> Diagnostics);
+
 public sealed record ImageInputBytes(
     byte[] Bytes,
     string? MediaType,
@@ -26,3 +34,10 @@ public sealed record ImageGenerationOptions(
     long Seed,
     string? SampleMethod,
     string? Scheduler);
+
+public sealed record SpeechSynthesisOptions(
+    string Text,
+    string? Voice,
+    string ResponseFormat,
+    double Speed,
+    string? Language);

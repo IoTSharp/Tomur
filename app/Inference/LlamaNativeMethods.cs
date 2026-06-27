@@ -16,29 +16,31 @@ internal static partial class LlamaNativeMethods
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial void GgmlBackendLoadAllFromPath(string directoryPath);
 
-    [LibraryImport(LibraryName, EntryPoint = "llama_model_default_params")]
+    [DllImport(LibraryName, EntryPoint = "llama_model_default_params")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial LlamaModelParams ModelDefaultParams();
+    internal static extern LlamaModelParams ModelDefaultParams();
 
-    [LibraryImport(LibraryName, EntryPoint = "llama_context_default_params")]
+    [DllImport(LibraryName, EntryPoint = "llama_context_default_params")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial LlamaContextParams ContextDefaultParams();
+    internal static extern LlamaContextParams ContextDefaultParams();
 
-    [LibraryImport(LibraryName, EntryPoint = "llama_sampler_chain_default_params")]
+    [DllImport(LibraryName, EntryPoint = "llama_sampler_chain_default_params")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial LlamaSamplerChainParams SamplerChainDefaultParams();
+    internal static extern LlamaSamplerChainParams SamplerChainDefaultParams();
 
-    [LibraryImport(LibraryName, EntryPoint = "llama_model_load_from_file", StringMarshalling = StringMarshalling.Utf8)]
+    [DllImport(LibraryName, EntryPoint = "llama_model_load_from_file")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial nint ModelLoadFromFile(string modelPath, LlamaModelParams modelParams);
+    internal static extern nint ModelLoadFromFile(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string modelPath,
+        LlamaModelParams modelParams);
 
     [LibraryImport(LibraryName, EntryPoint = "llama_model_free")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial void ModelFree(nint modelHandle);
 
-    [LibraryImport(LibraryName, EntryPoint = "llama_init_from_model")]
+    [DllImport(LibraryName, EntryPoint = "llama_init_from_model")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial nint InitFromModel(nint modelHandle, LlamaContextParams contextParams);
+    internal static extern nint InitFromModel(nint modelHandle, LlamaContextParams contextParams);
 
     [LibraryImport(LibraryName, EntryPoint = "llama_free")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
@@ -67,17 +69,17 @@ internal static partial class LlamaNativeMethods
         [MarshalAs(UnmanagedType.I1)] bool addSpecial,
         [MarshalAs(UnmanagedType.I1)] bool parseSpecial);
 
-    [LibraryImport(LibraryName, EntryPoint = "llama_batch_get_one")]
+    [DllImport(LibraryName, EntryPoint = "llama_batch_get_one")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial LlamaBatch BatchGetOne(nint tokens, int tokenCount);
+    internal static extern LlamaBatch BatchGetOne(nint tokens, int tokenCount);
 
-    [LibraryImport(LibraryName, EntryPoint = "llama_decode")]
+    [DllImport(LibraryName, EntryPoint = "llama_decode")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial int Decode(nint contextHandle, LlamaBatch batch);
+    internal static extern int Decode(nint contextHandle, LlamaBatch batch);
 
-    [LibraryImport(LibraryName, EntryPoint = "llama_sampler_chain_init")]
+    [DllImport(LibraryName, EntryPoint = "llama_sampler_chain_init")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial nint SamplerChainInit(LlamaSamplerChainParams samplerChainParams);
+    internal static extern nint SamplerChainInit(LlamaSamplerChainParams samplerChainParams);
 
     [LibraryImport(LibraryName, EntryPoint = "llama_sampler_chain_add")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]

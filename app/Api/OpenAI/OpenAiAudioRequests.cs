@@ -9,3 +9,6 @@ public sealed record OpenAiAudioSpeechRequest(
     [property: JsonPropertyName("response_format")] string? ResponseFormat,
     [property: JsonPropertyName("speed")] double? Speed,
     [property: JsonPropertyName("language")] string? Language);
+
+public sealed record OpenAiAudioTranscriptionResponse(
+    [property: JsonPropertyName("text")] string Text);

@@ -39,6 +39,7 @@ namespace Tomur.Serialization;
 [JsonSerializable(typeof(OpenAiImageGenerationResponse))]
 [JsonSerializable(typeof(OpenAiImageGenerationData))]
 [JsonSerializable(typeof(OpenAiAudioSpeechRequest))]
+[JsonSerializable(typeof(OpenAiAudioTranscriptionResponse))]
 [JsonSerializable(typeof(OpenAiErrorResponse))]
 [JsonSerializable(typeof(OpenAiError))]
 [JsonSerializable(typeof(OllamaChatRequest))]

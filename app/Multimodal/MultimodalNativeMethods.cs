@@ -9,10 +9,12 @@ internal static partial class MultimodalNativeMethods
     private const string VlmLibraryName = "tomur-llama-vlm";
     private const string OcrLibraryName = "tomur-ocr";
     private const string StableDiffusionLibraryName = "stable-diffusion";
+    private const string WhisperLibraryName = "whisper";
+    private const string TtsLibraryName = "tomur-tts";
 
-    [LibraryImport(VlmLibraryName, EntryPoint = "tomur_llama_vlm_generate", StringMarshalling = StringMarshalling.Utf8)]
+    [DllImport(VlmLibraryName, EntryPoint = "tomur_llama_vlm_generate")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial nint LlamaVlmGenerate(ref VlmRequest request);
+    internal static extern nint LlamaVlmGenerate(ref VlmRequest request);
 
     [LibraryImport(VlmLibraryName, EntryPoint = "tomur_llama_vlm_result_free")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
@@ -43,18 +45,18 @@ internal static partial class MultimodalNativeMethods
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     private static partial void OcrResultFree(nint result);
 
-    [LibraryImport(StableDiffusionLibraryName, EntryPoint = "tomur_sd_create_ctx")]
+    [DllImport(StableDiffusionLibraryName, EntryPoint = "tomur_sd_create_ctx")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial nint StableDiffusionCreateContext(in StableDiffusionContextParameters parameters);
+    internal static extern nint StableDiffusionCreateContext(in StableDiffusionContextParameters parameters);
 
     [LibraryImport(StableDiffusionLibraryName, EntryPoint = "tomur_sd_free_ctx")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     private static partial void StableDiffusionFreeContext(nint context);
 
-    [LibraryImport(StableDiffusionLibraryName, EntryPoint = "tomur_sd_generate_png")]
+    [DllImport(StableDiffusionLibraryName, EntryPoint = "tomur_sd_generate_png")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     [return: MarshalAs(UnmanagedType.I1)]
-    internal static partial bool StableDiffusionGeneratePng(
+    internal static extern bool StableDiffusionGeneratePng(
         nint context,
         in StableDiffusionGenerationParameters parameters,
         out StableDiffusionEncodedImage image);
@@ -62,6 +64,55 @@ internal static partial class MultimodalNativeMethods
     [LibraryImport(StableDiffusionLibraryName, EntryPoint = "tomur_sd_free_buffer")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial void StableDiffusionFreeBuffer(nint buffer);
+
+    [DllImport(WhisperLibraryName, EntryPoint = "whisper_context_default_params")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static extern WhisperContextParameters WhisperContextDefaultParameters();
+
+    [DllImport(WhisperLibraryName, EntryPoint = "whisper_init_from_file_with_params")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static extern nint WhisperInitFromFileWithParams(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string modelPath,
+        WhisperContextParameters parameters);
+
+    [LibraryImport(WhisperLibraryName, EntryPoint = "whisper_full_default_params_by_ref")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial nint WhisperFullDefaultParametersByReference(WhisperSamplingStrategy strategy);
+
+    [LibraryImport(WhisperLibraryName, EntryPoint = "tomur_whisper_full_with_params", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    private static unsafe partial int WhisperFullWithParameters(
+        nint context,
+        nint parameters,
+        string? language,
+        [MarshalAs(UnmanagedType.I1)] bool detectLanguage,
+        [MarshalAs(UnmanagedType.I1)] bool translate,
+        float* samples,
+        int sampleCount);
+
+    [LibraryImport(WhisperLibraryName, EntryPoint = "whisper_full_n_segments")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int WhisperFullSegmentCount(nint context);
+
+    [LibraryImport(WhisperLibraryName, EntryPoint = "whisper_full_get_segment_text")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial nint WhisperFullGetSegmentText(nint context, int segmentIndex);
+
+    [LibraryImport(WhisperLibraryName, EntryPoint = "whisper_free_params")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial void WhisperFreeParameters(nint parameters);
+
+    [LibraryImport(WhisperLibraryName, EntryPoint = "whisper_free")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    private static partial void WhisperFree(nint context);
+
+    [DllImport(TtsLibraryName, EntryPoint = "tomur_tts_synthesize_to_pcm")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static extern nint TtsSynthesizeToPcm(in TtsRequest request);
+
+    [LibraryImport(TtsLibraryName, EntryPoint = "tomur_tts_result_free")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    private static partial void TtsResultFree(nint result);
 
     internal static void FreeLlamaVlmResult(nint result)
         => LlamaVlmResultFree(result);
@@ -71,6 +122,33 @@ internal static partial class MultimodalNativeMethods
 
     internal static void FreeStableDiffusionContext(nint context)
         => StableDiffusionFreeContext(context);
+
+    internal static void FreeWhisperContext(nint context)
+        => WhisperFree(context);
+
+    internal static void FreeTtsResult(nint result)
+        => TtsResultFree(result);
+
+    internal static unsafe int WhisperFull(
+        nint context,
+        nint parameters,
+        float[] samples,
+        string? language,
+        bool detectLanguage,
+        bool translate)
+    {
+        fixed (float* samplesPointer = samples)
+        {
+            return WhisperFullWithParameters(
+                context,
+                parameters,
+                language,
+                detectLanguage,
+                translate,
+                samplesPointer,
+                samples.Length);
+        }
+    }
 }
 
 [StructLayout(LayoutKind.Sequential)]
@@ -172,6 +250,9 @@ internal struct StableDiffusionContextParameters
 
     [MarshalAs(UnmanagedType.I1)]
     public bool FreeParamsImmediately;
+
+    public nint Backend;
+    public nint ParamsBackend;
 }
 
 [StructLayout(LayoutKind.Sequential)]
@@ -195,6 +276,56 @@ internal struct StableDiffusionEncodedImage
 {
     public nint Data;
     public int Length;
+}
+
+internal enum WhisperSamplingStrategy
+{
+    Greedy = 0,
+    BeamSearch = 1
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct WhisperContextParameters
+{
+    [MarshalAs(UnmanagedType.I1)]
+    public bool UseGpu;
+
+    [MarshalAs(UnmanagedType.I1)]
+    public bool FlashAttention;
+
+    public int GpuDevice;
+
+    [MarshalAs(UnmanagedType.I1)]
+    public bool DtwTokenTimestamps;
+
+    public int DtwAheadsPreset;
+    public int DtwNTop;
+    public nuint DtwAheadsNHeads;
+    public nint DtwAheadsHeads;
+    public nuint DtwMemSize;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct TtsRequest
+{
+    public nint TextUtf8;
+    public nint AcousticModelPath;
+    public nint VoiceModelPath;
+    public nint SpeakerPromptUtf8;
+    public int SampleRate;
+    public int Threads;
+    public int GpuLayers;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct TtsResult
+{
+    public int StatusCode;
+    public nint Pcm;
+    public nuint PcmLength;
+    public int SampleRate;
+    public nint DiagnosticsJson;
+    public nint ErrorUtf8;
 }
 
 internal sealed class VlmResultHandle : SafeHandleZeroOrMinusOneIsInvalid
@@ -238,6 +369,51 @@ internal sealed class StableDiffusionContextHandle : SafeHandleZeroOrMinusOneIsI
     protected override bool ReleaseHandle()
     {
         MultimodalNativeMethods.FreeStableDiffusionContext(handle);
+        return true;
+    }
+}
+
+internal sealed class WhisperContextHandle : SafeHandleZeroOrMinusOneIsInvalid
+{
+    public WhisperContextHandle(nint handle)
+        : base(ownsHandle: true)
+    {
+        SetHandle(handle);
+    }
+
+    protected override bool ReleaseHandle()
+    {
+        MultimodalNativeMethods.FreeWhisperContext(handle);
+        return true;
+    }
+}
+
+internal sealed class WhisperParametersHandle : SafeHandleZeroOrMinusOneIsInvalid
+{
+    public WhisperParametersHandle(nint handle)
+        : base(ownsHandle: true)
+    {
+        SetHandle(handle);
+    }
+
+    protected override bool ReleaseHandle()
+    {
+        MultimodalNativeMethods.WhisperFreeParameters(handle);
+        return true;
+    }
+}
+
+internal sealed class TtsResultHandle : SafeHandleZeroOrMinusOneIsInvalid
+{
+    public TtsResultHandle(nint handle)
+        : base(ownsHandle: true)
+    {
+        SetHandle(handle);
+    }
+
+    protected override bool ReleaseHandle()
+    {
+        MultimodalNativeMethods.FreeTtsResult(handle);
         return true;
     }
 }

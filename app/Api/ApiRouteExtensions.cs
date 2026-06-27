@@ -337,7 +337,7 @@ public static class ApiRouteExtensions
                 return;
             }
 
-            var options = LocalInferenceService.MergeOptions(
+            var visionOptions = LocalInferenceService.MergeOptions(
                 CompletionOptions.Default,
                 request.Temperature,
                 request.TopP,
@@ -345,7 +345,7 @@ public static class ApiRouteExtensions
 
             try
             {
-                var result = multimodalExecution.AnalyzeVision(model, prompt, images, options, context.RequestAborted);
+                var result = multimodalExecution.AnalyzeVision(model, prompt, images, visionOptions, context.RequestAborted);
                 var completionResult = new CompletionResult(
                     result.Text,
                     EstimateVisionUsage(prompt, result.Text),
@@ -680,13 +680,41 @@ public static class ApiRouteExtensions
             return;
         }
 
-        var response = OpenAiErrorResponse.RuntimeUnavailable(
-            multimodalExecution.CreateUnavailableDiagnostic("asr", model.Id));
-        await JsonHttpResponse.WriteAsync(
-            context,
-            response,
-            AppJsonSerializerContext.Default.OpenAiErrorResponse,
-            StatusCodes.Status503ServiceUnavailable);
+        await using var stream = file.OpenReadStream();
+        using var memory = new MemoryStream((int)Math.Min(file.Length, int.MaxValue));
+        await stream.CopyToAsync(memory, context.RequestAborted);
+
+        try
+        {
+            var result = multimodalExecution.TranscribeAudio(
+                model,
+                memory.ToArray(),
+                form["language"].FirstOrDefault(),
+                context.RequestAborted);
+            var response = new OpenAiAudioTranscriptionResponse(result.Text);
+            await JsonHttpResponse.WriteAsync(
+                context,
+                response,
+                AppJsonSerializerContext.Default.OpenAiAudioTranscriptionResponse);
+        }
+        catch (InferenceException exception) when (IsInvalidRequestInferenceException(exception))
+        {
+            await WriteOpenAiInvalidRequestAsync(context, exception.Message);
+        }
+        catch (InferenceException exception)
+        {
+            await WriteOpenAiRuntimeUnavailableAsync(
+                context,
+                diagnosticsProvider.GetRuntimeFailure(model.Id, exception),
+                stream: false);
+        }
+        catch (Exception exception) when (IsNativeRuntimeException(exception))
+        {
+            await WriteOpenAiRuntimeUnavailableAsync(
+                context,
+                diagnosticsProvider.GetRuntimeFailure(model.Id, CreateNativeRuntimeException(exception)),
+                stream: false);
+        }
     }
 
     private static async Task HandleOpenAiAudioSpeechAsync(
@@ -730,13 +758,46 @@ public static class ApiRouteExtensions
             return;
         }
 
-        var response = OpenAiErrorResponse.RuntimeUnavailable(
-            multimodalExecution.CreateUnavailableDiagnostic("tts", model.Id));
-        await JsonHttpResponse.WriteAsync(
-            context,
-            response,
-            AppJsonSerializerContext.Default.OpenAiErrorResponse,
-            StatusCodes.Status503ServiceUnavailable);
+        var responseFormat = NormalizeSpeechResponseFormat(request.ResponseFormat);
+        if (responseFormat is null)
+        {
+            await WriteOpenAiInvalidRequestAsync(context, "The response_format field currently supports only 'wav'.");
+            return;
+        }
+
+        var options = new SpeechSynthesisOptions(
+            request.Input.Trim(),
+            request.Voice,
+            responseFormat,
+            Math.Clamp(request.Speed ?? 1.0, 0.25, 4.0),
+            request.Language);
+
+        try
+        {
+            var result = multimodalExecution.SynthesizeSpeech(model, options, context.RequestAborted);
+            context.Response.StatusCode = StatusCodes.Status200OK;
+            context.Response.ContentType = result.MediaType;
+            context.Response.Headers.ContentLength = result.Bytes.Length;
+            await context.Response.Body.WriteAsync(result.Bytes, context.RequestAborted);
+        }
+        catch (InferenceException exception) when (IsInvalidRequestInferenceException(exception))
+        {
+            await WriteOpenAiInvalidRequestAsync(context, exception.Message);
+        }
+        catch (InferenceException exception)
+        {
+            await WriteOpenAiRuntimeUnavailableAsync(
+                context,
+                diagnosticsProvider.GetRuntimeFailure(model.Id, exception),
+                stream: false);
+        }
+        catch (Exception exception) when (IsNativeRuntimeException(exception))
+        {
+            await WriteOpenAiRuntimeUnavailableAsync(
+                context,
+                diagnosticsProvider.GetRuntimeFailure(model.Id, CreateNativeRuntimeException(exception)),
+                stream: false);
+        }
     }
 
     private static async Task HandleVisionAnalyzeAsync(
@@ -1749,6 +1810,9 @@ public static class ApiRouteExtensions
     private static bool IsNativeRuntimeException(Exception exception)
         => exception is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException;
 
+    private static bool IsInvalidRequestInferenceException(InferenceException exception)
+        => exception.Code is "invalid_audio" or "invalid_request" or "unsupported_audio_format";
+
     private static InferenceException CreateNativeRuntimeException(Exception exception)
     {
         return new InferenceException(
@@ -2181,6 +2245,17 @@ public static class ApiRouteExtensions
 
         var normalized = value.Trim().ToLowerInvariant();
         return normalized is "url" or "b64_json" ? normalized : null;
+    }
+
+    private static string? NormalizeSpeechResponseFormat(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "wav";
+        }
+
+        var normalized = value.Trim().ToLowerInvariant();
+        return normalized == "wav" ? normalized : null;
     }
 
     private static float ToFloat(double? value, float fallback)

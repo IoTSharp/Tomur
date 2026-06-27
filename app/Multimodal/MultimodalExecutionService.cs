@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.Json;
 using Tomur.Config;
 using Tomur.Inference;
@@ -234,7 +235,9 @@ public sealed class MultimodalExecutionService
                 FlashAttention = false,
                 DiffusionFlashAttention = true,
                 VaeDecodeOnly = true,
-                FreeParamsImmediately = true
+                FreeParamsImmediately = true,
+                Backend = memory.Backend,
+                ParamsBackend = memory.ParamsBackend
             };
 
             using var contextHandle = new StableDiffusionContextHandle(
@@ -310,6 +313,192 @@ public sealed class MultimodalExecutionService
         catch (Exception exception) when (exception is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
         {
             throw CreateNativeRuntimeException("image-generation", exception);
+        }
+    }
+
+    public NativeOperationResult TranscribeAudio(
+        LocalModelDescriptor model,
+        byte[] audioBytes,
+        string? language,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(audioBytes);
+
+        cancellationToken.ThrowIfCancellationRequested();
+        EnsureBackendReady("asr", model.Id);
+
+        var started = DateTimeOffset.UtcNow;
+        var samples = DecodeWavPcm16To16KhzMono(audioBytes);
+        if (samples.Length == 0)
+        {
+            throw new InferenceException(
+                "invalid_audio",
+                "The audio payload did not contain any PCM samples.",
+                ["Send a mono or stereo PCM16 WAV file with a non-empty data chunk."]);
+        }
+
+        try
+        {
+            importResolver.Register();
+            var contextParameters = MultimodalNativeMethods.WhisperContextDefaultParameters();
+            contextParameters.UseGpu = false;
+            contextParameters.FlashAttention = false;
+
+            using var contextHandle = new WhisperContextHandle(
+                MultimodalNativeMethods.WhisperInitFromFileWithParams(model.AbsolutePath, contextParameters));
+            if (contextHandle.IsInvalid)
+            {
+                throw new InferenceException(
+                    "asr_context_failed",
+                    "whisper.cpp could not create an ASR context.",
+                    [
+                        "Verify the Whisper model file is installed and not corrupted.",
+                        "Use /api/runtime/multimodal to inspect backend readiness."
+                    ]);
+            }
+
+            using var parametersHandle = new WhisperParametersHandle(
+                MultimodalNativeMethods.WhisperFullDefaultParametersByReference(WhisperSamplingStrategy.Greedy));
+            if (parametersHandle.IsInvalid)
+            {
+                throw new InferenceException(
+                    "asr_parameters_failed",
+                    "whisper.cpp could not create ASR parameters.",
+                    ["Use /api/runtime/multimodal to inspect backend readiness."]);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            var normalizedLanguage = NormalizeLanguage(language);
+            var statusCode = MultimodalNativeMethods.WhisperFull(
+                contextHandle.DangerousGetHandle(),
+                parametersHandle.DangerousGetHandle(),
+                samples,
+                normalizedLanguage,
+                detectLanguage: string.IsNullOrWhiteSpace(normalizedLanguage),
+                translate: false);
+            if (statusCode != 0)
+            {
+                throw new InferenceException(
+                    "asr_execution_failed",
+                    $"whisper.cpp transcription failed with status {statusCode}.",
+                    ["Verify the audio is a 16-bit PCM WAV file and the selected model is a Whisper model."]);
+            }
+
+            var segmentCount = MultimodalNativeMethods.WhisperFullSegmentCount(contextHandle.DangerousGetHandle());
+            var transcript = new StringBuilder();
+            for (var index = 0; index < segmentCount; index++)
+            {
+                var textPointer = MultimodalNativeMethods.WhisperFullGetSegmentText(contextHandle.DangerousGetHandle(), index);
+                var text = Marshal.PtrToStringUTF8(textPointer);
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    transcript.Append(text.Trim()).Append(' ');
+                }
+            }
+
+            var diagnostics = new List<string>
+            {
+                "source: whisper.cpp",
+                "audio-format: wav/pcm16",
+                "sample-rate: 16000",
+                $"samples: {samples.Length}",
+                $"segments: {segmentCount}"
+            };
+            if (!string.IsNullOrWhiteSpace(normalizedLanguage))
+            {
+                diagnostics.Add($"language: {normalizedLanguage}");
+            }
+
+            return new NativeOperationResult(
+                transcript.ToString().Trim(),
+                DateTimeOffset.UtcNow - started,
+                diagnostics);
+        }
+        catch (Exception exception) when (exception is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
+        {
+            throw CreateNativeRuntimeException("asr", exception);
+        }
+    }
+
+    public NativeAudioResult SynthesizeSpeech(
+        LocalModelDescriptor model,
+        SpeechSynthesisOptions options,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        cancellationToken.ThrowIfCancellationRequested();
+        EnsureBackendReady("tts", model.Id);
+
+        var started = DateTimeOffset.UtcNow;
+        var voiceModelPath = ResolveRequiredBundleAsset(model, "wavtokenizer");
+        try
+        {
+            importResolver.Register();
+            using var memory = new TtsInteropMemory(model.AbsolutePath, voiceModelPath, options);
+            var request = new TtsRequest
+            {
+                TextUtf8 = memory.Text,
+                AcousticModelPath = memory.AcousticModelPath,
+                VoiceModelPath = memory.VoiceModelPath,
+                SpeakerPromptUtf8 = memory.SpeakerPrompt,
+                SampleRate = 24000,
+                Threads = Environment.ProcessorCount,
+                GpuLayers = 0
+            };
+
+            using var resultHandle = new TtsResultHandle(MultimodalNativeMethods.TtsSynthesizeToPcm(in request));
+            if (resultHandle.IsInvalid)
+            {
+                throw new InferenceException(
+                    "tts_execution_failed",
+                    "The TTS native bridge returned an empty result handle.",
+                    ["Use /api/runtime/multimodal to inspect backend readiness."]);
+            }
+
+            var result = Marshal.PtrToStructure<TtsResult>(resultHandle.DangerousGetHandle());
+            var diagnostics = ReadDiagnostics(result.DiagnosticsJson);
+            if (result.StatusCode != 0)
+            {
+                var error = Marshal.PtrToStringUTF8(result.ErrorUtf8);
+                throw new InferenceException(
+                    "tts_execution_failed",
+                    string.IsNullOrWhiteSpace(error) ? $"TTS native execution failed with status {result.StatusCode}." : error,
+                    diagnostics.Count == 0 ? ["Use /api/runtime/multimodal to inspect backend readiness."] : diagnostics);
+            }
+
+            if (result.Pcm == nint.Zero || result.PcmLength == 0)
+            {
+                throw new InferenceException(
+                    "tts_execution_failed",
+                    "TTS native execution completed without returning PCM samples.",
+                    diagnostics.Count == 0 ? ["Verify the selected TTS model bundle is complete."] : diagnostics);
+            }
+
+            if (result.PcmLength > int.MaxValue / sizeof(short))
+            {
+                throw new InferenceException(
+                    "tts_audio_too_large",
+                    "TTS native execution returned too many PCM samples for this process.",
+                    ["Use a shorter input for /v1/audio/speech."]);
+            }
+
+            var sampleCount = checked((int)result.PcmLength);
+            var pcmBytes = new byte[checked(sampleCount * sizeof(short))];
+            Marshal.Copy(result.Pcm, pcmBytes, 0, pcmBytes.Length);
+            var sampleRate = result.SampleRate <= 0 ? 24000 : result.SampleRate;
+            var wavBytes = EncodePcm16Wav(pcmBytes, sampleRate, channels: 1);
+            return new NativeAudioResult(
+                wavBytes,
+                "wav",
+                "audio/wav",
+                sampleRate,
+                DateTimeOffset.UtcNow - started,
+                diagnostics);
+        }
+        catch (Exception exception) when (exception is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
+        {
+            throw CreateNativeRuntimeException("tts", exception);
         }
     }
 
@@ -426,6 +615,8 @@ public sealed class MultimodalExecutionService
     {
         var resolution = backendId switch
         {
+            "asr" => libraryResolver.Resolve("whisper", "whisper"),
+            "tts" => libraryResolver.Resolve("tts", "tomur-tts"),
             "vlm" => libraryResolver.Resolve("llama", "tomur-llama-vlm"),
             "ocr" => libraryResolver.Resolve("ocr", "tomur-ocr"),
             "image-generation" => libraryResolver.Resolve("stable-diffusion", "stable-diffusion"),
@@ -535,6 +726,211 @@ public sealed class MultimodalExecutionService
 
     private static string NormalizeSamplingToken(string? value)
         => string.IsNullOrWhiteSpace(value) ? "auto" : value.Trim().ToLowerInvariant();
+
+    private static string? NormalizeLanguage(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var normalized = value.Trim().ToLowerInvariant();
+        return normalized is "auto" ? null : normalized;
+    }
+
+    private static float[] DecodeWavPcm16To16KhzMono(byte[] bytes)
+    {
+        if (bytes.Length < 44 ||
+            !HasAscii(bytes, 0, "RIFF") ||
+            !HasAscii(bytes, 8, "WAVE"))
+        {
+            throw new InferenceException(
+                "unsupported_audio_format",
+                "Only PCM16 WAV audio is supported by the local ASR adapter.",
+                [
+                    "Convert the audio to 16-bit PCM WAV before sending /v1/audio/transcriptions.",
+                    "For smoke tests, use 16 kHz mono WAV."
+                ]);
+        }
+
+        var offset = 12;
+        ushort audioFormat = 0;
+        ushort channels = 0;
+        var sampleRate = 0;
+        ushort bitsPerSample = 0;
+        var dataOffset = -1;
+        var dataSize = 0;
+
+        while (offset + 8 <= bytes.Length)
+        {
+            var chunkId = Encoding.ASCII.GetString(bytes, offset, 4);
+            var chunkSize = ReadInt32LittleEndian(bytes, offset + 4);
+            if (chunkSize < 0 || offset + 8 + chunkSize > bytes.Length)
+            {
+                throw new InferenceException(
+                    "invalid_audio",
+                    "The WAV file contains an invalid chunk size.",
+                    ["Send a valid PCM16 WAV file."]);
+            }
+
+            var chunkDataOffset = offset + 8;
+            if (string.Equals(chunkId, "fmt ", StringComparison.Ordinal))
+            {
+                if (chunkSize < 16)
+                {
+                    throw new InferenceException(
+                        "invalid_audio",
+                        "The WAV fmt chunk is too short.",
+                        ["Send a valid PCM16 WAV file."]);
+                }
+
+                audioFormat = ReadUInt16LittleEndian(bytes, chunkDataOffset);
+                channels = ReadUInt16LittleEndian(bytes, chunkDataOffset + 2);
+                sampleRate = ReadInt32LittleEndian(bytes, chunkDataOffset + 4);
+                bitsPerSample = ReadUInt16LittleEndian(bytes, chunkDataOffset + 14);
+            }
+            else if (string.Equals(chunkId, "data", StringComparison.Ordinal))
+            {
+                dataOffset = chunkDataOffset;
+                dataSize = chunkSize;
+            }
+
+            offset = chunkDataOffset + chunkSize + (chunkSize % 2);
+        }
+
+        if (audioFormat != 1 || bitsPerSample != 16 || channels is < 1 or > 2 || sampleRate <= 0)
+        {
+            throw new InferenceException(
+                "unsupported_audio_format",
+                "The ASR adapter currently supports mono or stereo PCM16 WAV audio only.",
+                ["Convert the audio to 16-bit PCM WAV before sending /v1/audio/transcriptions."]);
+        }
+
+        if (dataOffset < 0 || dataSize <= 0)
+        {
+            throw new InferenceException(
+                "invalid_audio",
+                "The WAV file does not contain a non-empty data chunk.",
+                ["Send a valid PCM16 WAV file."]);
+        }
+
+        var frameSize = channels * sizeof(short);
+        var frameCount = dataSize / frameSize;
+        var mono = new float[frameCount];
+        for (var frame = 0; frame < frameCount; frame++)
+        {
+            var baseOffset = dataOffset + frame * frameSize;
+            var left = ReadInt16LittleEndian(bytes, baseOffset) / 32768f;
+            if (channels == 1)
+            {
+                mono[frame] = left;
+                continue;
+            }
+
+            var right = ReadInt16LittleEndian(bytes, baseOffset + sizeof(short)) / 32768f;
+            mono[frame] = (left + right) * 0.5f;
+        }
+
+        return sampleRate == 16000 ? mono : ResampleLinear(mono, sampleRate, 16000);
+    }
+
+    private static float[] ResampleLinear(float[] samples, int sourceRate, int targetRate)
+    {
+        if (samples.Length == 0 || sourceRate == targetRate)
+        {
+            return samples;
+        }
+
+        var outputLength = Math.Max(1, (int)Math.Round(samples.Length * (double)targetRate / sourceRate));
+        var output = new float[outputLength];
+        var ratio = (double)sourceRate / targetRate;
+        for (var index = 0; index < output.Length; index++)
+        {
+            var sourcePosition = index * ratio;
+            var leftIndex = Math.Min(samples.Length - 1, (int)Math.Floor(sourcePosition));
+            var rightIndex = Math.Min(samples.Length - 1, leftIndex + 1);
+            var fraction = sourcePosition - leftIndex;
+            output[index] = (float)(samples[leftIndex] + (samples[rightIndex] - samples[leftIndex]) * fraction);
+        }
+
+        return output;
+    }
+
+    private static byte[] EncodePcm16Wav(byte[] pcmBytes, int sampleRate, short channels)
+    {
+        const short bitsPerSample = 16;
+        var byteRate = sampleRate * channels * bitsPerSample / 8;
+        var blockAlign = (short)(channels * bitsPerSample / 8);
+        var output = new byte[44 + pcmBytes.Length];
+
+        WriteAscii(output, 0, "RIFF");
+        WriteInt32LittleEndian(output, 4, 36 + pcmBytes.Length);
+        WriteAscii(output, 8, "WAVE");
+        WriteAscii(output, 12, "fmt ");
+        WriteInt32LittleEndian(output, 16, 16);
+        WriteInt16LittleEndian(output, 20, 1);
+        WriteInt16LittleEndian(output, 22, channels);
+        WriteInt32LittleEndian(output, 24, sampleRate);
+        WriteInt32LittleEndian(output, 28, byteRate);
+        WriteInt16LittleEndian(output, 32, blockAlign);
+        WriteInt16LittleEndian(output, 34, bitsPerSample);
+        WriteAscii(output, 36, "data");
+        WriteInt32LittleEndian(output, 40, pcmBytes.Length);
+        Buffer.BlockCopy(pcmBytes, 0, output, 44, pcmBytes.Length);
+        return output;
+    }
+
+    private static bool HasAscii(byte[] bytes, int offset, string value)
+    {
+        if (offset < 0 || offset + value.Length > bytes.Length)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < value.Length; index++)
+        {
+            if (bytes[offset + index] != value[index])
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static void WriteAscii(byte[] bytes, int offset, string value)
+    {
+        for (var index = 0; index < value.Length; index++)
+        {
+            bytes[offset + index] = (byte)value[index];
+        }
+    }
+
+    private static short ReadInt16LittleEndian(byte[] bytes, int offset)
+        => unchecked((short)ReadUInt16LittleEndian(bytes, offset));
+
+    private static ushort ReadUInt16LittleEndian(byte[] bytes, int offset)
+        => (ushort)(bytes[offset] | (bytes[offset + 1] << 8));
+
+    private static int ReadInt32LittleEndian(byte[] bytes, int offset)
+        => bytes[offset] |
+            (bytes[offset + 1] << 8) |
+            (bytes[offset + 2] << 16) |
+            (bytes[offset + 3] << 24);
+
+    private static void WriteInt16LittleEndian(byte[] bytes, int offset, short value)
+    {
+        bytes[offset] = (byte)value;
+        bytes[offset + 1] = (byte)(value >> 8);
+    }
+
+    private static void WriteInt32LittleEndian(byte[] bytes, int offset, int value)
+    {
+        bytes[offset] = (byte)value;
+        bytes[offset + 1] = (byte)(value >> 8);
+        bytes[offset + 2] = (byte)(value >> 16);
+        bytes[offset + 3] = (byte)(value >> 24);
+    }
 
     private sealed record StableDiffusionBundle(
         string DiffusionModelPath,
@@ -651,6 +1047,8 @@ public sealed class MultimodalExecutionService
                 : AllocateUtf8(options.NegativePrompt);
             SampleMethod = MarshalSamplingToken(options.SampleMethod);
             Scheduler = MarshalSamplingToken(options.Scheduler);
+            Backend = AllocateUtf8("te=cpu,vae=cpu");
+            ParamsBackend = AllocateUtf8("*=cpu");
         }
 
         public nint DiffusionModelPath { get; }
@@ -660,6 +1058,8 @@ public sealed class MultimodalExecutionService
         public nint NegativePrompt { get; }
         public nint SampleMethod { get; }
         public nint Scheduler { get; }
+        public nint Backend { get; }
+        public nint ParamsBackend { get; }
 
         public void Dispose()
         {
@@ -680,6 +1080,49 @@ public sealed class MultimodalExecutionService
         {
             var normalized = NormalizeSamplingToken(value);
             return normalized == "auto" ? nint.Zero : AllocateUtf8(normalized);
+        }
+
+        private nint AllocateUtf8(string value)
+        {
+            var pointer = Marshal.StringToCoTaskMemUTF8(value);
+            utf8Strings.Add(pointer);
+            return pointer;
+        }
+    }
+
+    private sealed class TtsInteropMemory : IDisposable
+    {
+        private readonly List<nint> utf8Strings = [];
+        private bool disposed;
+
+        public TtsInteropMemory(string acousticModelPath, string voiceModelPath, SpeechSynthesisOptions options)
+        {
+            Text = AllocateUtf8(options.Text);
+            AcousticModelPath = AllocateUtf8(acousticModelPath);
+            VoiceModelPath = AllocateUtf8(voiceModelPath);
+            SpeakerPrompt = string.IsNullOrWhiteSpace(options.Voice)
+                ? nint.Zero
+                : AllocateUtf8(options.Voice);
+        }
+
+        public nint Text { get; }
+        public nint AcousticModelPath { get; }
+        public nint VoiceModelPath { get; }
+        public nint SpeakerPrompt { get; }
+
+        public void Dispose()
+        {
+            if (disposed)
+            {
+                return;
+            }
+
+            foreach (var pointer in utf8Strings)
+            {
+                Marshal.FreeCoTaskMem(pointer);
+            }
+
+            disposed = true;
         }
 
         private nint AllocateUtf8(string value)

@@ -19,6 +19,8 @@ typedef struct tomur_sd_ctx_probe_params_t {
     bool diffusion_flash_attn;
     bool vae_decode_only;
     bool free_params_immediately;
+    const char* backend;
+    const char* params_backend;
 } tomur_sd_ctx_probe_params_t;
 
 SD_API sd_ctx_t* tomur_sd_create_ctx(const tomur_sd_ctx_probe_params_t* probe_params) {
@@ -39,6 +41,8 @@ SD_API sd_ctx_t* tomur_sd_create_ctx(const tomur_sd_ctx_probe_params_t* probe_pa
     native_params.enable_mmap              = probe_params->enable_mmap;
     native_params.flash_attn               = probe_params->flash_attn;
     native_params.diffusion_flash_attn     = probe_params->diffusion_flash_attn || probe_params->flash_attn;
+    native_params.backend                  = probe_params->backend;
+    native_params.params_backend           = probe_params->params_backend;
 
     if (probe_params->n_threads > 0) {
         native_params.n_threads = probe_params->n_threads;

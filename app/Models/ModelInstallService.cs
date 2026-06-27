@@ -79,7 +79,7 @@ public sealed class ModelInstallService
             output.WriteLine($"  sha256 {actualSha256}{(verified ? " verified" : asset.ExpectedSha256 is null ? " recorded" : string.Empty)}");
 
             installedAssets.Add(new InstalledModelAsset(
-                CombineUrlPath(package.RelativeDirectory, targetRelativePath),
+                ModelPackage.CombineUrlPath(package.RelativeDirectory, targetRelativePath),
                 asset.RepositoryId,
                 asset.RelativePath,
                 asset.ExpectedSha256,

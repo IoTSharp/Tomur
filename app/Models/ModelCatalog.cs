@@ -268,6 +268,39 @@ public sealed class ModelCatalog
             LowMemoryAlternativeId: "qwen35-4b-q4km"),
 
         new ModelPackage(
+            Id: "smolvlm-500m-q8",
+            DisplayName: "SmolVLM 500M Instruct Q8_0",
+            Description: "Small optional vision-language bundle for fast local smoke validation.",
+            Segment: "text",
+            FolderName: "smolvlm-500m-instruct-q8-0",
+            Task: "vision",
+            Runtime: "llama.cpp",
+            Family: "llama",
+            Format: "gguf",
+            Quantization: "Q8_0",
+            License: "apache-2.0",
+            SizeBytes: 820_422_912,
+            ParameterCount: 500_000_000,
+            PrimaryFileName: "SmolVLM-500M-Instruct-Q8_0.gguf",
+            Recommended: false,
+            Optional: true,
+            Research: true,
+            Tags: ["local", "vision", "vlm", "mmproj", "smoke"],
+            Assets:
+            [
+                DownloadAsset.HuggingFace("ggml-org/SmolVLM-500M-Instruct-GGUF", "SmolVLM-500M-Instruct-Q8_0.gguf"),
+                DownloadAsset.HuggingFace("ggml-org/SmolVLM-500M-Instruct-GGUF", "mmproj-SmolVLM-500M-Instruct-Q8_0.gguf")
+            ],
+            BundleAssets:
+            [
+                new ModelBundleAsset("primary", "vision-language-model", true, "SmolVLM-500M-Instruct-Q8_0.gguf", "SmolVLM-500M-Instruct-Q8_0.gguf", "gguf", "Q8_0", "apache-2.0"),
+                new ModelBundleAsset("mmproj", "clip-vision-encoder", true, "mmproj-SmolVLM-500M-Instruct-Q8_0.gguf", "mmproj-SmolVLM-500M-Instruct-Q8_0.gguf", "gguf", "Q8_0", "apache-2.0")
+            ],
+            MinimumMemoryBytes: Gib(4),
+            HardwareTier: "low-memory",
+            LicenseNotice: "Apache-2.0 model package. Intended as an optional fast smoke-validation VLM, not the default vision package."),
+
+        new ModelPackage(
             Id: "flux2-klein-4b-q4km",
             DisplayName: "FLUX.2 klein 4B Q4_K_M",
             Description: "Default local image generation bundle with VAE and Qwen3 text encoder sidecars.",
@@ -386,7 +419,7 @@ public sealed class ModelCatalog
             return package;
         }
 
-        if (memoryBytes >= package.MinimumMemoryBytes)
+        if (memoryBytes >= (ulong)package.MinimumMemoryBytes)
         {
             return package;
         }
