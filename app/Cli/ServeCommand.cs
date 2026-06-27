@@ -8,6 +8,7 @@ using Microsoft.Extensions.Hosting.WindowsServices;
 using Tomur.Api;
 using Tomur.Config;
 using Tomur.Inference;
+using Tomur.Multimodal;
 using Tomur.Native;
 using Tomur.Runtime;
 using Tomur.Serialization;
@@ -98,6 +99,7 @@ internal static class ServeCommand
         builder.Services.AddSingleton<LlamaImportResolver>();
         builder.Services.AddSingleton<SessionManager>();
         builder.Services.AddSingleton<LocalInferenceService>();
+        builder.Services.AddSingleton<MultimodalRuntimeService>();
         builder.Services.AddSingleton<RuntimeDiagnosticsProvider>();
         builder.Services.AddSingleton<LocalModelCatalog>();
         builder.Services.AddSingleton<VersionProvider>();

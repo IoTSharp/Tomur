@@ -9,6 +9,7 @@ using Tomur.Api.OpenAI;
 using Tomur.Config;
 using Tomur.Inference;
 using Tomur.Models;
+using Tomur.Multimodal;
 using Tomur.Native;
 using Tomur.Runtime;
 using Tomur.Serialization;
@@ -48,6 +49,12 @@ public static class ApiRouteExtensions
         {
             var response = diagnosticsProvider.GetRuntimeStatus().NativeBundle;
             await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.NativeBundleProbeResult);
+        });
+
+        app.MapGet("/api/runtime/multimodal", static async (HttpContext context, MultimodalRuntimeService multimodalRuntime) =>
+        {
+            var response = multimodalRuntime.GetStatus();
+            await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.MultimodalRuntimeStatus);
         });
 
         app.MapGet("/api/models/catalog", static async (HttpContext context, DataPaths paths) =>
@@ -135,6 +142,7 @@ public static class ApiRouteExtensions
                     "/api/runtime/status",
                     "POST /api/runtime/session/unload",
                     "/api/runtime/native",
+                    "/api/runtime/multimodal",
                     "/api/models/catalog",
                     "/api/models/installed",
                     "POST /api/runtime/native/prepare",
@@ -466,7 +474,8 @@ public static class ApiRouteExtensions
     private static async Task HandleOpenAiImageGenerationsAsync(
         HttpContext context,
         RuntimeDiagnosticsProvider diagnosticsProvider,
-        LocalModelCatalog modelCatalog)
+        LocalModelCatalog modelCatalog,
+        MultimodalRuntimeService multimodalRuntime)
     {
         var request = await ReadOpenAiRequestAsync(
             context,
@@ -493,7 +502,8 @@ public static class ApiRouteExtensions
             return;
         }
 
-        var response = OpenAiErrorResponse.RuntimeUnavailable(diagnosticsProvider.GetRuntimeUnavailable(model.Id));
+        var response = OpenAiErrorResponse.RuntimeUnavailable(
+            diagnosticsProvider.GetMultimodalRuntimeUnavailable(model.Id, multimodalRuntime.GetBackendStatus("image-generation")));
         await JsonHttpResponse.WriteAsync(
             context,
             response,

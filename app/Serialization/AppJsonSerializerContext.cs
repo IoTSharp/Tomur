@@ -4,6 +4,7 @@ using Tomur.Api.Models;
 using Tomur.Api.OpenAI;
 using Tomur.Api.Ollama;
 using Tomur.Config;
+using Tomur.Multimodal;
 using Tomur.Native;
 using Tomur.Runtime;
 using Tomur.Models;
@@ -49,6 +50,8 @@ namespace Tomur.Serialization;
 [JsonSerializable(typeof(OllamaShowResponse))]
 [JsonSerializable(typeof(OllamaModelInfo))]
 [JsonSerializable(typeof(OllamaErrorResponse))]
+[JsonSerializable(typeof(MultimodalRuntimeStatus))]
+[JsonSerializable(typeof(MultimodalBackendStatus))]
 [JsonSerializable(typeof(ModelCatalogResponse))]
 [JsonSerializable(typeof(ModelHardwareProfileResponse))]
 [JsonSerializable(typeof(ModelCatalogPackageResponse))]

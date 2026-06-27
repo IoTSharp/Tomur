@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using Tomur.Config;
 using Tomur.Inference;
+using Tomur.Multimodal;
 using Tomur.Native;
 using Tomur.Storage;
 
@@ -41,8 +42,25 @@ public sealed class RuntimeDiagnosticsProvider
             [
                 "Run tomur doctor to inspect the local runtime status.",
                 "Verify that the requested API belongs to an implemented runtime milestone.",
-                "Text generation uses R7 llama.cpp runtime; image, audio and vision backends remain later milestones."
+                "Text generation uses the R7 llama.cpp runtime; image, audio and vision backend readiness is reported by /api/runtime/multimodal."
             ]);
+    }
+
+    public RuntimeDiagnostic GetMultimodalRuntimeUnavailable(string? model, MultimodalBackendStatus backend)
+    {
+        ArgumentNullException.ThrowIfNull(backend);
+
+        return new RuntimeDiagnostic(
+            backend.Status == "ready" ? "unavailable" : backend.Status,
+            $"multimodal_{backend.Id}_not_connected",
+            $"{backend.DisplayName} is not connected to an executable R8 endpoint adapter yet. {backend.Message}",
+            string.IsNullOrWhiteSpace(model) ? null : model,
+            backend.Actions.Count == 0
+                ? [
+                    "Use /api/runtime/multimodal to inspect multimodal native and model readiness.",
+                    "Text generation remains available through the R7 llama.cpp runtime."
+                ]
+                : backend.Actions);
     }
 
     public RuntimeDiagnostic GetRuntimeFailure(string? model, Tomur.Inference.InferenceException exception)
