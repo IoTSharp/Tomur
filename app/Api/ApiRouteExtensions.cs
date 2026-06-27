@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -6,6 +7,7 @@ using Tomur.Api.Models;
 using Tomur.Api.Ollama;
 using Tomur.Api.OpenAI;
 using Tomur.Config;
+using Tomur.Inference;
 using Tomur.Models;
 using Tomur.Native;
 using Tomur.Runtime;
@@ -28,6 +30,16 @@ public static class ApiRouteExtensions
 
         app.MapGet("/api/runtime/status", static async (HttpContext context, RuntimeDiagnosticsProvider diagnosticsProvider) =>
         {
+            var response = diagnosticsProvider.GetRuntimeStatus();
+            await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.RuntimeStatusResponse);
+        });
+
+        app.MapPost("/api/runtime/session/unload", static async (
+            HttpContext context,
+            LocalInferenceService inferenceService,
+            RuntimeDiagnosticsProvider diagnosticsProvider) =>
+        {
+            inferenceService.Unload();
             var response = diagnosticsProvider.GetRuntimeStatus();
             await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.RuntimeStatusResponse);
         });
@@ -121,6 +133,7 @@ public static class ApiRouteExtensions
                     "/health",
                     "/api/version",
                     "/api/runtime/status",
+                    "POST /api/runtime/session/unload",
                     "/api/runtime/native",
                     "/api/models/catalog",
                     "/api/models/installed",
@@ -262,7 +275,8 @@ public static class ApiRouteExtensions
     private static async Task HandleOpenAiChatCompletionsAsync(
         HttpContext context,
         RuntimeDiagnosticsProvider diagnosticsProvider,
-        LocalModelCatalog modelCatalog)
+        LocalModelCatalog modelCatalog,
+        LocalInferenceService inferenceService)
     {
         var request = await ReadOpenAiRequestAsync(
             context,
@@ -290,16 +304,35 @@ public static class ApiRouteExtensions
             return;
         }
 
-        await WriteOpenAiRuntimeUnavailableAsync(
-            context,
-            diagnosticsProvider.GetRuntimeUnavailable(model.Id),
-            request.Stream == true);
+        var messages = request.Messages
+            .Select(static message => new ChatTurn(message.Role ?? "user", ExtractOpenAiTextContent(message.Content)))
+            .ToArray();
+        var options = LocalInferenceService.MergeOptions(
+            CompletionOptions.Default,
+            request.Temperature,
+            request.TopP,
+            request.MaxTokens);
+
+        try
+        {
+            var result = inferenceService.Chat(model, messages, options, context.RequestAborted);
+            await WriteOpenAiChatCompletionSuccessAsync(context, model.Id, result, request.Stream == true);
+        }
+        catch (InferenceException exception)
+        {
+            await WriteOpenAiRuntimeUnavailableAsync(context, diagnosticsProvider.GetRuntimeFailure(model.Id, exception), request.Stream == true);
+        }
+        catch (Exception exception) when (IsNativeRuntimeException(exception))
+        {
+            await WriteOpenAiRuntimeUnavailableAsync(context, diagnosticsProvider.GetRuntimeFailure(model.Id, CreateNativeRuntimeException(exception)), request.Stream == true);
+        }
     }
 
     private static async Task HandleOpenAiCompletionsAsync(
         HttpContext context,
         RuntimeDiagnosticsProvider diagnosticsProvider,
-        LocalModelCatalog modelCatalog)
+        LocalModelCatalog modelCatalog,
+        LocalInferenceService inferenceService)
     {
         var request = await ReadOpenAiRequestAsync(
             context,
@@ -327,16 +360,33 @@ public static class ApiRouteExtensions
             return;
         }
 
-        await WriteOpenAiRuntimeUnavailableAsync(
-            context,
-            diagnosticsProvider.GetRuntimeUnavailable(model.Id),
-            request.Stream == true);
+        var prompt = ExtractOpenAiTextContent(request.Prompt);
+        var options = LocalInferenceService.MergeOptions(
+            CompletionOptions.Default,
+            request.Temperature,
+            request.TopP,
+            request.MaxTokens);
+
+        try
+        {
+            var result = inferenceService.Complete(model, prompt, options, context.RequestAborted);
+            await WriteOpenAiCompletionSuccessAsync(context, model.Id, result, request.Stream == true);
+        }
+        catch (InferenceException exception)
+        {
+            await WriteOpenAiRuntimeUnavailableAsync(context, diagnosticsProvider.GetRuntimeFailure(model.Id, exception), request.Stream == true);
+        }
+        catch (Exception exception) when (IsNativeRuntimeException(exception))
+        {
+            await WriteOpenAiRuntimeUnavailableAsync(context, diagnosticsProvider.GetRuntimeFailure(model.Id, CreateNativeRuntimeException(exception)), request.Stream == true);
+        }
     }
 
     private static async Task HandleOpenAiEmbeddingsAsync(
         HttpContext context,
         RuntimeDiagnosticsProvider diagnosticsProvider,
-        LocalModelCatalog modelCatalog)
+        LocalModelCatalog modelCatalog,
+        LocalInferenceService inferenceService)
     {
         var request = await ReadOpenAiRequestAsync(
             context,
@@ -364,12 +414,53 @@ public static class ApiRouteExtensions
             return;
         }
 
-        var response = OpenAiErrorResponse.RuntimeUnavailable(diagnosticsProvider.GetRuntimeUnavailable(model.Id));
-        await JsonHttpResponse.WriteAsync(
-            context,
-            response,
-            AppJsonSerializerContext.Default.OpenAiErrorResponse,
-            StatusCodes.Status503ServiceUnavailable);
+        var inputs = ExtractEmbeddingInputs(request.Input);
+        if (inputs.Count == 0)
+        {
+            await WriteOpenAiInvalidRequestAsync(context, "The input field must contain at least one string.");
+            return;
+        }
+
+        try
+        {
+            var data = new List<OpenAiEmbeddingData>(inputs.Count);
+            var promptTokens = 0;
+            for (var index = 0; index < inputs.Count; index++)
+            {
+                var result = inferenceService.Embed(model, inputs[index], CompletionOptions.Default, context.RequestAborted);
+                promptTokens += result.Usage.PromptTokens;
+                data.Add(new OpenAiEmbeddingData("embedding", result.Vector, index));
+            }
+
+            var response = new OpenAiEmbeddingResponse(
+                "list",
+                data,
+                model.Id,
+                new OpenAiUsage(promptTokens, 0, promptTokens));
+
+            await JsonHttpResponse.WriteAsync(
+                context,
+                response,
+                AppJsonSerializerContext.Default.OpenAiEmbeddingResponse);
+        }
+        catch (InferenceException exception)
+        {
+            var response = OpenAiErrorResponse.RuntimeUnavailable(diagnosticsProvider.GetRuntimeFailure(model.Id, exception));
+            await JsonHttpResponse.WriteAsync(
+                context,
+                response,
+                AppJsonSerializerContext.Default.OpenAiErrorResponse,
+                StatusCodes.Status503ServiceUnavailable);
+        }
+        catch (Exception exception) when (IsNativeRuntimeException(exception))
+        {
+            var response = OpenAiErrorResponse.RuntimeUnavailable(diagnosticsProvider.GetRuntimeFailure(model.Id, CreateNativeRuntimeException(exception)));
+            await JsonHttpResponse.WriteAsync(
+                context,
+                response,
+                AppJsonSerializerContext.Default.OpenAiErrorResponse,
+                StatusCodes.Status503ServiceUnavailable);
+        }
     }
 
     private static async Task HandleOpenAiImageGenerationsAsync(
@@ -465,7 +556,8 @@ public static class ApiRouteExtensions
     private static async Task HandleOllamaGenerateAsync(
         HttpContext context,
         RuntimeDiagnosticsProvider diagnosticsProvider,
-        LocalModelCatalog modelCatalog)
+        LocalModelCatalog modelCatalog,
+        LocalInferenceService inferenceService)
     {
         var request = await ReadOllamaRequestAsync(
             context,
@@ -493,16 +585,34 @@ public static class ApiRouteExtensions
             return;
         }
 
-        await WriteOllamaRuntimeUnavailableAsync(
-            context,
-            diagnosticsProvider.GetRuntimeUnavailable(model.Id),
-            stream);
+        var prompt = BuildOllamaGeneratePrompt(request);
+        var options = LocalInferenceService.MergeOptions(
+            CompletionOptions.Default,
+            null,
+            null,
+            null,
+            request.Options);
+
+        try
+        {
+            var result = inferenceService.Complete(model, prompt, options, context.RequestAborted);
+            await WriteOllamaGenerateSuccessAsync(context, model.Id, result, stream);
+        }
+        catch (InferenceException exception)
+        {
+            await WriteOllamaRuntimeUnavailableAsync(context, diagnosticsProvider.GetRuntimeFailure(model.Id, exception), stream);
+        }
+        catch (Exception exception) when (IsNativeRuntimeException(exception))
+        {
+            await WriteOllamaRuntimeUnavailableAsync(context, diagnosticsProvider.GetRuntimeFailure(model.Id, CreateNativeRuntimeException(exception)), stream);
+        }
     }
 
     private static async Task HandleOllamaChatAsync(
         HttpContext context,
         RuntimeDiagnosticsProvider diagnosticsProvider,
-        LocalModelCatalog modelCatalog)
+        LocalModelCatalog modelCatalog,
+        LocalInferenceService inferenceService)
     {
         var request = await ReadOllamaRequestAsync(
             context,
@@ -531,10 +641,29 @@ public static class ApiRouteExtensions
             return;
         }
 
-        await WriteOllamaRuntimeUnavailableAsync(
-            context,
-            diagnosticsProvider.GetRuntimeUnavailable(model.Id),
-            stream);
+        var messages = request.Messages
+            .Select(static message => new ChatTurn(message.Role ?? "user", message.Content ?? string.Empty))
+            .ToArray();
+        var options = LocalInferenceService.MergeOptions(
+            CompletionOptions.Default,
+            null,
+            null,
+            null,
+            request.Options);
+
+        try
+        {
+            var result = inferenceService.Chat(model, messages, options, context.RequestAborted);
+            await WriteOllamaChatSuccessAsync(context, model.Id, result, stream);
+        }
+        catch (InferenceException exception)
+        {
+            await WriteOllamaRuntimeUnavailableAsync(context, diagnosticsProvider.GetRuntimeFailure(model.Id, exception), stream);
+        }
+        catch (Exception exception) when (IsNativeRuntimeException(exception))
+        {
+            await WriteOllamaRuntimeUnavailableAsync(context, diagnosticsProvider.GetRuntimeFailure(model.Id, CreateNativeRuntimeException(exception)), stream);
+        }
     }
 
     private static async Task<T?> ReadOpenAiRequestAsync<T>(
@@ -759,6 +888,207 @@ public static class ApiRouteExtensions
             StatusCodes.Status503ServiceUnavailable);
     }
 
+    private static async Task WriteOpenAiChatCompletionSuccessAsync(
+        HttpContext context,
+        string model,
+        CompletionResult result,
+        bool stream)
+    {
+        var id = $"chatcmpl-{Guid.NewGuid():N}";
+        var created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var usage = ToOpenAiUsage(result.Usage);
+
+        if (stream)
+        {
+            context.Response.StatusCode = StatusCodes.Status200OK;
+            context.Response.ContentType = "text/event-stream; charset=utf-8";
+            context.Response.Headers.CacheControl = "no-cache";
+
+            await WriteOpenAiChatChunkAsync(
+                context,
+                new OpenAiChatCompletionChunk(
+                    id,
+                    "chat.completion.chunk",
+                    created,
+                    model,
+                    [new OpenAiChatCompletionChunkChoice(0, new OpenAiChatCompletionDelta("assistant", result.Text), null)],
+                    null));
+
+            await WriteOpenAiChatChunkAsync(
+                context,
+                new OpenAiChatCompletionChunk(
+                    id,
+                    "chat.completion.chunk",
+                    created,
+                    model,
+                    [new OpenAiChatCompletionChunkChoice(0, new OpenAiChatCompletionDelta(null, null), "stop")],
+                    usage));
+
+            await context.Response.WriteAsync("data: [DONE]\n\n", context.RequestAborted);
+            return;
+        }
+
+        var response = new OpenAiChatCompletionResponse(
+            id,
+            "chat.completion",
+            created,
+            model,
+            [new OpenAiChatCompletionChoice(0, new OpenAiChatCompletionMessage("assistant", result.Text), "stop")],
+            usage);
+
+        await JsonHttpResponse.WriteAsync(
+            context,
+            response,
+            AppJsonSerializerContext.Default.OpenAiChatCompletionResponse);
+    }
+
+    private static async Task WriteOpenAiCompletionSuccessAsync(
+        HttpContext context,
+        string model,
+        CompletionResult result,
+        bool stream)
+    {
+        var id = $"cmpl-{Guid.NewGuid():N}";
+        var created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var usage = ToOpenAiUsage(result.Usage);
+
+        if (stream)
+        {
+            context.Response.StatusCode = StatusCodes.Status200OK;
+            context.Response.ContentType = "text/event-stream; charset=utf-8";
+            context.Response.Headers.CacheControl = "no-cache";
+
+            await WriteOpenAiCompletionChunkAsync(
+                context,
+                new OpenAiCompletionChunk(
+                    id,
+                    "text_completion",
+                    created,
+                    model,
+                    [new OpenAiCompletionChunkChoice(result.Text, 0, null)],
+                    null));
+
+            await WriteOpenAiCompletionChunkAsync(
+                context,
+                new OpenAiCompletionChunk(
+                    id,
+                    "text_completion",
+                    created,
+                    model,
+                    [new OpenAiCompletionChunkChoice(string.Empty, 0, "stop")],
+                    usage));
+
+            await context.Response.WriteAsync("data: [DONE]\n\n", context.RequestAborted);
+            return;
+        }
+
+        var response = new OpenAiCompletionResponse(
+            id,
+            "text_completion",
+            created,
+            model,
+            [new OpenAiCompletionChoice(result.Text, 0, "stop")],
+            usage);
+
+        await JsonHttpResponse.WriteAsync(
+            context,
+            response,
+            AppJsonSerializerContext.Default.OpenAiCompletionResponse);
+    }
+
+    private static async Task WriteOllamaGenerateSuccessAsync(
+        HttpContext context,
+        string model,
+        CompletionResult result,
+        bool stream)
+    {
+        var response = new OllamaGenerateResponse(
+            model,
+            DateTimeOffset.UtcNow,
+            result.Text,
+            true,
+            null,
+            ToNanoseconds(result.Elapsed),
+            0,
+            result.Usage.PromptTokens,
+            result.Usage.CompletionTokens);
+
+        if (stream)
+        {
+            context.Response.StatusCode = StatusCodes.Status200OK;
+            context.Response.ContentType = "application/x-ndjson; charset=utf-8";
+            await System.Text.Json.JsonSerializer.SerializeAsync(
+                context.Response.Body,
+                response,
+                AppJsonSerializerContext.Default.OllamaGenerateResponse,
+                context.RequestAborted);
+            await context.Response.WriteAsync("\n", context.RequestAborted);
+            return;
+        }
+
+        await JsonHttpResponse.WriteAsync(
+            context,
+            response,
+            AppJsonSerializerContext.Default.OllamaGenerateResponse);
+    }
+
+    private static async Task WriteOllamaChatSuccessAsync(
+        HttpContext context,
+        string model,
+        CompletionResult result,
+        bool stream)
+    {
+        var response = new OllamaChatResponse(
+            model,
+            DateTimeOffset.UtcNow,
+            new OllamaChatMessage("assistant", result.Text),
+            true,
+            ToNanoseconds(result.Elapsed),
+            0,
+            result.Usage.PromptTokens,
+            result.Usage.CompletionTokens);
+
+        if (stream)
+        {
+            context.Response.StatusCode = StatusCodes.Status200OK;
+            context.Response.ContentType = "application/x-ndjson; charset=utf-8";
+            await System.Text.Json.JsonSerializer.SerializeAsync(
+                context.Response.Body,
+                response,
+                AppJsonSerializerContext.Default.OllamaChatResponse,
+                context.RequestAborted);
+            await context.Response.WriteAsync("\n", context.RequestAborted);
+            return;
+        }
+
+        await JsonHttpResponse.WriteAsync(
+            context,
+            response,
+            AppJsonSerializerContext.Default.OllamaChatResponse);
+    }
+
+    private static async Task WriteOpenAiChatChunkAsync(HttpContext context, OpenAiChatCompletionChunk chunk)
+    {
+        await context.Response.WriteAsync("data: ", context.RequestAborted);
+        await System.Text.Json.JsonSerializer.SerializeAsync(
+            context.Response.Body,
+            chunk,
+            AppJsonSerializerContext.Default.OpenAiChatCompletionChunk,
+            context.RequestAborted);
+        await context.Response.WriteAsync("\n\n", context.RequestAborted);
+    }
+
+    private static async Task WriteOpenAiCompletionChunkAsync(HttpContext context, OpenAiCompletionChunk chunk)
+    {
+        await context.Response.WriteAsync("data: ", context.RequestAborted);
+        await System.Text.Json.JsonSerializer.SerializeAsync(
+            context.Response.Body,
+            chunk,
+            AppJsonSerializerContext.Default.OpenAiCompletionChunk,
+            context.RequestAborted);
+        await context.Response.WriteAsync("\n\n", context.RequestAborted);
+    }
+
     private static async Task WriteOpenAiInvalidRequestAsync(HttpContext context, string message)
     {
         var error = OpenAiErrorResponse.InvalidRequest(message);
@@ -777,6 +1107,118 @@ public static class ApiRouteExtensions
             error,
             AppJsonSerializerContext.Default.OllamaErrorResponse,
             StatusCodes.Status400BadRequest);
+    }
+
+    private static bool IsNativeRuntimeException(Exception exception)
+        => exception is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException;
+
+    private static InferenceException CreateNativeRuntimeException(Exception exception)
+    {
+        return new InferenceException(
+            "native_runtime_unavailable",
+            $"The llama.cpp native runtime could not be used: {exception.Message}",
+            [
+                "Run tomur native prepare to extract or repair the managed runtime bundle.",
+                "Run tomur doctor to inspect native runtime status."
+            ],
+            exception);
+    }
+
+    private static OpenAiUsage ToOpenAiUsage(TokenUsage usage)
+        => new(usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens);
+
+    private static long ToNanoseconds(TimeSpan elapsed)
+        => elapsed.Ticks * 100L;
+
+    private static string BuildOllamaGeneratePrompt(OllamaGenerateRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.System))
+        {
+            return request.Prompt ?? string.Empty;
+        }
+
+        return $"[SYSTEM]\n{request.System.Trim()}\n\n[USER]\n{request.Prompt?.Trim() ?? string.Empty}";
+    }
+
+    private static string ExtractOpenAiTextContent(JsonElement? element)
+    {
+        if (element is null)
+        {
+            return string.Empty;
+        }
+
+        var value = element.Value;
+        if (value.ValueKind == JsonValueKind.String)
+        {
+            return value.GetString() ?? string.Empty;
+        }
+
+        if (value.ValueKind == JsonValueKind.Array)
+        {
+            var parts = new List<string>();
+            foreach (var item in value.EnumerateArray())
+            {
+                if (item.ValueKind == JsonValueKind.String)
+                {
+                    parts.Add(item.GetString() ?? string.Empty);
+                    continue;
+                }
+
+                if (item.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                if (item.TryGetProperty("text", out var text) && text.ValueKind == JsonValueKind.String)
+                {
+                    parts.Add(text.GetString() ?? string.Empty);
+                    continue;
+                }
+
+                if (item.TryGetProperty("type", out var type) &&
+                    type.ValueKind == JsonValueKind.String &&
+                    string.Equals(type.GetString(), "text", StringComparison.OrdinalIgnoreCase) &&
+                    item.TryGetProperty("content", out var content) &&
+                    content.ValueKind == JsonValueKind.String)
+                {
+                    parts.Add(content.GetString() ?? string.Empty);
+                }
+            }
+
+            return string.Join("\n", parts.Where(static part => !string.IsNullOrWhiteSpace(part)));
+        }
+
+        return value.GetRawText();
+    }
+
+    private static IReadOnlyList<string> ExtractEmbeddingInputs(JsonElement? input)
+    {
+        if (input is null)
+        {
+            return [];
+        }
+
+        var value = input.Value;
+        if (value.ValueKind == JsonValueKind.String)
+        {
+            return [value.GetString() ?? string.Empty];
+        }
+
+        if (value.ValueKind != JsonValueKind.Array)
+        {
+            return [value.GetRawText()];
+        }
+
+        var inputs = new List<string>();
+        foreach (var item in value.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.String)
+            {
+                inputs.Add(item.GetString() ?? string.Empty);
+            }
+        }
+
+        return inputs;
     }
 
     private static int EstimateJsonElementCharacters(JsonElement? element)

@@ -121,14 +121,14 @@ internal static class ModelCommand
         {
             Console.WriteLine($"- {model.Id}");
             Console.WriteLine($"  package: {model.PackageId ?? "manual-import"}");
-            Console.WriteLine($"  status: available, not loaded");
-            Console.WriteLine($"  runtime: not_configured");
+            Console.WriteLine($"  status: available");
+            Console.WriteLine($"  runtime: load-on-first-request");
             Console.WriteLine($"  file: {model.RelativePath}");
             Console.WriteLine($"  size: {CommandLineHelpers.FormatBytes(model.SizeBytes)}");
         }
 
         Console.WriteLine();
-        Console.WriteLine("Local inference loading is planned for R7; R6 only reports model asset visibility.");
+        Console.WriteLine("Tomur loads one local llama.cpp session on the first compatible API request. Use /api/runtime/status on the running service to inspect the active session.");
         return 0;
     }
 
@@ -362,7 +362,7 @@ Options:
 Usage:
   tomur ps [--data-dir <path>]
 
-Shows model assets visible to Tomur. R6 does not load inference sessions yet.
+Shows model assets visible to Tomur. The running service loads a llama.cpp session on first compatible API request.
 """);
     }
 }

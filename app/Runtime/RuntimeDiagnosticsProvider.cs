@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Runtime.InteropServices;
 using Tomur.Config;
+using Tomur.Inference;
 using Tomur.Native;
 using Tomur.Storage;
 
@@ -14,17 +15,20 @@ public sealed class RuntimeDiagnosticsProvider
     private readonly DataPaths basePaths;
     private readonly INativeBundleProbe nativeBundleProbe;
     private readonly ServerOptions serverOptions;
+    private readonly LocalInferenceService? inferenceService;
 
     public RuntimeDiagnosticsProvider(
         ConfigurationStore configurationStore,
         DataPaths basePaths,
         INativeBundleProbe? nativeBundleProbe = null,
-        ServerOptions? serverOptions = null)
+        ServerOptions? serverOptions = null,
+        LocalInferenceService? inferenceService = null)
     {
         this.configurationStore = configurationStore;
         this.basePaths = basePaths;
         this.nativeBundleProbe = nativeBundleProbe ?? new NativeBundleProbe(basePaths);
         this.serverOptions = serverOptions ?? new ServerOptions();
+        this.inferenceService = inferenceService;
     }
 
     public RuntimeDiagnostic GetRuntimeUnavailable(string? model)
@@ -32,13 +36,30 @@ public sealed class RuntimeDiagnosticsProvider
         return new RuntimeDiagnostic(
             "unavailable",
             "runtime_not_configured",
-            "Local model runtime is not configured yet. The API contract is available but model inference is not connected.",
+            "The requested local runtime backend is not connected yet.",
             string.IsNullOrWhiteSpace(model) ? null : model,
             [
                 "Run tomur doctor to inspect the local runtime status.",
-                "Prepare native runtime and model assets in the matching Tomur milestone.",
-                "Do not treat this response as model inference output."
+                "Verify that the requested API belongs to an implemented runtime milestone.",
+                "Text generation uses R7 llama.cpp runtime; image, audio and vision backends remain later milestones."
             ]);
+    }
+
+    public RuntimeDiagnostic GetRuntimeFailure(string? model, Tomur.Inference.InferenceException exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+
+        return new RuntimeDiagnostic(
+            "error",
+            exception.Code,
+            exception.Message,
+            string.IsNullOrWhiteSpace(model) ? null : model,
+            exception.Actions.Count == 0
+                ? [
+                    "Run tomur doctor to inspect the local runtime status.",
+                    "Use /v1/models or /api/tags to verify the selected local model."
+                ]
+                : exception.Actions);
     }
 
     public RuntimeDiagnostic GetModelNotDownloaded(string? model)
@@ -100,7 +121,7 @@ public sealed class RuntimeDiagnosticsProvider
         var proxy = GetProxyState();
         var port = GetPortState(ResolveServiceUrls(configuration.Configuration));
         var nativeBundle = nativeBundleProbe.Probe(paths.RuntimeDirectory);
-        var runtime = GetRuntimeUnavailable(null);
+        var runtime = GetRuntimeDiagnostic(nativeBundle);
         var diagnostics = BuildDiagnostics(configuration, directories, database, apiKeys, disk, proxy, port, nativeBundle, runtime);
         var resolvedPathConfiguration = paths.ToPathConfiguration();
 
@@ -127,6 +148,64 @@ public sealed class RuntimeDiagnosticsProvider
         return string.IsNullOrWhiteSpace(serverOptions.Urls)
             ? configuration.Server.Urls
             : serverOptions.Urls;
+    }
+
+    private RuntimeDiagnostic GetRuntimeDiagnostic(NativeBundleProbeResult nativeBundle)
+    {
+        var llama = nativeBundle.Components.FirstOrDefault(static component =>
+            string.Equals(component.Id, "llama", StringComparison.OrdinalIgnoreCase));
+        if (llama is null || !string.Equals(llama.Status, "ok", StringComparison.OrdinalIgnoreCase))
+        {
+            return new RuntimeDiagnostic(
+                "error",
+                "native_runtime_unavailable",
+                llama?.Message ?? "The llama.cpp native runtime component is not available.",
+                null,
+                [
+                    "Run tomur native prepare to extract or repair the managed runtime bundle.",
+                    "Run tomur doctor to inspect native runtime status."
+                ]);
+        }
+
+        var snapshot = inferenceService?.GetSnapshot();
+        if (snapshot is null)
+        {
+            return new RuntimeDiagnostic(
+                "available",
+                "runtime_ready",
+                "Local llama.cpp runtime is prepared. No model session is loaded yet.",
+                null,
+                [
+                    "Send a chat, completion or embedding request with a visible local GGUF model to load the first session.",
+                    "Use tomur ps to inspect visible model files."
+                ]);
+        }
+
+        if (!snapshot.Loaded)
+        {
+            return new RuntimeDiagnostic(
+                "available",
+                "runtime_ready",
+                "Local llama.cpp runtime is prepared. No model session is loaded yet.",
+                null,
+                [
+                    "Send a chat, completion or embedding request with a visible local GGUF model to load the first session.",
+                    "Use tomur ps to inspect visible model files."
+                ]);
+        }
+
+        return new RuntimeDiagnostic(
+            "ok",
+            "runtime_loaded",
+            $"Local llama.cpp {snapshot.Mode ?? "session"} session is loaded for model '{snapshot.ModelId}'.",
+            snapshot.ModelId,
+            [
+                $"Loaded at: {snapshot.LoadedAt:O}",
+                $"Mode: {snapshot.Mode ?? "unknown"}",
+                $"Requests handled: {snapshot.RequestCount}",
+                $"Prompt tokens: {snapshot.PromptTokens}",
+                $"Completion tokens: {snapshot.CompletionTokens}"
+            ]);
     }
 
     private static SystemSnapshot GetSystemSnapshot()
@@ -336,7 +415,7 @@ public sealed class RuntimeDiagnosticsProvider
         diagnostics.Add(ToDiagnostic(
             "runtime",
             runtime.Status,
-            "warning",
+            runtime.Status == "error" ? "error" : "ok",
             runtime.Message,
             runtime.Code,
             runtime.Actions));

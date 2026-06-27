@@ -85,7 +85,7 @@ public sealed class NativeLibraryLoader(INativeLibraryResolver resolver) : INati
             null,
             $"Native library was found but could not be loaded: {message}");
 
-    private static void RegisterSearchPath(string path)
+    internal static void RegisterSearchPath(string path)
     {
         if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
         {
