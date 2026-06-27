@@ -33,12 +33,13 @@ public sealed class LlamaImportResolver
     private IntPtr ResolveImport(string libraryName, Assembly assembly, DllImportSearchPath? searchPath)
     {
         var normalized = NormalizeLibraryName(libraryName);
-        if (normalized is not "llama" and not "ggml" and not "ggml-base")
+        var componentId = ResolveComponentId(normalized);
+        if (componentId is null)
         {
             return IntPtr.Zero;
         }
 
-        var resolution = resolver.Resolve("llama", normalized);
+        var resolution = resolver.Resolve(componentId, normalized);
         if (!resolution.Exists || resolution.ChecksumStatus == "mismatch")
         {
             return IntPtr.Zero;
@@ -70,5 +71,17 @@ public sealed class LlamaImportResolver
         }
 
         return fileName;
+    }
+
+    private static string? ResolveComponentId(string libraryName)
+    {
+        return libraryName switch
+        {
+            "llama" or "ggml" or "ggml-base" or "ggml-cpu" or "tomur-llama-mtmd" or "tomur-llama-vlm" => "llama",
+            "tomur-ocr" or "tomur-mtmd" => "ocr",
+            "tomur-tts" => "tts",
+            "stable-diffusion" => "stable-diffusion",
+            _ => null
+        };
     }
 }

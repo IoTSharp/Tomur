@@ -23,18 +23,20 @@ public sealed class MultimodalRuntimeService
             ModelRequirement: "Install outetts-0.2-500m-q4km for local text-to-speech."),
         new(
             Id: "ocr",
-            DisplayName: "PaddleOCR",
+            DisplayName: "PaddleOCR-VL",
             Capability: "ocr",
             NativeComponentId: "ocr",
             RequiredModelCapabilities: ["ocr"],
-            ModelRequirement: "Install an OCR-capable bundle before document OCR requests."),
+            ModelRequirement: "Install qwen3-vl-4b-instruct-q4km or another OCR-capable VLM bundle before document OCR requests.",
+            ExecutionConnected: true),
         new(
             Id: "image-generation",
             DisplayName: "stable-diffusion.cpp image generation",
             Capability: "image_generation",
             NativeComponentId: "stable-diffusion",
             RequiredModelCapabilities: ["image"],
-            ModelRequirement: "Install flux2-klein-4b-q4km for local image generation."),
+            ModelRequirement: "Install flux2-klein-4b-q4km for local image generation.",
+            ExecutionConnected: true),
         new(
             Id: "vlm",
             DisplayName: "llama.cpp VLM",
@@ -42,7 +44,8 @@ public sealed class MultimodalRuntimeService
             NativeComponentId: "llama",
             RequiredModelCapabilities: ["vision"],
             RequiredNativeLibraryNames: ["tomur-llama-mtmd", "tomur-llama-vlm"],
-            ModelRequirement: "Install qwen3-vl-4b-instruct-q4km with its mmproj sidecar for local vision-language chat.")
+            ModelRequirement: "Install qwen3-vl-4b-instruct-q4km with its mmproj sidecar for local vision-language chat.",
+            ExecutionConnected: true)
     ];
 
     private readonly INativeBundleProbe nativeBundleProbe;
@@ -189,7 +192,9 @@ public sealed class MultimodalRuntimeService
     {
         if (nativeReady && modelReady)
         {
-            return $"{definition.DisplayName} has visible native assets and model assets; endpoint adapter execution is the next R8 step.";
+            return definition.ExecutionConnected
+                ? $"{definition.DisplayName} has visible native assets and model assets; connected R8 endpoint adapters load on demand."
+                : $"{definition.DisplayName} has visible native assets and model assets; execution remains diagnostic until its R8 adapter is connected.";
         }
 
         if (!nativeReady)
@@ -217,7 +222,9 @@ public sealed class MultimodalRuntimeService
 
         if (actions.Count == 0)
         {
-            actions.Add("Use the dedicated R8 endpoint adapter once it is connected.");
+            actions.Add(definition.ExecutionConnected
+                ? "Use the dedicated R8 endpoint adapter for an on-demand execution attempt."
+                : "Track the remaining R8 adapter task before expecting real execution.");
         }
 
         return actions;
@@ -230,7 +237,8 @@ public sealed class MultimodalRuntimeService
         string NativeComponentId,
         IReadOnlyList<string> RequiredModelCapabilities,
         string ModelRequirement,
-        IReadOnlyList<string>? RequiredNativeLibraryNames = null)
+        IReadOnlyList<string>? RequiredNativeLibraryNames = null,
+        bool ExecutionConnected = false)
     {
         public IReadOnlyList<string> RequiredNativeLibraries { get; } = RequiredNativeLibraryNames ?? [];
     }

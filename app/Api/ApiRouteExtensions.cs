@@ -125,6 +125,11 @@ public static class ApiRouteExtensions
         app.MapPost("/v1/completions", HandleOpenAiCompletionsAsync);
         app.MapPost("/v1/embeddings", HandleOpenAiEmbeddingsAsync);
         app.MapPost("/v1/images/generations", HandleOpenAiImageGenerationsAsync);
+        app.MapPost("/v1/audio/transcriptions", HandleOpenAiAudioTranscriptionsAsync);
+        app.MapPost("/v1/audio/speech", HandleOpenAiAudioSpeechAsync);
+
+        app.MapPost("/api/vision/analyze", HandleVisionAnalyzeAsync);
+        app.MapPost("/api/ocr/analyze", HandleOcrAnalyzeAsync);
 
         app.MapGet("/api/tags", HandleOllamaTagsAsync);
         app.MapPost("/api/show", HandleOllamaShowAsync);
@@ -153,6 +158,10 @@ public static class ApiRouteExtensions
                     "POST /v1/completions",
                     "POST /v1/embeddings",
                     "POST /v1/images/generations",
+                    "POST /v1/audio/transcriptions",
+                    "POST /v1/audio/speech",
+                    "POST /api/vision/analyze",
+                    "POST /api/ocr/analyze",
                     "/api/tags",
                     "POST /api/show",
                     "POST /api/generate",
@@ -284,7 +293,8 @@ public static class ApiRouteExtensions
         HttpContext context,
         RuntimeDiagnosticsProvider diagnosticsProvider,
         LocalModelCatalog modelCatalog,
-        LocalInferenceService inferenceService)
+        LocalInferenceService inferenceService,
+        MultimodalExecutionService multimodalExecution)
     {
         var request = await ReadOpenAiRequestAsync(
             context,
@@ -302,7 +312,56 @@ public static class ApiRouteExtensions
 
         if (request.Messages is null || request.Messages.Count == 0)
         {
-            await WriteOpenAiInvalidRequestAsync(context, "The messages field must contain at least one message.");
+            await WriteOpenAiInvalidRequestAsync(
+                context,
+                "The messages field must contain at least one message.",
+                request.Stream == true);
+            return;
+        }
+
+        if (ContainsOpenAiImageContent(request.Messages))
+        {
+            if (!ModelHasCapability(model, "vision"))
+            {
+                var diagnostic = multimodalExecution.CreateCapabilityMismatchDiagnostic(
+                    model.Id,
+                    "vision",
+                    "/v1/chat/completions");
+                await WriteOpenAiDiagnosticAsync(context, diagnostic, StatusCodes.Status400BadRequest, request.Stream == true);
+                return;
+            }
+
+            if (!TryCreateOpenAiVisionInput(request.Messages, out var prompt, out var images, out var imageError))
+            {
+                await WriteOpenAiInvalidRequestAsync(context, imageError, request.Stream == true);
+                return;
+            }
+
+            var options = LocalInferenceService.MergeOptions(
+                CompletionOptions.Default,
+                request.Temperature,
+                request.TopP,
+                request.MaxTokens);
+
+            try
+            {
+                var result = multimodalExecution.AnalyzeVision(model, prompt, images, options, context.RequestAborted);
+                var completionResult = new CompletionResult(
+                    result.Text,
+                    EstimateVisionUsage(prompt, result.Text),
+                    result.Elapsed,
+                    result.Diagnostics);
+                await WriteOpenAiChatCompletionSuccessAsync(context, model.Id, completionResult, request.Stream == true);
+            }
+            catch (InferenceException exception)
+            {
+                await WriteOpenAiRuntimeUnavailableAsync(context, diagnosticsProvider.GetRuntimeFailure(model.Id, exception), request.Stream == true);
+            }
+            catch (Exception exception) when (IsNativeRuntimeException(exception))
+            {
+                await WriteOpenAiRuntimeUnavailableAsync(context, diagnosticsProvider.GetRuntimeFailure(model.Id, CreateNativeRuntimeException(exception)), request.Stream == true);
+            }
+
             return;
         }
 
@@ -475,7 +534,7 @@ public static class ApiRouteExtensions
         HttpContext context,
         RuntimeDiagnosticsProvider diagnosticsProvider,
         LocalModelCatalog modelCatalog,
-        MultimodalRuntimeService multimodalRuntime)
+        MultimodalExecutionService multimodalExecution)
     {
         var request = await ReadOpenAiRequestAsync(
             context,
@@ -491,6 +550,16 @@ public static class ApiRouteExtensions
             return;
         }
 
+        if (!ModelHasCapability(model, "image"))
+        {
+            var diagnostic = multimodalExecution.CreateCapabilityMismatchDiagnostic(
+                model.Id,
+                "image",
+                "/v1/images/generations");
+            await WriteOpenAiDiagnosticAsync(context, diagnostic, StatusCodes.Status400BadRequest);
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(request.Prompt))
         {
             await WriteOpenAiInvalidRequestAsync(context, "The prompt field is required.");
@@ -502,13 +571,429 @@ public static class ApiRouteExtensions
             return;
         }
 
+        if (request.Count is not null && request.Count.Value != 1)
+        {
+            await WriteOpenAiInvalidRequestAsync(context, "The n field currently supports only 1.");
+            return;
+        }
+
+        if (!TryParseImageSize(request.Size, out var width, out var height, out var sizeError))
+        {
+            await WriteOpenAiInvalidRequestAsync(context, sizeError);
+            return;
+        }
+
+        var responseFormat = NormalizeImageResponseFormat(request.ResponseFormat);
+        if (responseFormat is null)
+        {
+            await WriteOpenAiInvalidRequestAsync(context, "The response_format field must be 'url' or 'b64_json'.");
+            return;
+        }
+
+        var options = new ImageGenerationOptions(
+            request.Prompt.Trim(),
+            request.NegativePrompt,
+            width,
+            height,
+            Math.Clamp(request.Steps ?? 20, 1, 100),
+            Math.Clamp(ToFloat(request.CfgScale, 7.0f), 1.0f, 20.0f),
+            request.Seed ?? -1,
+            request.SampleMethod,
+            request.Scheduler);
+
+        try
+        {
+            var result = multimodalExecution.GenerateImage(model, options, context.RequestAborted);
+            var imageBase64 = Convert.ToBase64String(result.Bytes);
+            var mimeType = ResolveImageMimeType(result.Format);
+            var data = responseFormat == "b64_json"
+                ? new OpenAiImageGenerationData(null, imageBase64, request.Prompt.Trim())
+                : new OpenAiImageGenerationData($"data:{mimeType};base64,{imageBase64}", null, request.Prompt.Trim());
+            var response = new OpenAiImageGenerationResponse(
+                DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                [data]);
+            await JsonHttpResponse.WriteAsync(
+                context,
+                response,
+                AppJsonSerializerContext.Default.OpenAiImageGenerationResponse);
+        }
+        catch (InferenceException exception)
+        {
+            var response = OpenAiErrorResponse.RuntimeUnavailable(diagnosticsProvider.GetRuntimeFailure(model.Id, exception));
+            await JsonHttpResponse.WriteAsync(
+                context,
+                response,
+                AppJsonSerializerContext.Default.OpenAiErrorResponse,
+                StatusCodes.Status503ServiceUnavailable);
+        }
+        catch (Exception exception) when (IsNativeRuntimeException(exception))
+        {
+            var response = OpenAiErrorResponse.RuntimeUnavailable(diagnosticsProvider.GetRuntimeFailure(model.Id, CreateNativeRuntimeException(exception)));
+            await JsonHttpResponse.WriteAsync(
+                context,
+                response,
+                AppJsonSerializerContext.Default.OpenAiErrorResponse,
+                StatusCodes.Status503ServiceUnavailable);
+        }
+    }
+
+    private static async Task HandleOpenAiAudioTranscriptionsAsync(
+        HttpContext context,
+        RuntimeDiagnosticsProvider diagnosticsProvider,
+        LocalModelCatalog modelCatalog,
+        MultimodalExecutionService multimodalExecution)
+    {
+        if (!context.Request.HasFormContentType)
+        {
+            await WriteOpenAiInvalidRequestAsync(context, "The request must use multipart/form-data.");
+            return;
+        }
+
+        var form = await context.Request.ReadFormAsync(context.RequestAborted);
+        var requestedModel = form["model"].FirstOrDefault();
+        var model = await RequireOpenAiModelAsync(context, requestedModel, diagnosticsProvider, modelCatalog, stream: false);
+        if (model is null)
+        {
+            return;
+        }
+
+        if (!ModelHasCapability(model, "audio"))
+        {
+            var diagnostic = multimodalExecution.CreateCapabilityMismatchDiagnostic(
+                model.Id,
+                "audio",
+                "/v1/audio/transcriptions");
+            await WriteOpenAiDiagnosticAsync(context, diagnostic, StatusCodes.Status400BadRequest);
+            return;
+        }
+
+        var file = form.Files.GetFile("file") ?? form.Files.FirstOrDefault();
+        if (file is null || file.Length == 0)
+        {
+            await WriteOpenAiInvalidRequestAsync(context, "The file field is required and must contain audio bytes.");
+            return;
+        }
+
+        if (file.Length > CompatibilityProtocolLimits.MaxAudioBytes)
+        {
+            await WriteOpenAiInvalidRequestAsync(context, $"The audio file is too large. Limit: {CompatibilityProtocolLimits.MaxAudioBytes} bytes.");
+            return;
+        }
+
         var response = OpenAiErrorResponse.RuntimeUnavailable(
-            diagnosticsProvider.GetMultimodalRuntimeUnavailable(model.Id, multimodalRuntime.GetBackendStatus("image-generation")));
+            multimodalExecution.CreateUnavailableDiagnostic("asr", model.Id));
         await JsonHttpResponse.WriteAsync(
             context,
             response,
             AppJsonSerializerContext.Default.OpenAiErrorResponse,
             StatusCodes.Status503ServiceUnavailable);
+    }
+
+    private static async Task HandleOpenAiAudioSpeechAsync(
+        HttpContext context,
+        RuntimeDiagnosticsProvider diagnosticsProvider,
+        LocalModelCatalog modelCatalog,
+        MultimodalExecutionService multimodalExecution)
+    {
+        var request = await ReadOpenAiRequestAsync(
+            context,
+            AppJsonSerializerContext.Default.OpenAiAudioSpeechRequest);
+        if (request is null)
+        {
+            return;
+        }
+
+        var model = await RequireOpenAiModelAsync(context, request.Model, diagnosticsProvider, modelCatalog, stream: false);
+        if (model is null)
+        {
+            return;
+        }
+
+        if (!ModelHasCapability(model, "audio-output"))
+        {
+            var diagnostic = multimodalExecution.CreateCapabilityMismatchDiagnostic(
+                model.Id,
+                "audio-output",
+                "/v1/audio/speech");
+            await WriteOpenAiDiagnosticAsync(context, diagnostic, StatusCodes.Status400BadRequest);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Input))
+        {
+            await WriteOpenAiInvalidRequestAsync(context, "The input field is required.");
+            return;
+        }
+
+        if (!await RequireOpenAiInputWithinLimitAsync(context, diagnosticsProvider, request.Model, request.Input.Length, stream: false))
+        {
+            return;
+        }
+
+        var response = OpenAiErrorResponse.RuntimeUnavailable(
+            multimodalExecution.CreateUnavailableDiagnostic("tts", model.Id));
+        await JsonHttpResponse.WriteAsync(
+            context,
+            response,
+            AppJsonSerializerContext.Default.OpenAiErrorResponse,
+            StatusCodes.Status503ServiceUnavailable);
+    }
+
+    private static async Task HandleVisionAnalyzeAsync(
+        HttpContext context,
+        RuntimeDiagnosticsProvider diagnosticsProvider,
+        LocalModelCatalog modelCatalog,
+        MultimodalExecutionService multimodalExecution)
+    {
+        var request = await ReadMultimodalRequestAsync(
+            context,
+            AppJsonSerializerContext.Default.VisionAnalysisRequest,
+            "/api/vision/analyze",
+            "vlm",
+            multimodalExecution);
+        if (request is null)
+        {
+            return;
+        }
+
+        var inputSummary = new MultimodalInputSummary(
+            request.Prompt?.Length ?? 0,
+            request.Images?.Count ?? 0,
+            null,
+            null,
+            null);
+        var model = await ResolveLocalEndpointModelAsync(
+            context,
+            diagnosticsProvider,
+            modelCatalog,
+            multimodalExecution,
+            request.Model,
+            requiredCapability: "vision",
+            route: "/api/vision/analyze",
+            backendId: "vlm",
+            inputSummary);
+        if (model is null)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Prompt))
+        {
+            await WriteMultimodalDiagnosticAsync(
+                context,
+                multimodalExecution.CreateDiagnosticResponse(
+                    "/api/vision/analyze",
+                    "vlm",
+                    request.Model,
+                    MultimodalExecutionService.CreateInvalidRequestDiagnostic("/api/vision/analyze", "The prompt field is required.", request.Model),
+                    inputSummary),
+                StatusCodes.Status400BadRequest);
+            return;
+        }
+
+        if (request.Images is null || request.Images.Count == 0)
+        {
+            await WriteMultimodalDiagnosticAsync(
+                context,
+                multimodalExecution.CreateDiagnosticResponse(
+                    "/api/vision/analyze",
+                    "vlm",
+                    model.Id,
+                    MultimodalExecutionService.CreateInvalidRequestDiagnostic("/api/vision/analyze", "At least one image is required.", model.Id),
+                    inputSummary),
+                StatusCodes.Status400BadRequest);
+            return;
+        }
+
+        if (request.Images.Count > CompatibilityProtocolLimits.MaxImageCount)
+        {
+            await WriteMultimodalDiagnosticAsync(
+                context,
+                multimodalExecution.CreateDiagnosticResponse(
+                    "/api/vision/analyze",
+                    "vlm",
+                    model.Id,
+                    MultimodalExecutionService.CreateInvalidRequestDiagnostic("/api/vision/analyze", $"Too many images. Limit: {CompatibilityProtocolLimits.MaxImageCount}.", model.Id),
+                    inputSummary),
+                StatusCodes.Status400BadRequest);
+            return;
+        }
+
+        if (!TryCreateImageInputs(request.Images, out var images, out var imageError))
+        {
+            await WriteMultimodalDiagnosticAsync(
+                context,
+                multimodalExecution.CreateDiagnosticResponse(
+                    "/api/vision/analyze",
+                    "vlm",
+                    model.Id,
+                    MultimodalExecutionService.CreateInvalidRequestDiagnostic("/api/vision/analyze", imageError, model.Id),
+                    inputSummary),
+                StatusCodes.Status400BadRequest);
+            return;
+        }
+
+        var options = LocalInferenceService.MergeOptions(
+            CompletionOptions.Default,
+            request.Temperature,
+            null,
+            request.MaxTokens);
+
+        try
+        {
+            var result = multimodalExecution.AnalyzeVision(model, request.Prompt, images, options, context.RequestAborted);
+            await WriteMultimodalTextAsync(
+                context,
+                multimodalExecution.CreateTextResponse("/api/vision/analyze", "vlm", model.Id, result, inputSummary));
+        }
+        catch (InferenceException exception)
+        {
+            await WriteMultimodalDiagnosticAsync(
+                context,
+                multimodalExecution.CreateDiagnosticResponse(
+                    "/api/vision/analyze",
+                    "vlm",
+                    model.Id,
+                    diagnosticsProvider.GetRuntimeFailure(model.Id, exception),
+                    inputSummary),
+                StatusCodes.Status503ServiceUnavailable);
+        }
+        catch (Exception exception) when (IsNativeRuntimeException(exception))
+        {
+            await WriteMultimodalDiagnosticAsync(
+                context,
+                multimodalExecution.CreateDiagnosticResponse(
+                    "/api/vision/analyze",
+                    "vlm",
+                    model.Id,
+                    diagnosticsProvider.GetRuntimeFailure(model.Id, CreateNativeRuntimeException(exception)),
+                    inputSummary),
+                StatusCodes.Status503ServiceUnavailable);
+        }
+    }
+
+    private static async Task HandleOcrAnalyzeAsync(
+        HttpContext context,
+        RuntimeDiagnosticsProvider diagnosticsProvider,
+        LocalModelCatalog modelCatalog,
+        MultimodalExecutionService multimodalExecution)
+    {
+        var request = await ReadMultimodalRequestAsync(
+            context,
+            AppJsonSerializerContext.Default.OcrAnalysisRequest,
+            "/api/ocr/analyze",
+            "ocr",
+            multimodalExecution);
+        if (request is null)
+        {
+            return;
+        }
+
+        var inputSummary = new MultimodalInputSummary(
+            request.Prompt?.Length ?? 0,
+            request.Image is null ? 0 : 1,
+            null,
+            null,
+            null);
+
+        LocalModelDescriptor? model = null;
+        if (!string.IsNullOrWhiteSpace(request.Model))
+        {
+            model = await ResolveLocalEndpointModelAsync(
+                context,
+                diagnosticsProvider,
+                modelCatalog,
+                multimodalExecution,
+                request.Model,
+                requiredCapability: "ocr",
+                route: "/api/ocr/analyze",
+                backendId: "ocr",
+                inputSummary);
+            if (model is null)
+            {
+                return;
+            }
+        }
+
+        if (request.Image is null)
+        {
+            await WriteMultimodalDiagnosticAsync(
+                context,
+                multimodalExecution.CreateDiagnosticResponse(
+                    "/api/ocr/analyze",
+                    "ocr",
+                    model?.Id ?? request.Model,
+                    MultimodalExecutionService.CreateInvalidRequestDiagnostic("/api/ocr/analyze", "The image field is required.", model?.Id ?? request.Model),
+                    inputSummary),
+                StatusCodes.Status400BadRequest);
+            return;
+        }
+
+        if (model is null)
+        {
+            await WriteMultimodalDiagnosticAsync(
+                context,
+                multimodalExecution.CreateDiagnosticResponse(
+                    "/api/ocr/analyze",
+                    "ocr",
+                    request.Model,
+                    MultimodalExecutionService.CreateInvalidRequestDiagnostic("/api/ocr/analyze", "The model field is required for executable OCR requests.", request.Model),
+                    inputSummary),
+                StatusCodes.Status400BadRequest);
+            return;
+        }
+
+        if (!TryCreateImageInput(request.Image, out var image, out var imageError))
+        {
+            await WriteMultimodalDiagnosticAsync(
+                context,
+                multimodalExecution.CreateDiagnosticResponse(
+                    "/api/ocr/analyze",
+                    "ocr",
+                    model.Id,
+                    MultimodalExecutionService.CreateInvalidRequestDiagnostic("/api/ocr/analyze", imageError, model.Id),
+                    inputSummary),
+                StatusCodes.Status400BadRequest);
+            return;
+        }
+
+        try
+        {
+            var result = multimodalExecution.AnalyzeOcr(
+                model,
+                image,
+                request.Prompt,
+                request.Language,
+                CompletionOptions.Default,
+                context.RequestAborted);
+            await WriteMultimodalTextAsync(
+                context,
+                multimodalExecution.CreateTextResponse("/api/ocr/analyze", "ocr", model.Id, result, inputSummary));
+        }
+        catch (InferenceException exception)
+        {
+            await WriteMultimodalDiagnosticAsync(
+                context,
+                multimodalExecution.CreateDiagnosticResponse(
+                    "/api/ocr/analyze",
+                    "ocr",
+                    model.Id,
+                    diagnosticsProvider.GetRuntimeFailure(model.Id, exception),
+                    inputSummary),
+                StatusCodes.Status503ServiceUnavailable);
+        }
+        catch (Exception exception) when (IsNativeRuntimeException(exception))
+        {
+            await WriteMultimodalDiagnosticAsync(
+                context,
+                multimodalExecution.CreateDiagnosticResponse(
+                    "/api/ocr/analyze",
+                    "ocr",
+                    model.Id,
+                    diagnosticsProvider.GetRuntimeFailure(model.Id, CreateNativeRuntimeException(exception)),
+                    inputSummary),
+                StatusCodes.Status503ServiceUnavailable);
+        }
     }
 
     private static async Task HandleOllamaTagsAsync(HttpContext context, LocalModelCatalog modelCatalog)
@@ -728,6 +1213,45 @@ public static class ApiRouteExtensions
         }
     }
 
+    private static async Task<T?> ReadMultimodalRequestAsync<T>(
+        HttpContext context,
+        System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> jsonTypeInfo,
+        string route,
+        string backendId,
+        MultimodalExecutionService multimodalExecution)
+    {
+        try
+        {
+            var request = await JsonSerializer.DeserializeAsync(
+                context.Request.Body,
+                jsonTypeInfo,
+                context.RequestAborted);
+
+            if (request is not null)
+            {
+                return request;
+            }
+
+            var diagnostic = MultimodalExecutionService.CreateInvalidRequestDiagnostic(route, "Request body is required.");
+            await WriteMultimodalDiagnosticAsync(
+                context,
+                multimodalExecution.CreateDiagnosticResponse(route, backendId, null, diagnostic, EmptyInputSummary()),
+                StatusCodes.Status400BadRequest);
+            return default;
+        }
+        catch (JsonException exception)
+        {
+            var diagnostic = MultimodalExecutionService.CreateInvalidRequestDiagnostic(
+                route,
+                $"Invalid JSON request body: {exception.Message}");
+            await WriteMultimodalDiagnosticAsync(
+                context,
+                multimodalExecution.CreateDiagnosticResponse(route, backendId, null, diagnostic, EmptyInputSummary()),
+                StatusCodes.Status400BadRequest);
+            return default;
+        }
+    }
+
     private static async Task<LocalModelDescriptor?> RequireOpenAiModelAsync(
         HttpContext context,
         string? requestedModel,
@@ -737,7 +1261,7 @@ public static class ApiRouteExtensions
     {
         if (string.IsNullOrWhiteSpace(requestedModel))
         {
-            await WriteOpenAiInvalidRequestAsync(context, "The model field is required.");
+            await WriteOpenAiInvalidRequestAsync(context, "The model field is required.", stream);
             return null;
         }
 
@@ -794,6 +1318,59 @@ public static class ApiRouteExtensions
                     StatusCodes.Status404NotFound);
             }
 
+            return null;
+        }
+
+        return resolvedModel;
+    }
+
+    private static async Task<LocalModelDescriptor?> ResolveLocalEndpointModelAsync(
+        HttpContext context,
+        RuntimeDiagnosticsProvider diagnosticsProvider,
+        LocalModelCatalog modelCatalog,
+        MultimodalExecutionService multimodalExecution,
+        string? requestedModel,
+        string requiredCapability,
+        string route,
+        string backendId,
+        MultimodalInputSummary inputSummary)
+    {
+        if (string.IsNullOrWhiteSpace(requestedModel))
+        {
+            var diagnostic = MultimodalExecutionService.CreateInvalidRequestDiagnostic(route, "The model field is required.");
+            await WriteMultimodalDiagnosticAsync(
+                context,
+                multimodalExecution.CreateDiagnosticResponse(route, backendId, null, diagnostic, inputSummary),
+                StatusCodes.Status400BadRequest);
+            return null;
+        }
+
+        var resolvedModel = modelCatalog.Find(requestedModel);
+        if (resolvedModel is null)
+        {
+            await WriteMultimodalDiagnosticAsync(
+                context,
+                multimodalExecution.CreateDiagnosticResponse(
+                    route,
+                    backendId,
+                    requestedModel,
+                    diagnosticsProvider.GetModelNotDownloaded(requestedModel),
+                    inputSummary),
+                StatusCodes.Status404NotFound);
+            return null;
+        }
+
+        if (!ModelHasCapability(resolvedModel, requiredCapability))
+        {
+            await WriteMultimodalDiagnosticAsync(
+                context,
+                multimodalExecution.CreateDiagnosticResponse(
+                    route,
+                    backendId,
+                    resolvedModel.Id,
+                    multimodalExecution.CreateCapabilityMismatchDiagnostic(resolvedModel.Id, requiredCapability, route),
+                    inputSummary),
+                StatusCodes.Status400BadRequest);
             return null;
         }
 
@@ -896,6 +1473,50 @@ public static class ApiRouteExtensions
             response,
             AppJsonSerializerContext.Default.OllamaErrorResponse,
             StatusCodes.Status503ServiceUnavailable);
+    }
+
+    private static async Task WriteOpenAiDiagnosticAsync(
+        HttpContext context,
+        RuntimeDiagnostic diagnostic,
+        int statusCode,
+        bool stream = false)
+    {
+        var response = statusCode >= 500
+            ? OpenAiErrorResponse.RuntimeUnavailable(diagnostic)
+            : OpenAiErrorResponse.InvalidRequest(diagnostic, "model");
+        if (stream)
+        {
+            await StreamingErrorResponse.WriteOpenAiAsync(context, response);
+            return;
+        }
+
+        await JsonHttpResponse.WriteAsync(
+            context,
+            response,
+            AppJsonSerializerContext.Default.OpenAiErrorResponse,
+            statusCode);
+    }
+
+    private static async Task WriteMultimodalDiagnosticAsync(
+        HttpContext context,
+        MultimodalOperationResponse response,
+        int statusCode)
+    {
+        await JsonHttpResponse.WriteAsync(
+            context,
+            response,
+            AppJsonSerializerContext.Default.MultimodalOperationResponse,
+            statusCode);
+    }
+
+    private static async Task WriteMultimodalTextAsync(
+        HttpContext context,
+        MultimodalTextResponse response)
+    {
+        await JsonHttpResponse.WriteAsync(
+            context,
+            response,
+            AppJsonSerializerContext.Default.MultimodalTextResponse);
     }
 
     private static async Task WriteOpenAiChatCompletionSuccessAsync(
@@ -1099,9 +1720,15 @@ public static class ApiRouteExtensions
         await context.Response.WriteAsync("\n\n", context.RequestAborted);
     }
 
-    private static async Task WriteOpenAiInvalidRequestAsync(HttpContext context, string message)
+    private static async Task WriteOpenAiInvalidRequestAsync(HttpContext context, string message, bool stream = false)
     {
         var error = OpenAiErrorResponse.InvalidRequest(message);
+        if (stream)
+        {
+            await StreamingErrorResponse.WriteOpenAiAsync(context, error);
+            return;
+        }
+
         await JsonHttpResponse.WriteAsync(
             context,
             error,
@@ -1136,6 +1763,16 @@ public static class ApiRouteExtensions
 
     private static OpenAiUsage ToOpenAiUsage(TokenUsage usage)
         => new(usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens);
+
+    private static TokenUsage EstimateVisionUsage(string prompt, string output)
+    {
+        var promptTokens = EstimateTokenCount(prompt);
+        var completionTokens = EstimateTokenCount(output);
+        return new TokenUsage(promptTokens, completionTokens, promptTokens + completionTokens);
+    }
+
+    private static int EstimateTokenCount(string value)
+        => Math.Max(1, (value.Length + 3) / 4);
 
     private static long ToNanoseconds(TimeSpan elapsed)
         => elapsed.Ticks * 100L;
@@ -1230,6 +1867,396 @@ public static class ApiRouteExtensions
 
         return inputs;
     }
+
+    private static bool ContainsOpenAiImageContent(IReadOnlyList<OpenAiChatMessage> messages)
+        => messages.Any(static message => ContainsImageContent(message.Content));
+
+    private static bool TryCreateOpenAiVisionInput(
+        IReadOnlyList<OpenAiChatMessage> messages,
+        out string prompt,
+        out IReadOnlyList<ImageInputBytes> images,
+        out string error)
+    {
+        prompt = string.Join(
+            "\n",
+            messages.Select(static message => ExtractOpenAiTextContent(message.Content))
+                .Where(static item => !string.IsNullOrWhiteSpace(item)));
+        if (string.IsNullOrWhiteSpace(prompt))
+        {
+            prompt = "Describe the image.";
+        }
+
+        var collected = new List<ImageInputBytes>();
+        foreach (var message in messages)
+        {
+            if (!TryCollectOpenAiImages(message.Content, collected, out error))
+            {
+                images = [];
+                return false;
+            }
+        }
+
+        if (collected.Count == 0)
+        {
+            images = [];
+            error = "At least one image content item is required.";
+            return false;
+        }
+
+        if (collected.Count > CompatibilityProtocolLimits.MaxImageCount)
+        {
+            images = [];
+            error = $"Too many images. Limit: {CompatibilityProtocolLimits.MaxImageCount}.";
+            return false;
+        }
+
+        images = collected;
+        error = string.Empty;
+        return true;
+    }
+
+    private static bool TryCollectOpenAiImages(JsonElement? element, List<ImageInputBytes> images, out string error)
+    {
+        error = string.Empty;
+        if (element is null || element.Value.ValueKind != JsonValueKind.Array)
+        {
+            return true;
+        }
+
+        foreach (var item in element.Value.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object || !TryReadOpenAiImageInput(item, out var imageInput))
+            {
+                continue;
+            }
+
+            if (!TryCreateImageInput(imageInput, out var image, out error))
+            {
+                return false;
+            }
+
+            images.Add(image);
+        }
+
+        return true;
+    }
+
+    private static bool TryReadOpenAiImageInput(JsonElement item, out MultimodalImageInput input)
+    {
+        input = new MultimodalImageInput(null, null, null, null);
+        if (item.TryGetProperty("type", out var type) &&
+            type.ValueKind == JsonValueKind.String &&
+            !IsImageContentType(type.GetString()))
+        {
+            return false;
+        }
+
+        string? imageUrl = null;
+        string? dataUri = null;
+        string? mediaType = null;
+        string? detail = null;
+
+        if (item.TryGetProperty("image_url", out var imageUrlElement))
+        {
+            if (imageUrlElement.ValueKind == JsonValueKind.String)
+            {
+                imageUrl = imageUrlElement.GetString();
+            }
+            else if (imageUrlElement.ValueKind == JsonValueKind.Object)
+            {
+                imageUrl = TryGetString(imageUrlElement, "url");
+                detail = TryGetString(imageUrlElement, "detail");
+            }
+        }
+
+        if (item.TryGetProperty("input_image", out var inputImageElement))
+        {
+            if (inputImageElement.ValueKind == JsonValueKind.String)
+            {
+                imageUrl ??= inputImageElement.GetString();
+            }
+            else if (inputImageElement.ValueKind == JsonValueKind.Object)
+            {
+                imageUrl ??= TryGetString(inputImageElement, "image_url") ?? TryGetString(inputImageElement, "url");
+            }
+
+            dataUri ??= inputImageElement.ValueKind == JsonValueKind.Object
+                ? TryGetString(inputImageElement, "data_uri")
+                : null;
+            mediaType ??= inputImageElement.ValueKind == JsonValueKind.Object
+                ? TryGetString(inputImageElement, "media_type")
+                : null;
+        }
+
+        if (item.TryGetProperty("image", out var imageElement))
+        {
+            imageUrl ??= imageElement.ValueKind == JsonValueKind.String
+                ? imageElement.GetString()
+                : TryGetString(imageElement, "url") ?? TryGetString(imageElement, "image_url");
+            dataUri ??= imageElement.ValueKind == JsonValueKind.Object
+                ? TryGetString(imageElement, "data_uri") ?? TryGetString(imageElement, "data")
+                : null;
+            mediaType ??= imageElement.ValueKind == JsonValueKind.Object
+                ? TryGetString(imageElement, "media_type")
+                : null;
+        }
+
+        dataUri ??= TryGetString(item, "data_uri");
+        mediaType ??= TryGetString(item, "media_type");
+        detail ??= TryGetString(item, "detail");
+
+        input = new MultimodalImageInput(imageUrl, dataUri, mediaType, detail);
+        return !string.IsNullOrWhiteSpace(imageUrl) || !string.IsNullOrWhiteSpace(dataUri);
+    }
+
+    private static bool TryCreateImageInputs(
+        IReadOnlyList<MultimodalImageInput> imageInputs,
+        out IReadOnlyList<ImageInputBytes> images,
+        out string error)
+    {
+        var collected = new List<ImageInputBytes>(imageInputs.Count);
+        foreach (var input in imageInputs)
+        {
+            if (!TryCreateImageInput(input, out var image, out error))
+            {
+                images = [];
+                return false;
+            }
+
+            collected.Add(image);
+        }
+
+        images = collected;
+        error = string.Empty;
+        return true;
+    }
+
+    private static bool TryCreateImageInput(
+        MultimodalImageInput input,
+        out ImageInputBytes image,
+        out string error)
+    {
+        var source = FirstNonEmpty(input.DataUri, input.ImageUrl);
+        if (string.IsNullOrWhiteSpace(source))
+        {
+            image = new ImageInputBytes([], null, null);
+            error = "Image input must include data_uri or image_url.";
+            return false;
+        }
+
+        if (TryDecodeDataUri(source, input.MediaType, out image, input.Detail, out error))
+        {
+            return true;
+        }
+
+        if (Uri.TryCreate(source, UriKind.Absolute, out var uri) &&
+            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+        {
+            image = new ImageInputBytes([], null, null);
+            error = "Remote image URLs are not fetched by local R8 endpoints yet; send a data URI instead.";
+            return false;
+        }
+
+        if (TryDecodeBase64(source, input.MediaType, input.Detail, out image, out var decodeError))
+        {
+            error = string.Empty;
+            return true;
+        }
+
+        image = new ImageInputBytes([], null, null);
+        error = string.IsNullOrWhiteSpace(decodeError)
+            ? "Image input must be a data URI or raw base64 payload."
+            : decodeError;
+        return false;
+    }
+
+    private static bool TryDecodeDataUri(
+        string source,
+        string? fallbackMediaType,
+        out ImageInputBytes image,
+        string? detail,
+        out string error)
+    {
+        image = new ImageInputBytes([], null, null);
+        error = string.Empty;
+        if (!source.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var comma = source.IndexOf(',', StringComparison.Ordinal);
+        if (comma < 0)
+        {
+            error = "Data URI image input is missing the payload separator.";
+            return false;
+        }
+
+        var metadata = source[5..comma];
+        if (!metadata.Contains(";base64", StringComparison.OrdinalIgnoreCase))
+        {
+            error = "Data URI image input must use base64 encoding.";
+            return false;
+        }
+
+        var mediaType = metadata.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .FirstOrDefault(static item => item.Contains('/', StringComparison.Ordinal))
+            ?? fallbackMediaType;
+        if (!TryDecodeBase64(source[(comma + 1)..], mediaType, detail, out image, out var decodeError))
+        {
+            error = decodeError;
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryDecodeBase64(
+        string source,
+        string? mediaType,
+        string? detail,
+        out ImageInputBytes image,
+        out string error)
+    {
+        try
+        {
+            image = new ImageInputBytes(Convert.FromBase64String(source.Trim()), mediaType, detail);
+            if (image.Bytes.Length == 0)
+            {
+                error = "Image payload is empty.";
+                return false;
+            }
+
+            if (image.Bytes.Length > CompatibilityProtocolLimits.MaxImageBytes)
+            {
+                image = new ImageInputBytes([], null, null);
+                error = $"Image payload is too large. Limit: {CompatibilityProtocolLimits.MaxImageBytes} bytes.";
+                return false;
+            }
+
+            error = string.Empty;
+            return true;
+        }
+        catch (FormatException)
+        {
+            image = new ImageInputBytes([], null, null);
+            error = "Image payload is not valid base64.";
+            return false;
+        }
+    }
+
+    private static bool TryParseImageSize(
+        string? value,
+        out int width,
+        out int height,
+        out string error)
+    {
+        var size = string.IsNullOrWhiteSpace(value) ? "1024x1024" : value.Trim();
+        var parts = size.Split(['x', 'X'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length != 2 ||
+            !int.TryParse(parts[0], out width) ||
+            !int.TryParse(parts[1], out height))
+        {
+            width = 0;
+            height = 0;
+            error = "The size field must use WIDTHxHEIGHT format, for example 1024x1024.";
+            return false;
+        }
+
+        if (width < 256 || height < 256 || width > 2048 || height > 2048 || width % 64 != 0 || height % 64 != 0)
+        {
+            error = "The size field must be between 256x256 and 2048x2048, with width and height divisible by 64.";
+            return false;
+        }
+
+        error = string.Empty;
+        return true;
+    }
+
+    private static string? NormalizeImageResponseFormat(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "url";
+        }
+
+        var normalized = value.Trim().ToLowerInvariant();
+        return normalized is "url" or "b64_json" ? normalized : null;
+    }
+
+    private static float ToFloat(double? value, float fallback)
+    {
+        if (value is null || double.IsNaN(value.Value) || double.IsInfinity(value.Value))
+        {
+            return fallback;
+        }
+
+        return (float)value.Value;
+    }
+
+    private static string ResolveImageMimeType(string format)
+    {
+        return format.Trim().ToLowerInvariant() switch
+        {
+            "jpg" or "jpeg" => "image/jpeg",
+            "webp" => "image/webp",
+            _ => "image/png"
+        };
+    }
+
+    private static string? TryGetString(JsonElement element, string propertyName)
+    {
+        return element.ValueKind == JsonValueKind.Object &&
+            element.TryGetProperty(propertyName, out var property) &&
+            property.ValueKind == JsonValueKind.String
+                ? property.GetString()
+                : null;
+    }
+
+    private static string? FirstNonEmpty(params string?[] values)
+        => values.FirstOrDefault(static value => !string.IsNullOrWhiteSpace(value));
+
+    private static bool ContainsImageContent(JsonElement? element)
+    {
+        if (element is null || element.Value.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        foreach (var item in element.Value.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            if (item.TryGetProperty("type", out var type) &&
+                type.ValueKind == JsonValueKind.String &&
+                IsImageContentType(type.GetString()))
+            {
+                return true;
+            }
+
+            if (item.TryGetProperty("image_url", out _) ||
+                item.TryGetProperty("image", out _) ||
+                item.TryGetProperty("input_image", out _))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsImageContentType(string? value)
+        => string.Equals(value, "image_url", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "image", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "input_image", StringComparison.OrdinalIgnoreCase);
+
+    private static bool ModelHasCapability(LocalModelDescriptor model, string capability)
+        => model.Capabilities.Any(item => string.Equals(item, capability, StringComparison.OrdinalIgnoreCase));
+
+    private static MultimodalInputSummary EmptyInputSummary()
+        => new(0, 0, null, null, null);
 
     private static int EstimateJsonElementCharacters(JsonElement? element)
     {

@@ -53,7 +53,9 @@ public sealed class RuntimeDiagnosticsProvider
         return new RuntimeDiagnostic(
             backend.Status == "ready" ? "unavailable" : backend.Status,
             $"multimodal_{backend.Id}_not_connected",
-            $"{backend.DisplayName} is not connected to an executable R8 endpoint adapter yet. {backend.Message}",
+            backend.Status == "ready"
+                ? $"{backend.DisplayName} is ready, but this request could not be executed. {backend.Message}"
+                : $"{backend.DisplayName} is not available for executable R8 requests. {backend.Message}",
             string.IsNullOrWhiteSpace(model) ? null : model,
             backend.Actions.Count == 0
                 ? [

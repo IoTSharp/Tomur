@@ -369,7 +369,9 @@ R7 接线状态：
 4. 🚧 stable-diffusion.cpp 图像生成。
 5. 🚧 VLM。
 6. 🚧 `/v1/images/generations`。
-7. ⏳ 后续音频 API。
+7. 🚧 `/v1/audio/transcriptions`。
+8. 🚧 `/v1/audio/speech`。
+9. 🚧 `/api/vision/analyze` 与 `/api/ocr/analyze`。
 
 验收：
 
@@ -381,8 +383,9 @@ R8 接线状态：
 
 1. `GET /api/runtime/multimodal` 已提供 ASR、TTS、OCR、stable-diffusion.cpp image generation 与 VLM backend 的统一诊断面。
 2. 多模态诊断会同时检查 native component 状态与本地模型资产可见性，并返回修复动作。
-3. `/v1/images/generations` 当前返回 image-generation backend 专门诊断，不伪造图像生成结果。
-4. Whisper ASR、llama.cpp GGUF TTS、PaddleOCR、stable-diffusion.cpp 和 VLM 的真实执行适配器仍需后续逐项接通。
+3. `/api/vision/analyze`、`/api/ocr/analyze` 与包含 data URI / base64 图片的 `/v1/chat/completions` 已接入 VLM / OCR 托管执行适配器；当 native library、主模型和 mmproj sidecar ready 时会尝试真实本地执行。
+4. 包含 `image_url` / `input_image` 的 `/v1/chat/completions` 请求不再把图片输入作为普通文本交给 R7 文本 runtime；远程图片 URL 当前不会自动下载，会要求调用方发送 data URI。
+5. `/v1/images/generations` 已接入 stable-diffusion.cpp PNG 生成适配器，在 image native library、FLUX diffusion model、VAE 与 text encoder sidecar ready 时会尝试真实本地执行；`/v1/audio/transcriptions` 与 `/v1/audio/speech` 已接入统一模型能力校验和 backend 诊断响应，但真实 Whisper ASR 与 llama.cpp GGUF TTS 执行适配器仍需后续逐项接通。
 
 ### 09. ⏳ R9: React + Ant Design X Web UI
 
@@ -440,7 +443,7 @@ R8 接线状态：
 
 继续收敛 R8/R5 接线：
 
-1. 为 R8 逐项接通 Whisper ASR、stable-diffusion.cpp image generation、VLM、OCR 和 llama.cpp GGUF TTS 执行适配器。
+1. 为 R8 继续接通 Whisper ASR 和 llama.cpp GGUF TTS 执行适配器，并对已接入的 VLM / OCR / stable-diffusion.cpp image generation 路径补真实模型 smoke 验收。
 2. 在用户明确要求验证时执行 Tomur 独立项目构建、启动和真实 GGUF chat / embedding smoke。
 3. 为 R7 增强逐 token streaming、GPU offload 选择、多模型常驻和更细的 session 诊断。
 4. 为 R5 补充 Windows、Linux 和 macOS 实机安装/卸载/启动 smoke 验收记录。

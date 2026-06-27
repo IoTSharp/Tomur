@@ -245,7 +245,7 @@ public sealed class LocalModelCatalog
                 "reranking" => ["rerank"],
                 "transcription" => ["audio"],
                 "speech" => ["audio-output"],
-                "vision" => ["completion", "chat", "vision"],
+                "vision" => ["completion", "chat", "vision", "ocr"],
                 "image-generation" => ["image"],
                 _ => []
             };

@@ -100,6 +100,7 @@ internal static class ServeCommand
         builder.Services.AddSingleton<SessionManager>();
         builder.Services.AddSingleton<LocalInferenceService>();
         builder.Services.AddSingleton<MultimodalRuntimeService>();
+        builder.Services.AddSingleton<MultimodalExecutionService>();
         builder.Services.AddSingleton<RuntimeDiagnosticsProvider>();
         builder.Services.AddSingleton<LocalModelCatalog>();
         builder.Services.AddSingleton<VersionProvider>();

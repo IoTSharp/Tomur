@@ -32,6 +32,11 @@ public sealed record OpenAiErrorResponse(
                 null));
     }
 
+    public static OpenAiErrorResponse InvalidRequest(RuntimeDiagnostic diagnostic, string? param = null)
+    {
+        return FromDiagnostic(diagnostic, "invalid_request_error", param);
+    }
+
     private static OpenAiErrorResponse FromDiagnostic(RuntimeDiagnostic diagnostic, string type, string? param)
     {
         return new OpenAiErrorResponse(
