@@ -49,10 +49,10 @@ SmolVLM is an optional low-memory smoke package. The default VLM catalog package
 1. Whisper ASR is now a real managed/native execution path. The smoke input was `Tomur/native/whisper.cpp/samples/jfk.wav`, and the endpoint returned:
    `And so, my fellow Americans, ask not what your country can do for you, ask what you can do for your country.`
 2. VLM and OCR both executed through native model paths against a generated `OK 42` image.
-3. `/v1/audio/speech` reaches `tomur-tts`, validates the OuteTTS and WavTokenizer bundle, and returns a structured OpenAI-style error. It does not synthesize audio yet because `Tomur/native/tts.native/tts_bridge.cpp` still returns `tts-synthesis: pending-llama-tools-tts-adapter`.
+3. The recorded `/v1/audio/speech` smoke reached `tomur-tts`, validated the OuteTTS and WavTokenizer bundle, and returned a structured OpenAI-style error because synthesis was still pending at that time. Post-smoke code now connects this path to the llama.cpp `tools/tts` adapter as described below.
 4. `/v1/images/generations` reaches stable-diffusion.cpp but crashes the Tomur process with:
    `D:\source\Camel.NET\Tomur\native\stable-diffusion.cpp\src\conditioning/conditioner.hpp:1671: GGML_ASSERT(!hidden_states.empty()) failed`
-5. The stable-diffusion native bridge now forwards `backend` and `params_backend` to the current stable-diffusion.cpp C API, but the FLUX.2 klein smoke still fails with the same conditioner assert after rebuilding the Windows CPU runtime.
+5. The stable-diffusion native bridge now forwards `backend` and `params_backend` to the current stable-diffusion.cpp C API, but the recorded FLUX.2 klein smoke still failed with the same conditioner assert after rebuilding the Windows CPU runtime.
 
 ## Current R8 Verdict
 
@@ -61,7 +61,8 @@ R8 is partially smoke-validated, not complete.
 Post-smoke code update:
 
 - `/v1/images/generations` now calls stable-diffusion.cpp from an internal image worker subprocess. A native assert, timeout, missing worker response, or worker crash is mapped back to a structured `InferenceException` so the main Tomur service process can continue serving text, ASR, OCR and VLM requests.
-- The stable-diffusion bridge now resolves upstream default sampler/scheduler values, forwards finite `distilled_guidance` and `flow_shift`, and releases generated images with `free_sd_images`. The OpenAI image endpoint also applies FLUX.2 klein defaults of `steps=4`, `cfg_scale=1.0`, and `sample_method=euler` when the caller does not provide overrides.
+- The stable-diffusion bridge now resolves upstream default sampler/scheduler values, forwards finite `distilled_guidance` and `flow_shift`, and releases generated images with `free_sd_images`. The OpenAI image endpoint applies FLUX.2 klein defaults of `steps=4` and `cfg_scale=1.0`; when the caller does not provide sampler or scheduler overrides, Tomur leaves them on the upstream auto/default path to match the previously successful upper-layer direct image test.
+- The stable-diffusion native bridge now writes Tomur-prefixed stderr diagnostics before context creation and image generation, including upstream version/commit, sidecar argument presence, backend assignments, size, steps, CFG, seed, sampler and scheduler. This keeps the vendored stable-diffusion.cpp source unchanged while improving the next smoke failure log.
 - These code updates do not change the recorded FLUX.2 result above because this report has not been rerun. The FLUX.2 klein path still needs a successful small-image smoke before image generation can be marked complete.
 - `/v1/audio/speech` has since been connected to the llama.cpp `tools/tts` path in `tomur-tts`: OuteTTS generates audio code tokens, WavTokenizer produces embeddings, and the managed adapter returns WAV. This report has not been rerun yet, so the TTS row above remains historical smoke evidence until a new WAV success run is recorded.
 
@@ -77,4 +78,4 @@ Passing real-model paths:
 Blocking paths:
 
 - OpenAI audio speech: post-smoke code now contains the real TTS adapter, but a successful WAV smoke is still outstanding.
-- OpenAI image generation: post-smoke code now contains the worker isolation, native bridge default fixes, and FLUX.2 klein request defaults, but a successful image smoke is still outstanding.
+- OpenAI image generation: post-smoke code now contains the worker isolation, native bridge default fixes, FLUX.2 klein request defaults, and bridge-level stderr diagnostics, but a successful image smoke is still outstanding.

@@ -405,7 +405,7 @@ R8 接线状态：
 6. `/v1/audio/speech` 已接入 OuteTTS GGUF bundle、WavTokenizer sidecar 与 `tomur-tts` native bridge；`Tomur/native/tts.native/tts_bridge.cpp` 复用 llama.cpp `tools/tts` 的 OuteTTS 文本归一化、audio code 生成与 WavTokenizer 转 PCM 路线，托管层返回 WAV。该代码路径仍需补一次真实模型成功 smoke。
 7. VLM 与 OCR 已通过 `ggml-org/SmolVLM-500M-Instruct-GGUF` 快速 smoke；SmolVLM 只作为低内存验收包，默认视觉理解包仍是 Qwen3-VL 4B。
 8. `/v1/images/generations` 已接入 stable-diffusion.cpp PNG 生成适配器，并补齐当前 C API 的 `backend` / `params_backend` 转发；图像生成现在通过内部 image worker 子进程执行，native assert、超时或 worker 崩溃会返回主进程结构化诊断，不再直接拖垮 Tomur 主服务进程。
-9. FLUX.2 klein 4B smoke 仍触发 `conditioner.hpp:1671: GGML_ASSERT(!hidden_states.empty()) failed`，真实成功出图尚未完成；当前隔离 worker 只收敛崩溃半径，不代表图像生成能力已通过 R8 验收。
+9. FLUX.2 klein 4B smoke 仍触发 `conditioner.hpp:1671: GGML_ASSERT(!hidden_states.empty()) failed`，真实成功出图尚未完成；当前隔离 worker 只收敛崩溃半径，不代表图像生成能力已通过 R8 验收。`stable-diffusion.native` bridge 已补充上游版本、sidecar 传入状态和生成参数 stderr 诊断，下一轮 smoke 可据此继续定位。
 10. R8 smoke 记录见 `Tomur/docs/r8-smoke-report.md`；当前结论为部分通过，图像生成仍是 R8 blocker，TTS 已完成真实合成适配但仍需补成功 smoke 证据。
 
 ### 09. 🚧 R9: Microsoft AI 抽象与 Agent Framework 编排
@@ -536,7 +536,7 @@ R9 接线状态：
 继续收敛 R8，并为 R9/R10 做设计接线：
 
 1. 为 R8 补 `/v1/audio/speech` 的 OuteTTS + WavTokenizer WAV 成功 smoke，并记录模型、接口、耗时和诊断证据。
-2. 定位 FLUX.2 klein + stable-diffusion.cpp 的 conditioner assert；当前 `/v1/images/generations` 已隔离到 worker，下一步是补 1-step 小图成功 smoke。
+2. 继续定位 FLUX.2 klein + stable-diffusion.cpp 的 conditioner assert；当前 `/v1/images/generations` 已隔离到 worker，默认 sampler / scheduler 已按上层成功链路交给 upstream auto/default，`stable-diffusion.native` bridge 会输出上游版本、sidecar 传入状态和生成参数诊断，下一步是用默认 `steps=4` 小图 smoke 补成功出图或更完整失败日志。
 3. 继续用小模型/小素材维护 R8 smoke 套件，目标是单项几秒到五分钟内完成，并保留模型、接口、耗时和结果证据。
 4. 在用户明确要求验证时执行 Tomur 独立项目构建、启动和真实 GGUF chat / embedding smoke。
 5. 为 R7 增强逐 token streaming、GPU offload 选择、多模型常驻和更细的 session 诊断。

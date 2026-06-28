@@ -226,30 +226,14 @@ internal struct StableDiffusionContextParameters
     public nint LlmPath;
     public nint VaePath;
     public int Threads;
-
-    [MarshalAs(UnmanagedType.I1)]
-    public bool OffloadParamsToCpu;
-
-    [MarshalAs(UnmanagedType.I1)]
-    public bool EnableMmap;
-
-    [MarshalAs(UnmanagedType.I1)]
-    public bool KeepClipOnCpu;
-
-    [MarshalAs(UnmanagedType.I1)]
-    public bool KeepVaeOnCpu;
-
-    [MarshalAs(UnmanagedType.I1)]
-    public bool FlashAttention;
-
-    [MarshalAs(UnmanagedType.I1)]
-    public bool DiffusionFlashAttention;
-
-    [MarshalAs(UnmanagedType.I1)]
-    public bool VaeDecodeOnly;
-
-    [MarshalAs(UnmanagedType.I1)]
-    public bool FreeParamsImmediately;
+    public byte OffloadParamsToCpu;
+    public byte EnableMmap;
+    public byte KeepClipOnCpu;
+    public byte KeepVaeOnCpu;
+    public byte FlashAttention;
+    public byte DiffusionFlashAttention;
+    public byte VaeDecodeOnly;
+    public byte FreeParamsImmediately;
 
     public nint Backend;
     public nint ParamsBackend;

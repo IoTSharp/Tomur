@@ -2,7 +2,9 @@
 #include <cstdint>
 #include <algorithm>
 #include <cctype>
+#include <cinttypes>
 #include <cmath>
+#include <cstdio>
 #include <string_view>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -130,8 +132,26 @@ SD_API bool tomur_sd_generate_png(sd_ctx_t* sd_ctx,
 
     native_params.seed = generation_params->seed;
 
+    std::fprintf(stderr,
+                 "tomur_sd_bridge: generate_png width=%d height=%d steps=%d cfg=%0.3f distilled_guidance=%0.3f flow_shift=%0.3f seed=%" PRId64 " sample_method=%s scheduler=%s prompt_chars=%zu prompt_words=%d negative_prompt_chars=%zu\n",
+                 native_params.width,
+                 native_params.height,
+                 native_params.sample_params.sample_steps,
+                 native_params.sample_params.guidance.txt_cfg,
+                 native_params.sample_params.guidance.distilled_guidance,
+                 native_params.sample_params.flow_shift,
+                 native_params.seed,
+                 sd_sample_method_name(native_params.sample_params.sample_method),
+                 sd_scheduler_name(native_params.sample_params.scheduler),
+                 std::string_view(generation_params->prompt).size(),
+                 tomur_count_debug_tokens(generation_params->prompt),
+                 generation_params->negative_prompt == NULL ? 0 : std::string_view(generation_params->negative_prompt).size());
+    std::fflush(stderr);
+
     sd_image_t* images = generate_image(sd_ctx, &native_params);
     if (images == NULL) {
+        std::fprintf(stderr, "tomur_sd_bridge: generate_image returned null\n");
+        std::fflush(stderr);
         return false;
     }
 
@@ -157,6 +177,11 @@ SD_API bool tomur_sd_generate_png(sd_ctx_t* sd_ctx,
     }
 
     free_sd_images(images, native_params.batch_count);
+    std::fprintf(stderr,
+                 "tomur_sd_bridge: generate_png %s encoded_length=%d\n",
+                 success ? "ok" : "failed",
+                 encoded_image->length);
+    std::fflush(stderr);
     return success;
 }
 

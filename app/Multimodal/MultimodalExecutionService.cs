@@ -214,6 +214,7 @@ public sealed class MultimodalExecutionService
 
         var started = DateTimeOffset.UtcNow;
         var bundle = ResolveStableDiffusionBundle(model);
+        var nativeResolution = libraryResolver.Resolve("stable-diffusion", "stable-diffusion");
         try
         {
             importResolver.Register();
@@ -228,14 +229,14 @@ public sealed class MultimodalExecutionService
                 LlmPath = memory.LlmPath,
                 VaePath = memory.VaePath,
                 Threads = Environment.ProcessorCount,
-                OffloadParamsToCpu = true,
-                EnableMmap = false,
-                KeepClipOnCpu = false,
-                KeepVaeOnCpu = false,
-                FlashAttention = false,
-                DiffusionFlashAttention = true,
-                VaeDecodeOnly = true,
-                FreeParamsImmediately = true,
+                OffloadParamsToCpu = ToNativeBool(true),
+                EnableMmap = ToNativeBool(false),
+                KeepClipOnCpu = ToNativeBool(false),
+                KeepVaeOnCpu = ToNativeBool(false),
+                FlashAttention = ToNativeBool(false),
+                DiffusionFlashAttention = ToNativeBool(true),
+                VaeDecodeOnly = ToNativeBool(true),
+                FreeParamsImmediately = ToNativeBool(true),
                 Backend = memory.Backend,
                 ParamsBackend = memory.ParamsBackend
             };
@@ -296,6 +297,11 @@ public sealed class MultimodalExecutionService
                     $"cfg-scale: {options.CfgScale:0.##}",
                     $"sample-method: {NormalizeSamplingToken(options.SampleMethod)}",
                     $"scheduler: {NormalizeSamplingToken(options.Scheduler)}",
+                    "backend: te=cpu,vae=cpu",
+                    "params-backend: *=cpu",
+                    "diffusion-flash-attention: true",
+                    $"native-library: {nativeResolution.Path}",
+                    $"native-component-path: {nativeResolution.ComponentRuntimePath}",
                     "format: png"
                 };
                 if (options.DistilledGuidance is { } distilledGuidance)
@@ -732,6 +738,8 @@ public sealed class MultimodalExecutionService
             return [json];
         }
     }
+
+    private static byte ToNativeBool(bool value) => value ? (byte)1 : (byte)0;
 
     private static string NormalizeSamplingToken(string? value)
         => string.IsNullOrWhiteSpace(value) ? "auto" : value.Trim().ToLowerInvariant();

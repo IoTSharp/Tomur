@@ -44,7 +44,7 @@ public sealed class IsolatedImageGenerationService
                     "image_generation_worker_failed",
                     "The image generation worker returned an error without details.",
                     ["Use /api/runtime/multimodal to inspect image generation readiness."]);
-                throw new InferenceException(error.Code, error.Message, error.Actions);
+                throw new InferenceException(error.Code, error.Message, AppendWorkerOutput(error.Actions, run));
             }
 
             if (string.IsNullOrWhiteSpace(response.ImageBase64))
@@ -159,13 +159,14 @@ public sealed class IsolatedImageGenerationService
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             TryKill(process);
+            var stdout = await ReadWorkerOutputAsync(stdoutTask).ConfigureAwait(false);
+            var stderr = await ReadWorkerOutputAsync(stderrTask).ConfigureAwait(false);
             throw new InferenceException(
                 "image_generation_worker_timeout",
                 $"The image generation worker exceeded the {WorkerTimeout.TotalMinutes:0}-minute timeout.",
-                [
-                    "Try a smaller image size or fewer generation steps.",
-                    "Use /api/runtime/multimodal to inspect image generation readiness."
-                ]);
+                BuildWorkerActions(
+                    new WorkerRunResult(-1, stdout, stderr),
+                    "Try a smaller image size or fewer generation steps."));
         }
 
         var stdout = await stdoutTask.ConfigureAwait(false);
@@ -206,34 +207,59 @@ public sealed class IsolatedImageGenerationService
         }
     }
 
-    private static IReadOnlyList<string> BuildWorkerActions(WorkerRunResult run)
+    private static IReadOnlyList<string> BuildWorkerActions(
+        WorkerRunResult run,
+        string? firstAction = null)
     {
-        var actions = new List<string>
+        var actions = new List<string>();
+        if (!string.IsNullOrWhiteSpace(firstAction))
         {
-            "Use /api/runtime/multimodal to inspect image generation readiness.",
-            "Text, ASR, OCR and VLM endpoints are isolated from this image worker failure."
-        };
+            actions.Add(firstAction);
+        }
 
+        actions.Add("Use /api/runtime/multimodal to inspect image generation readiness.");
+        actions.Add("Text, ASR, OCR and VLM endpoints are isolated from this image worker failure.");
+
+        return AppendWorkerOutput(actions, run);
+    }
+
+    private static IReadOnlyList<string> AppendWorkerOutput(
+        IReadOnlyList<string> actions,
+        WorkerRunResult run)
+    {
+        var merged = new List<string>(actions);
         var stderr = TrimForDiagnostic(run.Stderr);
         if (!string.IsNullOrWhiteSpace(stderr))
         {
-            actions.Add($"worker-stderr: {stderr}");
+            merged.Add($"worker-stderr: {stderr}");
         }
 
         var stdout = TrimForDiagnostic(run.Stdout);
         if (!string.IsNullOrWhiteSpace(stdout))
         {
-            actions.Add($"worker-stdout: {stdout}");
+            merged.Add($"worker-stdout: {stdout}");
         }
 
-        return actions;
+        return merged;
     }
 
     private static string TrimForDiagnostic(string value)
     {
         var trimmed = value.Trim();
-        const int maxLength = 800;
+        const int maxLength = 4000;
         return trimmed.Length <= maxLength ? trimmed : trimmed[^maxLength..];
+    }
+
+    private static async Task<string> ReadWorkerOutputAsync(Task<string> outputTask)
+    {
+        try
+        {
+            return await outputTask.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or InvalidOperationException or OperationCanceledException or TimeoutException)
+        {
+            return string.Empty;
+        }
     }
 
     private static WorkerInvocation ResolveExecutableInvocation()
