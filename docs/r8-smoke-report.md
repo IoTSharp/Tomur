@@ -58,6 +58,11 @@ SmolVLM is an optional low-memory smoke package. The default VLM catalog package
 
 R8 is partially smoke-validated, not complete.
 
+Post-smoke code update:
+
+- `/v1/images/generations` now calls stable-diffusion.cpp from an internal image worker subprocess. A native assert, timeout, missing worker response, or worker crash is mapped back to a structured `InferenceException` so the main Tomur service process can continue serving text, ASR, OCR and VLM requests.
+- This isolation does not change the recorded FLUX.2 result above. The FLUX.2 klein path still needs a successful small-image smoke before image generation can be marked complete.
+
 Passing real-model paths:
 
 - Health/model/runtime inventory
@@ -70,4 +75,4 @@ Passing real-model paths:
 Blocking paths:
 
 - OpenAI audio speech: native TTS bridge is still an ABI-ready diagnostic stub.
-- OpenAI image generation: FLUX.2 klein path crashes inside stable-diffusion.cpp conditioner setup.
+- OpenAI image generation: FLUX.2 klein path still fails inside stable-diffusion.cpp conditioner setup; the crash is now isolated to the image worker.

@@ -3,6 +3,7 @@ using Tomur.Api;
 using Tomur.Api.Models;
 using Tomur.Api.OpenAI;
 using Tomur.Api.Ollama;
+using Tomur.Agents;
 using Tomur.Config;
 using Tomur.Multimodal;
 using Tomur.Native;
@@ -62,6 +63,24 @@ namespace Tomur.Serialization;
 [JsonSerializable(typeof(MultimodalInputSummary))]
 [JsonSerializable(typeof(MultimodalOperationResponse))]
 [JsonSerializable(typeof(MultimodalTextResponse))]
+[JsonSerializable(typeof(ImageGenerationOptions))]
+[JsonSerializable(typeof(ImageGenerationWorkerRequest))]
+[JsonSerializable(typeof(ImageGenerationWorkerResponse))]
+[JsonSerializable(typeof(RuntimeWorkerError))]
+[JsonSerializable(typeof(AgentRuntimeStatus))]
+[JsonSerializable(typeof(AgentChatClientStatus))]
+[JsonSerializable(typeof(AgentFrameworkStatus))]
+[JsonSerializable(typeof(AgentOrchestrationStatus))]
+[JsonSerializable(typeof(AgentToolStatus))]
+[JsonSerializable(typeof(AgentToolMapResponse))]
+[JsonSerializable(typeof(AgentFrameworkToolBindingResponse))]
+[JsonSerializable(typeof(AgentFrameworkToolBinding))]
+[JsonSerializable(typeof(AgentToolDescriptor))]
+[JsonSerializable(typeof(AgentChatRequest))]
+[JsonSerializable(typeof(AgentChatMessage))]
+[JsonSerializable(typeof(AgentChatResponse))]
+[JsonSerializable(typeof(RuntimeDiagnoseToolResult))]
+[JsonSerializable(typeof(BlockedToolResult))]
 [JsonSerializable(typeof(string[]))]
 [JsonSerializable(typeof(ModelCatalogResponse))]
 [JsonSerializable(typeof(ModelHardwareProfileResponse))]

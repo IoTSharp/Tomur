@@ -51,6 +51,7 @@ static async Task<int> RunAsync(string[] args)
         "pull" => await ModelCommand.RunPullAsync(commandArgs),
         "list" => ModelCommand.RunList(commandArgs),
         "ps" => ModelCommand.RunPs(commandArgs),
+        "internal" => InternalCommand.Run(commandArgs),
         _ => RunUnknownCommand(command)
     };
 }

@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Tomur.Agents;
 using Tomur.Api.Models;
 using Tomur.Api.Ollama;
 using Tomur.Api.OpenAI;
@@ -56,6 +57,26 @@ public static class ApiRouteExtensions
             var response = multimodalRuntime.GetStatus();
             await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.MultimodalRuntimeStatus);
         });
+
+        app.MapGet("/api/agents/runtime", static async (HttpContext context, AgentRuntimeService agentRuntime) =>
+        {
+            var response = agentRuntime.GetStatus();
+            await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.AgentRuntimeStatus);
+        });
+
+        app.MapGet("/api/agents/tools", static async (HttpContext context, AgentRuntimeService agentRuntime) =>
+        {
+            var response = agentRuntime.GetToolMap();
+            await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.AgentToolMapResponse);
+        });
+
+        app.MapGet("/api/agents/tool-bindings", static async (HttpContext context, ToolFactory toolFactory) =>
+        {
+            var response = toolFactory.GetBindingStatus();
+            await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.AgentFrameworkToolBindingResponse);
+        });
+
+        app.MapPost("/api/agents/chat", HandleAgentChatAsync);
 
         app.MapGet("/api/models/catalog", static async (HttpContext context, DataPaths paths) =>
         {
@@ -148,6 +169,10 @@ public static class ApiRouteExtensions
                     "POST /api/runtime/session/unload",
                     "/api/runtime/native",
                     "/api/runtime/multimodal",
+                    "/api/agents/runtime",
+                    "/api/agents/tools",
+                    "/api/agents/tool-bindings",
+                    "POST /api/agents/chat",
                     "/api/models/catalog",
                     "/api/models/installed",
                     "POST /api/runtime/native/prepare",
@@ -184,6 +209,47 @@ public static class ApiRouteExtensions
 
         var response = new OpenAiModelListResponse(models);
         await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.OpenAiModelListResponse);
+    }
+
+    private static async Task HandleAgentChatAsync(
+        HttpContext context,
+        RuntimeDiagnosticsProvider diagnosticsProvider,
+        AgentRuntimeService agentRuntime)
+    {
+        var request = await ReadAgentRequestAsync(
+            context,
+            AppJsonSerializerContext.Default.AgentChatRequest);
+        if (request is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var response = await agentRuntime.RunChatAsync(request, context.RequestAborted);
+            await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.AgentChatResponse);
+        }
+        catch (InferenceException exception) when (IsInvalidRequestInferenceException(exception))
+        {
+            await WriteAgentDiagnosticAsync(
+                context,
+                diagnosticsProvider.GetRuntimeFailure(request.Model, exception),
+                StatusCodes.Status400BadRequest);
+        }
+        catch (InferenceException exception)
+        {
+            await WriteAgentDiagnosticAsync(
+                context,
+                diagnosticsProvider.GetRuntimeFailure(request.Model, exception),
+                StatusCodes.Status503ServiceUnavailable);
+        }
+        catch (Exception exception) when (IsNativeRuntimeException(exception))
+        {
+            await WriteAgentDiagnosticAsync(
+                context,
+                diagnosticsProvider.GetRuntimeFailure(request.Model, CreateNativeRuntimeException(exception)),
+                StatusCodes.Status503ServiceUnavailable);
+        }
     }
 
     private static ModelCatalogResponse CreateModelCatalogResponse(DataPaths paths)
@@ -534,7 +600,8 @@ public static class ApiRouteExtensions
         HttpContext context,
         RuntimeDiagnosticsProvider diagnosticsProvider,
         LocalModelCatalog modelCatalog,
-        MultimodalExecutionService multimodalExecution)
+        MultimodalExecutionService multimodalExecution,
+        IsolatedImageGenerationService isolatedImageGeneration)
     {
         var request = await ReadOpenAiRequestAsync(
             context,
@@ -603,7 +670,7 @@ public static class ApiRouteExtensions
 
         try
         {
-            var result = multimodalExecution.GenerateImage(model, options, context.RequestAborted);
+            var result = await isolatedImageGeneration.GenerateImageAsync(model, options, context.RequestAborted);
             var imageBase64 = Convert.ToBase64String(result.Bytes);
             var mimeType = ResolveImageMimeType(result.Format);
             var data = responseFormat == "b64_json"
@@ -1248,6 +1315,48 @@ public static class ApiRouteExtensions
         }
     }
 
+    private static async Task<T?> ReadAgentRequestAsync<T>(
+        HttpContext context,
+        System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> jsonTypeInfo)
+    {
+        try
+        {
+            var request = await JsonSerializer.DeserializeAsync(
+                context.Request.Body,
+                jsonTypeInfo,
+                context.RequestAborted);
+
+            if (request is not null)
+            {
+                return request;
+            }
+
+            await WriteAgentDiagnosticAsync(
+                context,
+                new RuntimeDiagnostic(
+                    "error",
+                    "invalid_request",
+                    "Request body is required.",
+                    null,
+                    ["Provide a JSON request body."]),
+                StatusCodes.Status400BadRequest);
+            return default;
+        }
+        catch (JsonException exception)
+        {
+            await WriteAgentDiagnosticAsync(
+                context,
+                new RuntimeDiagnostic(
+                    "error",
+                    "invalid_request",
+                    $"Invalid JSON request body: {exception.Message}",
+                    null,
+                    ["Provide valid JSON."]),
+                StatusCodes.Status400BadRequest);
+            return default;
+        }
+    }
+
     private static async Task<T?> ReadOllamaRequestAsync<T>(
         HttpContext context,
         System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> jsonTypeInfo)
@@ -1534,6 +1643,18 @@ public static class ApiRouteExtensions
             response,
             AppJsonSerializerContext.Default.OllamaErrorResponse,
             StatusCodes.Status503ServiceUnavailable);
+    }
+
+    private static async Task WriteAgentDiagnosticAsync(
+        HttpContext context,
+        RuntimeDiagnostic diagnostic,
+        int statusCode)
+    {
+        await JsonHttpResponse.WriteAsync(
+            context,
+            diagnostic,
+            AppJsonSerializerContext.Default.RuntimeDiagnostic,
+            statusCode);
     }
 
     private static async Task WriteOpenAiDiagnosticAsync(

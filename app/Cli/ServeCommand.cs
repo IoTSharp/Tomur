@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Hosting.WindowsServices;
 using Tomur.Api;
+using Tomur.Agents;
 using Tomur.Config;
 using Tomur.Inference;
 using Tomur.Multimodal;
@@ -131,8 +132,14 @@ internal static class ServeCommand
         builder.Services.AddSingleton<LlamaImportResolver>();
         builder.Services.AddSingleton<SessionManager>();
         builder.Services.AddSingleton<LocalInferenceService>();
+        builder.Services.AddSingleton<LocalChatClient>();
+        builder.Services.AddSingleton<Microsoft.Extensions.AI.IChatClient>(provider =>
+            provider.GetRequiredService<LocalChatClient>());
         builder.Services.AddSingleton<MultimodalRuntimeService>();
         builder.Services.AddSingleton<MultimodalExecutionService>();
+        builder.Services.AddSingleton<IsolatedImageGenerationService>();
+        builder.Services.AddSingleton<AgentRuntimeService>();
+        builder.Services.AddSingleton<ToolFactory>();
         builder.Services.AddSingleton<RuntimeDiagnosticsProvider>();
         builder.Services.AddSingleton<LocalModelCatalog>();
         builder.Services.AddSingleton<VersionProvider>();
