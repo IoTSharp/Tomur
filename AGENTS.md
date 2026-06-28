@@ -95,8 +95,9 @@
 - 不使用 Vue、Blazor、Svelte 或自研 AI 对话基础组件作为 Tomur Web UI 默认路线。
 - 不自研 Bubble、Sender、Conversations、Attachments、Prompts 等基础 AI 对话组件，除非官方组件无法满足本地运行约束。
 - Web UI 始终由 Tomur 本地 HTTP 服务托管，不拆成独立产品。
-- 首批页面优先 Chat、Models、Downloads、Runtime、Files、Settings。
-- 默认入口应提供可直接使用的 Chat 工作台，不做营销 landing。
+- Web UI 默认采用 Chat-first 信息架构；首屏不把 Models、Downloads、Runtime、Files 作为一级导航。
+- Models、Downloads、Runtime、Files 默认收敛在 Settings 分组、状态抽屉或 Chat 上下文诊断入口中。
+- 默认入口应提供可直接使用的 Chat 工作台，不做营销 landing，也不做管理后台式首页。
 
 ## 服务运行
 

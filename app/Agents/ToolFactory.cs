@@ -79,6 +79,8 @@ public sealed class ToolFactory
             [
                 "Only read-only runtime tools are invokable in R9 without user confirmation.",
                 "POST /api/agents/tools/invoke can execute runtime.diagnose and tools.inspect with audit metadata.",
+                "POST /api/agents/chat supports tool_mode auto_read_only for bounded Tomur-planned read-only context.",
+                "POST /api/agents/workflows/read-only executes a bounded Tomur read-only tool plan and can ask an Agent Framework workflow-hosted ChatClientAgent to summarize the results.",
                 "Multimodal tool declarations are exposed for schema inspection but remain blocked from automatic tool-calling.",
                 "Image generation and TTS are available through their dedicated OpenAI-compatible endpoints when the backend is ready.",
                 "POST /api/agents/chat defaults to ChatToolMode.None and can run explicit read-only tool context when tool_mode is read_only."

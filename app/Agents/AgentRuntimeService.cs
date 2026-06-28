@@ -1,4 +1,5 @@
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
 using Tomur.Inference;
@@ -11,7 +12,8 @@ public sealed class AgentRuntimeService
 {
     private const string AgentName = "tomur-local-agent";
     private const string AgentRuntime = "Microsoft.Agents.AI.ChatClientAgent";
-    private const string ChatRespondInputSchema = """{"type":"object","properties":{"message":{"type":"string"},"messages":{"type":"array","items":{"type":"object","properties":{"role":{"type":"string"},"content":{"type":"string"}}}},"tool_results":{"type":"array","items":{"type":"object","properties":{"tool":{"type":"string"},"content":{"type":"string"},"result":{"type":"object"}}}},"tool_mode":{"type":"string","enum":["none","read_only"]},"tools":{"type":"array","items":{"type":"object","required":["tool"],"properties":{"tool":{"type":"string","enum":["runtime.diagnose","tools.inspect"]},"arguments":{"type":"object"}}}},"max_tool_rounds":{"type":"integer"},"model":{"type":"string"},"instructions":{"type":"string"},"max_tokens":{"type":"integer"}}}""";
+    private const string WorkflowRuntime = "Tomur read-only tool plan with optional Microsoft.Agents.AI.Workflows summary";
+    private const string ChatRespondInputSchema = """{"type":"object","properties":{"message":{"type":"string"},"messages":{"type":"array","items":{"type":"object","properties":{"role":{"type":"string"},"content":{"type":"string"}}}},"tool_results":{"type":"array","items":{"type":"object","properties":{"tool":{"type":"string"},"content":{"type":"string"},"result":{"type":"object"}}}},"tool_mode":{"type":"string","enum":["none","read_only","auto_read_only"]},"tools":{"type":"array","items":{"type":"object","required":["tool"],"properties":{"tool":{"type":"string","enum":["runtime.diagnose","tools.inspect"]},"arguments":{"type":"object"}}}},"max_tool_rounds":{"type":"integer"},"model":{"type":"string"},"instructions":{"type":"string"},"max_tokens":{"type":"integer"}}}""";
 
     private readonly LocalModelCatalog modelCatalog;
     private readonly MultimodalRuntimeService multimodalRuntime;
@@ -51,12 +53,13 @@ public sealed class AgentRuntimeService
             new AgentFrameworkStatus(
                 "wired",
                 "Microsoft.Agents.AI.ChatClientAgent / Microsoft.Agents.AI.Workflows",
-                "Agent Framework packages and Tomur-local AI boundaries are present. Plain local ChatClientAgent execution is wired, and read-only Tomur diagnostics are exposed as Microsoft.Extensions.AI.AITool objects with a controlled manual invocation endpoint. Automatic multimodal tool-calling remains an R9 follow-up; image generation and TTS stay available through their dedicated OpenAI-compatible endpoints when backend readiness allows.",
+                "Agent Framework packages and Tomur-local AI boundaries are present. Plain local ChatClientAgent execution is wired, and read-only Tomur diagnostics are exposed as Microsoft.Extensions.AI.AITool objects with controlled manual, chat-context and bounded read-only workflow paths. Automatic multimodal tool-calling remains an R9 follow-up; image generation and TTS stay available through their dedicated OpenAI-compatible endpoints when backend readiness allows.",
                 [
                     "POST /api/agents/chat runs the local ChatClientAgent text path.",
                     "GET /api/agents/tools exposes the Tomur tool map.",
                     "GET /api/agents/tool-bindings exposes the current AITool binding set.",
                     "POST /api/agents/tools/invoke can invoke runtime.diagnose and tools.inspect as read-only tools.",
+                    "POST /api/agents/workflows/read-only runs a bounded Tomur read-only tool plan and can ask an Agent Framework workflow-hosted ChatClientAgent to summarize the results.",
                     "Use /api/agents/runtime to inspect the local tool map.",
                     "Use /api/runtime/multimodal to inspect backend readiness.",
                     "Plain OpenAI/Ollama-compatible text APIs continue to work without Agent Framework."
@@ -67,7 +70,7 @@ public sealed class AgentRuntimeService
                 "POST /api/agents/chat",
                 defaultChatModel is null
                     ? "A ChatClientAgent can be constructed only after a local chat model is visible."
-                    : "A ChatClientAgent can run plain local text conversations through Microsoft.Extensions.AI.IChatClient."),
+                    : "A ChatClientAgent can run plain local text conversations and summarize bounded read-only tool results through Microsoft.Extensions.AI.IChatClient."),
             tools,
             [
                 "Community keeps Agent Framework optional and local-first.",
@@ -100,12 +103,17 @@ public sealed class AgentRuntimeService
         var started = DateTimeOffset.UtcNow;
         var toolCalls = new List<AgentChatToolCall>();
 
-        if (requestedToolMode == "read_only")
+        if (requestedToolMode is "read_only" or "auto_read_only")
         {
-            foreach (var toolRequest in NormalizeRequestedTools(request.Tools, maxToolRounds))
+            var requestedTools = requestedToolMode == "auto_read_only"
+                ? ResolveAutoReadOnlyTools(request.Tools, messages, maxToolRounds)
+                : NormalizeRequestedTools(request.Tools, maxToolRounds);
+            foreach (var toolRequest in requestedTools)
             {
                 var invokeResponse = await toolInvoker.InvokeAsync(
                         new AgentToolInvokeRequest(toolRequest.Tool, toolRequest.Arguments),
+                        requestedToolMode == "auto_read_only" ? "auto-read-only" : "chat-context-read-only",
+                        requestedToolMode == "auto_read_only" ? "auto" : "chat-context",
                         cancellationToken)
                     .ConfigureAwait(false);
                 toolCalls.Add(ToChatToolCall(invokeResponse));
@@ -113,28 +121,13 @@ public sealed class AgentRuntimeService
             }
         }
 
-        var options = new ChatOptions
-        {
-            ModelId = string.IsNullOrWhiteSpace(request.Model) ? null : request.Model.Trim(),
-            Instructions = string.IsNullOrWhiteSpace(request.Instructions) ? null : request.Instructions.Trim(),
-            Temperature = NormalizeFloat(request.Temperature),
-            TopP = NormalizeFloat(request.TopP),
-            MaxOutputTokens = request.MaxTokens is > 0 ? Math.Clamp(request.MaxTokens.Value, 1, 4096) : null,
-            ToolMode = ChatToolMode.None
-        };
-
-        var modelId = options.ModelId ?? modelCatalog.ListModels().FirstOrDefault(IsChatModel)?.Id;
-        if (string.IsNullOrWhiteSpace(modelId))
-        {
-            throw new InferenceException(
-                "model_not_downloaded",
-                "No local chat model is available for the Agent Framework chat endpoint.",
-                [
-                    "Run tomur pull recommended to install the default local assistant model.",
-                    "Use /v1/models or /api/tags to inspect models currently visible to Tomur."
-                ]);
-        }
-
+        var options = CreateChatOptions(
+            request.Model,
+            request.Instructions,
+            request.MaxTokens,
+            request.Temperature,
+            request.TopP);
+        var modelId = ResolveChatModelId(options.ModelId);
         options.ModelId = modelId;
         var agent = CreateAgent(modelId);
         var session = await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
@@ -158,6 +151,119 @@ public sealed class AgentRuntimeService
             BuildChatDiagnostics(requestedToolMode, toolCalls));
     }
 
+    public async Task<AgentReadOnlyWorkflowResponse> RunReadOnlyWorkflowAsync(
+        AgentReadOnlyWorkflowRequest request,
+        ToolInvoker toolInvoker,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(toolInvoker);
+
+        var started = DateTimeOffset.UtcNow;
+        var messages = BuildMessagesForWorkflow(request);
+        var maxToolRounds = NormalizeMaxToolRounds(request.MaxToolRounds);
+        var toolRequests = request.Tools is { Count: > 0 }
+            ? NormalizeRequestedTools(request.Tools, maxToolRounds)
+            : ResolveAutoReadOnlyTools(null, messages, maxToolRounds);
+
+        if (toolRequests.Count == 0)
+        {
+            throw new InferenceException(
+                "invalid_request",
+                "The read-only workflow requires tools[] or a message that asks for runtime or tool-map context.",
+                [
+                    "Set tools to runtime.diagnose or tools.inspect.",
+                    "Ask for runtime diagnostics or tool availability when using automatic read-only planning."
+                ]);
+        }
+
+        var steps = new List<AgentChatToolCall>();
+        foreach (var toolRequest in toolRequests)
+        {
+            var invokeResponse = await toolInvoker.InvokeAsync(
+                    new AgentToolInvokeRequest(toolRequest.Tool, toolRequest.Arguments),
+                    "workflow-read-only",
+                    "workflow",
+                    cancellationToken)
+                .ConfigureAwait(false);
+            steps.Add(ToChatToolCall(invokeResponse));
+        }
+
+        string text = string.Empty;
+        string? model = null;
+        var shouldRespond = request.Respond ??
+            modelCatalog.ListModels().Any(IsChatModel);
+        if (shouldRespond)
+        {
+            var summary = await RunWorkflowSummaryAsync(
+                    request,
+                    steps,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            text = summary.Text;
+            model = summary.Model;
+        }
+
+        return new AgentReadOnlyWorkflowResponse(
+            steps.Any(static step => step.Status == "blocked") ? "partial" : "ok",
+            "read-only-tools",
+            WorkflowRuntime,
+            model,
+            steps.Count,
+            steps,
+            text,
+            (long)Math.Round((DateTimeOffset.UtcNow - started).TotalMilliseconds),
+            BuildWorkflowDiagnostics(steps, shouldRespond));
+    }
+
+    private async Task<WorkflowSummary> RunWorkflowSummaryAsync(
+        AgentReadOnlyWorkflowRequest request,
+        IReadOnlyList<AgentChatToolCall> steps,
+        CancellationToken cancellationToken)
+    {
+        var messages = BuildMessages(
+            new AgentChatRequest(
+                request.Model,
+                request.Message,
+                request.Messages,
+                steps.Select(ToToolResult).ToArray(),
+                "none",
+                null,
+                null,
+                null,
+                request.MaxTokens,
+                request.Temperature,
+                request.TopP));
+        var options = CreateChatOptions(
+            request.Model,
+            request.Instructions ?? "Summarize the local read-only tool results clearly. Do not claim that side-effect tools were executed.",
+            request.MaxTokens,
+            request.Temperature,
+            request.TopP);
+        var modelId = ResolveChatModelId(options.ModelId);
+        options.ModelId = modelId;
+
+        var summaryAgent = CreateAgent(modelId);
+        var workflow = AgentWorkflowBuilder.BuildSequential(
+            "tomur-read-only-summary",
+            [summaryAgent]);
+        var workflowAgent = workflow.AsAIAgent(
+            "tomur.readonly.workflow",
+            "tomur-read-only-workflow",
+            "Sequential Agent Framework workflow used to summarize Tomur read-only tool results.",
+            InProcessExecution.Default,
+            includeExceptionDetails: false,
+            includeWorkflowOutputsInResponse: true);
+        var response = await workflowAgent.RunAsync(
+                messages,
+                null,
+                new ChatClientAgentRunOptions(options),
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return new WorkflowSummary(modelId, response.Text ?? string.Empty);
+    }
+
     private static IReadOnlyList<string> BuildChatDiagnostics(
         string toolMode,
         IReadOnlyList<AgentChatToolCall> toolCalls)
@@ -170,10 +276,38 @@ public sealed class AgentRuntimeService
                 "scope: local text orchestration"
         };
 
-        if (toolMode == "read_only")
+        if (toolMode is "read_only" or "auto_read_only")
         {
-            diagnostics.Add("tool-scope: controlled read-only Tomur AITool context");
+            diagnostics.Add(toolMode == "auto_read_only"
+                ? "tool-scope: automatic bounded read-only Tomur AITool context"
+                : "tool-scope: controlled read-only Tomur AITool context");
             diagnostics.Add($"tool-rounds: {toolCalls.Count}");
+        }
+
+        return diagnostics;
+    }
+
+    private static IReadOnlyList<string> BuildWorkflowDiagnostics(
+        IReadOnlyList<AgentChatToolCall> steps,
+        bool responseRequested)
+    {
+        var diagnostics = new List<string>
+        {
+            "workflow: read-only-tools",
+            responseRequested
+                ? "source: Tomur bounded tool planner + Microsoft.Agents.AI.Workflows"
+                : "source: Tomur bounded tool planner",
+            "tool-boundary: Microsoft.Extensions.AI.AITool",
+            "scope: bounded local read-only workflow",
+            $"step-count: {steps.Count}",
+            responseRequested
+                ? "response: workflow-hosted ChatClientAgent summary requested"
+                : "response: tool results only"
+        };
+
+        if (steps.Any(static step => step.Status == "blocked"))
+        {
+            diagnostics.Add("status: one or more requested tools were blocked by the R9 safety boundary");
         }
 
         return diagnostics;
@@ -197,6 +331,39 @@ public sealed class AgentRuntimeService
             },
             NullLoggerFactory.Instance,
             services);
+    }
+
+    private ChatOptions CreateChatOptions(
+        string? model,
+        string? instructions,
+        int? maxTokens,
+        double? temperature,
+        double? topP)
+        => new()
+        {
+            ModelId = string.IsNullOrWhiteSpace(model) ? null : model.Trim(),
+            Instructions = string.IsNullOrWhiteSpace(instructions) ? null : instructions.Trim(),
+            Temperature = NormalizeFloat(temperature),
+            TopP = NormalizeFloat(topP),
+            MaxOutputTokens = maxTokens is > 0 ? Math.Clamp(maxTokens.Value, 1, 4096) : null,
+            ToolMode = ChatToolMode.None
+        };
+
+    private string ResolveChatModelId(string? requestedModel)
+    {
+        var modelId = requestedModel ?? modelCatalog.ListModels().FirstOrDefault(IsChatModel)?.Id;
+        if (!string.IsNullOrWhiteSpace(modelId))
+        {
+            return modelId;
+        }
+
+        throw new InferenceException(
+            "model_not_downloaded",
+            "No local chat model is available for the Agent Framework chat endpoint.",
+            [
+                "Run tomur pull recommended to install the default local assistant model.",
+                "Use /v1/models or /api/tags to inspect models currently visible to Tomur."
+            ]);
     }
 
     private static IReadOnlyList<ChatMessage> BuildMessages(AgentChatRequest request)
@@ -225,6 +392,31 @@ public sealed class AgentRuntimeService
             "invalid_request",
             "The agent chat request requires message, messages[].content or tool_results[].content.",
             ["Provide a user message or a prior read-only tool result before invoking /api/agents/chat."]);
+    }
+
+    private static IReadOnlyList<ChatMessage> BuildMessagesForWorkflow(AgentReadOnlyWorkflowRequest request)
+    {
+        var chatRequest = new AgentChatRequest(
+            request.Model,
+            request.Message,
+            request.Messages,
+            null,
+            null,
+            null,
+            null,
+            request.Instructions,
+            request.MaxTokens,
+            request.Temperature,
+            request.TopP);
+
+        if (request.Tools is { Count: > 0 } &&
+            string.IsNullOrWhiteSpace(request.Message) &&
+            (request.Messages is null || request.Messages.Count == 0))
+        {
+            return [new ChatMessage(ChatRole.User, "Run the requested read-only Tomur workflow tools.")];
+        }
+
+        return BuildMessages(chatRequest);
     }
 
     private static void AddToolResultMessages(
@@ -294,13 +486,19 @@ public sealed class AgentRuntimeService
             return "read_only";
         }
 
+        if (normalized is "auto" or "auto_read_only" or "automatic_read_only" or "read_only_auto")
+        {
+            return "auto_read_only";
+        }
+
         throw new InferenceException(
             "invalid_request",
             $"Unsupported tool_mode '{request.ToolMode}'.",
             [
                 "Use tool_mode none for plain text.",
                 "Use tool_mode read_only with tools[] to invoke runtime.diagnose or tools.inspect before the agent answers.",
-                "Model-selected automatic tool-calling is not enabled in this R9 boundary."
+                "Use tool_mode auto_read_only to let Tomur select bounded read-only tools from the current request.",
+                "Model-selected multimodal tool-calling is not enabled in this R9 boundary."
             ]);
     }
 
@@ -337,6 +535,82 @@ public sealed class AgentRuntimeService
         return normalized;
     }
 
+    private static IReadOnlyList<AgentChatToolRequest> ResolveAutoReadOnlyTools(
+        IReadOnlyList<AgentChatToolRequest>? requestedTools,
+        IReadOnlyList<ChatMessage> messages,
+        int maxToolRounds)
+    {
+        var normalized = NormalizeRequestedTools(requestedTools, maxToolRounds);
+        if (normalized.Count > 0)
+        {
+            return normalized;
+        }
+
+        var text = string.Join("\n", messages.Select(static message => message.Text));
+        var planned = new List<AgentChatToolRequest>();
+        if (MentionsRuntimeDiagnostics(text))
+        {
+            planned.Add(new AgentChatToolRequest(RuntimeDiagnoseFunction.ToolName, null));
+        }
+
+        if (MentionsToolMap(text))
+        {
+            planned.Add(new AgentChatToolRequest(ToolMapFunction.ToolName, null));
+        }
+
+        if (planned.Count == 0 && MentionsLocalStatus(text))
+        {
+            planned.Add(new AgentChatToolRequest(RuntimeDiagnoseFunction.ToolName, null));
+            planned.Add(new AgentChatToolRequest(ToolMapFunction.ToolName, null));
+        }
+
+        return planned.Count > maxToolRounds
+            ? planned.Take(maxToolRounds).ToArray()
+            : planned;
+    }
+
+    private static bool MentionsRuntimeDiagnostics(string value)
+        => ContainsAny(
+            value,
+            "runtime",
+            "diagnostic",
+            "diagnostics",
+            "doctor",
+            "health",
+            "status",
+            "native",
+            "运行时",
+            "诊断",
+            "健康",
+            "状态");
+
+    private static bool MentionsToolMap(string value)
+        => ContainsAny(
+            value,
+            "tool",
+            "tools",
+            "capability",
+            "capabilities",
+            "agent",
+            "workflow",
+            "工具",
+            "能力",
+            "编排");
+
+    private static bool MentionsLocalStatus(string value)
+        => ContainsAny(
+            value,
+            "tomur",
+            "local",
+            "ready",
+            "available",
+            "本地",
+            "可用");
+
+    private static bool ContainsAny(string value, params string[] terms)
+        => !string.IsNullOrWhiteSpace(value) &&
+            terms.Any(term => value.Contains(term, StringComparison.OrdinalIgnoreCase));
+
     private static string NormalizeToolResultContent(AgentChatToolResult toolResult)
     {
         var toolName = string.IsNullOrWhiteSpace(toolResult.Tool)
@@ -350,6 +624,12 @@ public sealed class AgentRuntimeService
             ? string.Empty
             : $"tool:{toolName}\n{content}";
     }
+
+    private static AgentChatToolResult ToToolResult(AgentChatToolCall toolCall)
+        => new(
+            toolCall.Tool,
+            $"status:{toolCall.Status}\nelapsed_ms:{toolCall.ElapsedMs}\nresult:{toolCall.Result?.GetRawText() ?? "null"}",
+            toolCall.Result);
 
     private IEnumerable<AgentToolStatus> BuildToolStatuses(IReadOnlyList<LocalModelDescriptor> models)
         => BuildToolDescriptors(models)
@@ -446,7 +726,7 @@ public sealed class AgentRuntimeService
             "read",
             true,
             false,
-            ["manual-read-only", "chat-context"],
+            ["manual-read-only", "chat-context", "auto-read-only", "read-only-workflow"],
             "Runtime status can be exposed as a read-only local tool; repair actions remain user-confirmed.",
             []);
 
@@ -461,7 +741,7 @@ public sealed class AgentRuntimeService
             "read",
             true,
             false,
-            ["manual-read-only", "chat-context"],
+            ["manual-read-only", "chat-context", "auto-read-only", "read-only-workflow"],
             "Agent Framework tool declarations can be inspected without invoking side-effect tools.",
             []);
     }
@@ -563,4 +843,6 @@ public sealed class AgentRuntimeService
             "image-generation" or "tts" => "generates-local-artifact",
             _ => "read"
         };
+
+    private sealed record WorkflowSummary(string Model, string Text);
 }

@@ -77,6 +77,7 @@ public static class ApiRouteExtensions
         });
 
         app.MapPost("/api/agents/chat", HandleAgentChatAsync);
+        app.MapPost("/api/agents/workflows/read-only", HandleAgentReadOnlyWorkflowAsync);
         app.MapPost("/api/agents/tools/invoke", HandleAgentToolInvokeAsync);
 
         app.MapGet("/api/models/catalog", static async (HttpContext context, DataPaths paths) =>
@@ -174,6 +175,7 @@ public static class ApiRouteExtensions
                     "/api/agents/tools",
                     "/api/agents/tool-bindings",
                     "POST /api/agents/chat",
+                    "POST /api/agents/workflows/read-only",
                     "POST /api/agents/tools/invoke",
                     "/api/models/catalog",
                     "/api/models/installed",
@@ -231,6 +233,51 @@ public static class ApiRouteExtensions
         {
             var response = await agentRuntime.RunChatAsync(request, toolInvoker, context.RequestAborted);
             await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.AgentChatResponse);
+        }
+        catch (InferenceException exception) when (IsInvalidRequestInferenceException(exception))
+        {
+            await WriteAgentDiagnosticAsync(
+                context,
+                diagnosticsProvider.GetRuntimeFailure(request.Model, exception),
+                StatusCodes.Status400BadRequest);
+        }
+        catch (InferenceException exception)
+        {
+            await WriteAgentDiagnosticAsync(
+                context,
+                diagnosticsProvider.GetRuntimeFailure(request.Model, exception),
+                StatusCodes.Status503ServiceUnavailable);
+        }
+        catch (Exception exception) when (IsNativeRuntimeException(exception))
+        {
+            await WriteAgentDiagnosticAsync(
+                context,
+                diagnosticsProvider.GetRuntimeFailure(request.Model, CreateNativeRuntimeException(exception)),
+                StatusCodes.Status503ServiceUnavailable);
+        }
+    }
+
+    private static async Task HandleAgentReadOnlyWorkflowAsync(
+        HttpContext context,
+        RuntimeDiagnosticsProvider diagnosticsProvider,
+        AgentRuntimeService agentRuntime,
+        ToolInvoker toolInvoker)
+    {
+        var request = await ReadAgentRequestAsync(
+            context,
+            AppJsonSerializerContext.Default.AgentReadOnlyWorkflowRequest);
+        if (request is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var response = await agentRuntime.RunReadOnlyWorkflowAsync(request, toolInvoker, context.RequestAborted);
+            await JsonHttpResponse.WriteAsync(
+                context,
+                response,
+                AppJsonSerializerContext.Default.AgentReadOnlyWorkflowResponse);
         }
         catch (InferenceException exception) when (IsInvalidRequestInferenceException(exception))
         {

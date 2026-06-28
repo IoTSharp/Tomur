@@ -19,8 +19,22 @@ public sealed class ToolInvoker
     public async Task<AgentToolInvokeResponse> InvokeAsync(
         AgentToolInvokeRequest request,
         CancellationToken cancellationToken)
+        => await InvokeAsync(
+                request,
+                "manual-read-only",
+                "manual",
+                cancellationToken)
+            .ConfigureAwait(false);
+
+    public async Task<AgentToolInvokeResponse> InvokeAsync(
+        AgentToolInvokeRequest request,
+        string auditMode,
+        string invocationKind,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+        ArgumentException.ThrowIfNullOrWhiteSpace(auditMode);
+        ArgumentException.ThrowIfNullOrWhiteSpace(invocationKind);
 
         var toolName = request.Tool?.Trim();
         if (string.IsNullOrWhiteSpace(toolName))
@@ -56,13 +70,13 @@ public sealed class ToolInvoker
                 (long)Math.Round((DateTimeOffset.UtcNow - started).TotalMilliseconds),
                 AgentToolResultJson.ToJsonElement(result),
                 [
-                    "invocation: manual",
+                    $"invocation: {invocationKind}",
                     "scope: r9-read-only",
                     "source: Microsoft.Extensions.AI.AITool"
                 ],
                 new AgentToolInvokeAudit(
                     started,
-                    "manual-read-only",
+                    auditMode,
                     descriptor.SideEffect,
                     false,
                     descriptor.Actions));
@@ -86,13 +100,13 @@ public sealed class ToolInvoker
             0,
             AgentToolResultJson.ToJsonElement(blocked),
             [
-                "invocation: manual",
+                $"invocation: {invocationKind}",
                 "scope: r9-controlled-boundary",
                 "reason: tool requires readiness, confirmation, or a later workflow loop"
             ],
             new AgentToolInvokeAudit(
                 DateTimeOffset.UtcNow,
-                "manual-blocked",
+                $"{auditMode}-blocked",
                 descriptor.SideEffect,
                 descriptor.RequiresConfirmation,
                 blocked.Actions));

@@ -98,6 +98,18 @@ public sealed record AgentChatRequest(
     [property: JsonPropertyName("temperature")] double? Temperature,
     [property: JsonPropertyName("top_p")] double? TopP);
 
+public sealed record AgentReadOnlyWorkflowRequest(
+    [property: JsonPropertyName("model")] string? Model,
+    [property: JsonPropertyName("message")] string? Message,
+    [property: JsonPropertyName("messages")] IReadOnlyList<AgentChatMessage>? Messages,
+    [property: JsonPropertyName("tools")] IReadOnlyList<AgentChatToolRequest>? Tools,
+    [property: JsonPropertyName("max_tool_rounds")] int? MaxToolRounds,
+    [property: JsonPropertyName("instructions")] string? Instructions,
+    [property: JsonPropertyName("max_tokens")] int? MaxTokens,
+    [property: JsonPropertyName("temperature")] double? Temperature,
+    [property: JsonPropertyName("top_p")] double? TopP,
+    [property: JsonPropertyName("respond")] bool? Respond);
+
 public sealed record AgentChatMessage(
     [property: JsonPropertyName("role")] string? Role,
     [property: JsonPropertyName("content")] string? Content);
@@ -119,6 +131,17 @@ public sealed record AgentChatResponse(
     [property: JsonPropertyName("tool_mode")] string ToolMode,
     [property: JsonPropertyName("tool_rounds")] int ToolRounds,
     [property: JsonPropertyName("tool_calls")] IReadOnlyList<AgentChatToolCall> ToolCalls,
+    [property: JsonPropertyName("text")] string Text,
+    [property: JsonPropertyName("elapsed_ms")] long ElapsedMs,
+    [property: JsonPropertyName("diagnostics")] IReadOnlyList<string> Diagnostics);
+
+public sealed record AgentReadOnlyWorkflowResponse(
+    [property: JsonPropertyName("status")] string Status,
+    [property: JsonPropertyName("workflow")] string Workflow,
+    [property: JsonPropertyName("runtime")] string Runtime,
+    [property: JsonPropertyName("model")] string? Model,
+    [property: JsonPropertyName("step_count")] int StepCount,
+    [property: JsonPropertyName("steps")] IReadOnlyList<AgentChatToolCall> Steps,
     [property: JsonPropertyName("text")] string Text,
     [property: JsonPropertyName("elapsed_ms")] long ElapsedMs,
     [property: JsonPropertyName("diagnostics")] IReadOnlyList<string> Diagnostics);
