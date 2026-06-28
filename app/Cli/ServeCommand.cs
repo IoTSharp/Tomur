@@ -140,6 +140,7 @@ internal static class ServeCommand
         builder.Services.AddSingleton<IsolatedImageGenerationService>();
         builder.Services.AddSingleton<AgentRuntimeService>();
         builder.Services.AddSingleton<ToolFactory>();
+        builder.Services.AddSingleton<ToolInvoker>();
         builder.Services.AddSingleton<RuntimeDiagnosticsProvider>();
         builder.Services.AddSingleton<LocalModelCatalog>();
         builder.Services.AddSingleton<VersionProvider>();

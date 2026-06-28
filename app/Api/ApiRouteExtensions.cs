@@ -216,7 +216,8 @@ public static class ApiRouteExtensions
     private static async Task HandleAgentChatAsync(
         HttpContext context,
         RuntimeDiagnosticsProvider diagnosticsProvider,
-        AgentRuntimeService agentRuntime)
+        AgentRuntimeService agentRuntime,
+        ToolInvoker toolInvoker)
     {
         var request = await ReadAgentRequestAsync(
             context,
@@ -228,7 +229,7 @@ public static class ApiRouteExtensions
 
         try
         {
-            var response = await agentRuntime.RunChatAsync(request, context.RequestAborted);
+            var response = await agentRuntime.RunChatAsync(request, toolInvoker, context.RequestAborted);
             await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.AgentChatResponse);
         }
         catch (InferenceException exception) when (IsInvalidRequestInferenceException(exception))
@@ -256,7 +257,7 @@ public static class ApiRouteExtensions
 
     private static async Task HandleAgentToolInvokeAsync(
         HttpContext context,
-        ToolFactory toolFactory)
+        ToolInvoker toolInvoker)
     {
         var request = await ReadAgentRequestAsync(
             context,
@@ -268,7 +269,7 @@ public static class ApiRouteExtensions
 
         try
         {
-            var response = await toolFactory.InvokeAsync(request, context.RequestAborted);
+            var response = await toolInvoker.InvokeAsync(request, context.RequestAborted);
             var statusCode = response.Status == "blocked"
                 ? StatusCodes.Status409Conflict
                 : StatusCodes.Status200OK;
@@ -1975,7 +1976,12 @@ public static class ApiRouteExtensions
         => exception is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException;
 
     private static bool IsInvalidRequestInferenceException(InferenceException exception)
-        => exception.Code is "invalid_audio" or "invalid_request" or "unsupported_audio_format";
+        => exception.Code is
+            "invalid_audio" or
+            "invalid_request" or
+            "tool_not_found" or
+            "tool_round_limit_exceeded" or
+            "unsupported_audio_format";
 
     private static InferenceException CreateNativeRuntimeException(Exception exception)
     {

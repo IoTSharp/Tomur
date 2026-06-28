@@ -423,8 +423,8 @@ R8 接线状态：
 交付物：
 
 1. ✅ Tomur 本地 chat runtime 到 `Microsoft.Extensions.AI.IChatClient` 的适配层。
-2. 🚧 Agent Framework 文本会话入口：`POST /api/agents/chat` 通过 `Microsoft.Agents.AI.ChatClientAgent` 调用本地 `IChatClient`，并支持手动只读工具结果作为 `tool_results` 回填上下文。
-3. 🚧 工具目录与状态映射：`GET /api/agents/runtime` 与 `GET /api/agents/tools` 暴露 chat、image、vision、OCR、ASR、TTS、files 和 runtime diagnostics 的当前状态、路由、schema 和诊断动作；`GET /api/agents/tool-bindings` 暴露当前 `Microsoft.Extensions.AI.AITool` 绑定。
+2. ✅ Agent Framework 文本会话入口：`POST /api/agents/chat` 通过 `Microsoft.Agents.AI.ChatClientAgent` 调用本地 `IChatClient`，默认保持 `tool_mode=none`，并支持手动只读工具结果作为 `tool_results` 回填上下文；当调用方显式设置 `tool_mode=read_only` 与 `tools[]` 时，会先通过受控 `AITool` 边界调用 `runtime.diagnose` / `tools.inspect`，再把结果作为同一轮会话上下文交给本地 agent。
+3. ✅ 工具目录与状态映射：`GET /api/agents/runtime` 与 `GET /api/agents/tools` 暴露 chat、image、vision、OCR、ASR、TTS、files 和 runtime diagnostics 的当前状态、路由、schema、side effect、callable、requires confirmation、invocation modes 和诊断动作；`GET /api/agents/tool-bindings` 暴露当前 `Microsoft.Extensions.AI.AITool` 绑定与同样的安全边界字段。
 4. ✅ 受控只读工具调用入口：`POST /api/agents/tools/invoke` 只允许调用 `runtime.diagnose` 与 `tools.inspect`，返回 schema、审计、耗时和诊断结果；有副作用工具必须返回阻塞诊断。
 5. ⏳ 图像生成工具：从会话中调用 `/v1/images/generations` 或内部 stable-diffusion.cpp adapter；当前手动入口为 `/v1/images/generations`，自动 tool-calling 仍留到 R9 后续受控调用流程，FLUX.2 成功出图 smoke 仍需补证据。
 6. ⏳ 视觉理解工具：从会话中调用 VLM adapter，支持 data URI / base64 图片输入。
@@ -439,15 +439,15 @@ R9 接线状态：
 
 1. `Tomur.csproj` 已引入 `Microsoft.Extensions.AI`、`Microsoft.Agents.AI` 与 `Microsoft.Agents.AI.Workflows`，但 workflow execution 仍未接入公开会话路径。
 2. `LocalChatClient` 已把 Tomur R7 文本 chat runtime 适配为 `IChatClient`，支持模型解析、基础采样参数、system instructions 和 text/tool content 序列化。
-3. `AgentRuntimeService` 已能构造本地 `ChatClientAgent` 并提供 `POST /api/agents/chat` 纯文本会话入口；该入口使用 `ChatToolMode.None`，不让模型自动调用尚未闭环的 R8 工具，但允许把手动只读工具调用结果作为 `tool_results` 回填给下一轮对话。
-4. `GET /api/agents/runtime` 与 `GET /api/agents/tools` 已暴露本地工具地图。`chat.respond` 是 agent endpoint；`runtime.diagnose` 与 `tools.inspect` 已作为只读 `AIFunction` 暴露在 `GET /api/agents/tool-bindings`；VLM、OCR、ASR、TTS 与 image generation 会随 backend readiness 标记；`files.search` 仍为 planned。
+3. `AgentRuntimeService` 已能构造本地 `ChatClientAgent` 并提供 `POST /api/agents/chat` 文本会话入口；该入口默认使用 `ChatToolMode.None`，不让模型自动调用尚未闭环的 R8 工具，同时支持 `tool_mode=read_only` 的显式工具上下文：调用方可以在 `tools[]` 中请求 `runtime.diagnose` / `tools.inspect`，Tomur 会通过受控 `AITool` 执行并把结果作为 tool 消息回填给本轮回答。
+4. `GET /api/agents/runtime` 与 `GET /api/agents/tools` 已暴露本地工具地图。`chat.respond` 是 agent endpoint；`runtime.diagnose` 与 `tools.inspect` 已作为只读 `AIFunction` 暴露在 `GET /api/agents/tool-bindings`；所有工具描述都带 route、schema、side effect、callable、requires confirmation 与 invocation modes；VLM、OCR、ASR、TTS 与 image generation 会随 backend readiness 标记；`files.search` 仍为 planned。
 5. `POST /api/agents/tools/invoke` 已提供受控只读工具调用入口，当前只执行 `runtime.diagnose` 与 `tools.inspect`，并返回输入 schema、审计字段和 source-generated JSON 结果；图像生成、VLM、OCR、ASR、TTS、files 和修复类 runtime 动作会返回阻塞诊断，不会被自动调用。
-6. R9 当前只代表 Microsoft AI 抽象、只读 AITool 绑定、受控只读工具调用与 Agent Framework 文本编排起步，不代表多工具工作流、自动 tool-calling、checkpoint、telemetry 或本地文件 RAG 已完成。
+6. R9 当前只代表 Microsoft AI 抽象、只读 AITool 绑定、受控只读工具调用、显式只读工具上下文和 Agent Framework 文本编排，不代表多工具工作流、模型自动选择多模态 tool-calling、checkpoint、telemetry 或本地文件 RAG 已完成。
 
 验收：
 
 1. 普通文本会话不需要 Agent Framework 也能继续通过兼容 API 运行。
-2. 🚧 `POST /api/agents/chat` 可以通过 `ChatClientAgent` 调用本地文本模型；仍需构建/启动和真实模型 smoke 验证。
+2. 🚧 `POST /api/agents/chat` 可以通过 `ChatClientAgent` 调用本地文本模型，并可显式注入只读工具上下文；仍需构建/启动和真实模型 smoke 验证。
 3. ⏳ 开启编排后，模型可以在一次会话中选择调用图像生成、视觉理解、OCR、ASR、TTS、文件检索和 runtime 诊断工具。
 4. ⏳ 工具调用失败时返回可诊断错误，不伪造图像、文字、音频或识别结果。
 5. ⏳ AOT / trimming 审计能定位到具体依赖和调用点；若 Agent Framework 依赖暂时阻塞 Native AOT，必须保留自包含单文件发布路径，并把 AOT 承诺限定在可通过审计的核心 runtime。
