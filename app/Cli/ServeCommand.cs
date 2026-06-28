@@ -150,9 +150,13 @@ internal static class ServeCommand
         });
 
         builder.WebHost.UseUrls(state.ServerOptions.Urls);
+        builder.WebHost.UseWebRoot(Path.Combine(AppContext.BaseDirectory, "wwwroot"));
 
         var app = builder.Build();
+        app.UseDefaultFiles();
+        app.UseStaticFiles();
         app.MapApiRoutes();
+        app.MapFallbackToFile("index.html");
         return app;
     }
 

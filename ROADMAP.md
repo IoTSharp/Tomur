@@ -483,7 +483,7 @@ R9 接线状态：
 
 目标：实现 Chat-first 的内置本地工作台。R11 不把 Models、Downloads、Runtime、Files 作为默认一级页面；这些能力优先作为 Chat 上下文、状态抽屉和 Settings 分组暴露，避免把 Tomur 首屏做成管理后台。
 
-1. React + TypeScript + Vite。
+1. React + TypeScript，Vite 作为构建工具。
 2. `antd`。
 3. `@ant-design/x`。
 4. `@ant-design/x-markdown`。
@@ -495,7 +495,7 @@ R9 接线状态：
 
 M0：工程与工作台外壳：
 
-1. ⏳ 建立 `web/` React + TypeScript + Vite 工程。
+1. ⏳ 建立 `web/` React + TypeScript 工程，使用 Vite 构建。
 2. ⏳ 接入 `antd`、`@ant-design/x`、`@ant-design/x-markdown` 与 `@ant-design/x-sdk`。
 3. ⏳ 建立 Chat-first 应用外壳：主区域为 Chat，顶部或输入区附近提供模型选择器，右上角提供 Settings 入口。
 4. ⏳ Runtime / download / model readiness 先以紧凑状态条、popover 或抽屉呈现，不作为默认一级页面。

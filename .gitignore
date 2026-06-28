@@ -1,5 +1,11 @@
 bin/
 obj/
+.vscode/
+app/wwwroot/*
+
+web/node_modules/
+web/dist/
+web/.vite/
 
 native/**/*.native/build/
 native/bin/
