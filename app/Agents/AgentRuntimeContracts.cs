@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Tomur.Agents;
@@ -73,6 +74,7 @@ public sealed record AgentChatRequest(
     [property: JsonPropertyName("model")] string? Model,
     [property: JsonPropertyName("message")] string? Message,
     [property: JsonPropertyName("messages")] IReadOnlyList<AgentChatMessage>? Messages,
+    [property: JsonPropertyName("tool_results")] IReadOnlyList<AgentChatToolResult>? ToolResults,
     [property: JsonPropertyName("instructions")] string? Instructions,
     [property: JsonPropertyName("max_tokens")] int? MaxTokens,
     [property: JsonPropertyName("temperature")] double? Temperature,
@@ -82,6 +84,11 @@ public sealed record AgentChatMessage(
     [property: JsonPropertyName("role")] string? Role,
     [property: JsonPropertyName("content")] string? Content);
 
+public sealed record AgentChatToolResult(
+    [property: JsonPropertyName("tool")] string? Tool,
+    [property: JsonPropertyName("content")] string? Content,
+    [property: JsonPropertyName("result")] JsonElement? Result);
+
 public sealed record AgentChatResponse(
     [property: JsonPropertyName("status")] string Status,
     [property: JsonPropertyName("agent")] string Agent,
@@ -90,3 +97,25 @@ public sealed record AgentChatResponse(
     [property: JsonPropertyName("text")] string Text,
     [property: JsonPropertyName("elapsed_ms")] long ElapsedMs,
     [property: JsonPropertyName("diagnostics")] IReadOnlyList<string> Diagnostics);
+
+public sealed record AgentToolInvokeRequest(
+    [property: JsonPropertyName("tool")] string? Tool,
+    [property: JsonPropertyName("arguments")] JsonElement? Arguments);
+
+public sealed record AgentToolInvokeResponse(
+    [property: JsonPropertyName("status")] string Status,
+    [property: JsonPropertyName("tool")] string Tool,
+    [property: JsonPropertyName("tool_type")] string ToolType,
+    [property: JsonPropertyName("implementation")] string Implementation,
+    [property: JsonPropertyName("input_schema")] string InputSchema,
+    [property: JsonPropertyName("elapsed_ms")] long ElapsedMs,
+    [property: JsonPropertyName("result")] JsonElement? Result,
+    [property: JsonPropertyName("diagnostics")] IReadOnlyList<string> Diagnostics,
+    [property: JsonPropertyName("audit")] AgentToolInvokeAudit Audit);
+
+public sealed record AgentToolInvokeAudit(
+    [property: JsonPropertyName("invoked_at")] DateTimeOffset InvokedAt,
+    [property: JsonPropertyName("mode")] string Mode,
+    [property: JsonPropertyName("side_effect")] string SideEffect,
+    [property: JsonPropertyName("requires_confirmation")] bool RequiresConfirmation,
+    [property: JsonPropertyName("actions")] IReadOnlyList<string> Actions);

@@ -77,6 +77,7 @@ public static class ApiRouteExtensions
         });
 
         app.MapPost("/api/agents/chat", HandleAgentChatAsync);
+        app.MapPost("/api/agents/tools/invoke", HandleAgentToolInvokeAsync);
 
         app.MapGet("/api/models/catalog", static async (HttpContext context, DataPaths paths) =>
         {
@@ -173,6 +174,7 @@ public static class ApiRouteExtensions
                     "/api/agents/tools",
                     "/api/agents/tool-bindings",
                     "POST /api/agents/chat",
+                    "POST /api/agents/tools/invoke",
                     "/api/models/catalog",
                     "/api/models/installed",
                     "POST /api/runtime/native/prepare",
@@ -249,6 +251,44 @@ public static class ApiRouteExtensions
                 context,
                 diagnosticsProvider.GetRuntimeFailure(request.Model, CreateNativeRuntimeException(exception)),
                 StatusCodes.Status503ServiceUnavailable);
+        }
+    }
+
+    private static async Task HandleAgentToolInvokeAsync(
+        HttpContext context,
+        ToolFactory toolFactory)
+    {
+        var request = await ReadAgentRequestAsync(
+            context,
+            AppJsonSerializerContext.Default.AgentToolInvokeRequest);
+        if (request is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var response = await toolFactory.InvokeAsync(request, context.RequestAborted);
+            var statusCode = response.Status == "blocked"
+                ? StatusCodes.Status409Conflict
+                : StatusCodes.Status200OK;
+            await JsonHttpResponse.WriteAsync(
+                context,
+                response,
+                AppJsonSerializerContext.Default.AgentToolInvokeResponse,
+                statusCode);
+        }
+        catch (InferenceException exception)
+        {
+            await WriteAgentDiagnosticAsync(
+                context,
+                new RuntimeDiagnostic(
+                    "error",
+                    exception.Code,
+                    exception.Message,
+                    request.Tool,
+                    exception.Actions),
+                StatusCodes.Status400BadRequest);
         }
     }
 

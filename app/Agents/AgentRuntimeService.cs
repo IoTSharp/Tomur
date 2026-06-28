@@ -50,11 +50,12 @@ public sealed class AgentRuntimeService
             new AgentFrameworkStatus(
                 "wired",
                 "Microsoft.Agents.AI.ChatClientAgent / Microsoft.Agents.AI.Workflows",
-                "Agent Framework packages and Tomur-local AI boundaries are present. Plain local ChatClientAgent execution is wired, and read-only Tomur diagnostics are exposed as Microsoft.Extensions.AI.AITool objects. Automatic multimodal tool-calling remains an R9 follow-up; image generation and TTS stay available through their dedicated OpenAI-compatible endpoints when backend readiness allows.",
+                "Agent Framework packages and Tomur-local AI boundaries are present. Plain local ChatClientAgent execution is wired, and read-only Tomur diagnostics are exposed as Microsoft.Extensions.AI.AITool objects with a controlled manual invocation endpoint. Automatic multimodal tool-calling remains an R9 follow-up; image generation and TTS stay available through their dedicated OpenAI-compatible endpoints when backend readiness allows.",
                 [
                     "POST /api/agents/chat runs the local ChatClientAgent text path.",
                     "GET /api/agents/tools exposes the Tomur tool map.",
                     "GET /api/agents/tool-bindings exposes the current AITool binding set.",
+                    "POST /api/agents/tools/invoke can invoke runtime.diagnose and tools.inspect as read-only tools.",
                     "Use /api/agents/runtime to inspect the local tool map.",
                     "Use /api/runtime/multimodal to inspect backend readiness.",
                     "Plain OpenAI/Ollama-compatible text APIs continue to work without Agent Framework."
@@ -161,27 +162,65 @@ public sealed class AgentRuntimeService
 
     private static IReadOnlyList<ChatMessage> BuildMessages(AgentChatRequest request)
     {
+        var messages = new List<ChatMessage>();
         if (request.Messages is { Count: > 0 })
         {
-            var messages = request.Messages
+            messages.AddRange(request.Messages
                 .Where(static message => !string.IsNullOrWhiteSpace(message.Content))
-                .Select(static message => new ChatMessage(NormalizeChatRole(message.Role), message.Content!.Trim()))
-                .ToArray();
-            if (messages.Length > 0)
-            {
-                return messages;
-            }
+                .Select(static message => new ChatMessage(NormalizeChatRole(message.Role), message.Content!.Trim())));
         }
 
-        if (!string.IsNullOrWhiteSpace(request.Message))
+        if (messages.Count == 0 && !string.IsNullOrWhiteSpace(request.Message))
         {
-            return [new ChatMessage(ChatRole.User, request.Message.Trim())];
+            messages.Add(new ChatMessage(ChatRole.User, request.Message.Trim()));
+        }
+
+        AddToolResultMessages(messages, request.ToolResults);
+
+        if (messages.Count > 0)
+        {
+            return messages;
         }
 
         throw new InferenceException(
             "invalid_request",
-            "The agent chat request requires message or messages[].content.",
-            ["Provide a user message before invoking /api/agents/chat."]);
+            "The agent chat request requires message, messages[].content or tool_results[].content.",
+            ["Provide a user message or a prior read-only tool result before invoking /api/agents/chat."]);
+    }
+
+    private static void AddToolResultMessages(
+        List<ChatMessage> messages,
+        IReadOnlyList<AgentChatToolResult>? toolResults)
+    {
+        if (toolResults is null || toolResults.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var toolResult in toolResults)
+        {
+            var content = NormalizeToolResultContent(toolResult);
+            if (string.IsNullOrWhiteSpace(content))
+            {
+                continue;
+            }
+
+            messages.Add(new ChatMessage(ChatRole.Tool, content));
+        }
+    }
+
+    private static string NormalizeToolResultContent(AgentChatToolResult toolResult)
+    {
+        var toolName = string.IsNullOrWhiteSpace(toolResult.Tool)
+            ? "unknown"
+            : toolResult.Tool.Trim();
+        var content = !string.IsNullOrWhiteSpace(toolResult.Content)
+            ? toolResult.Content.Trim()
+            : toolResult.Result?.GetRawText();
+
+        return string.IsNullOrWhiteSpace(content)
+            ? string.Empty
+            : $"tool:{toolName}\n{content}";
     }
 
     private IEnumerable<AgentToolStatus> BuildToolStatuses(IReadOnlyList<LocalModelDescriptor> models)
@@ -231,7 +270,7 @@ public sealed class AgentRuntimeService
             "llama.cpp via IChatClient",
             defaultChatModel?.Id,
             "/api/agents/chat",
-            """{"type":"object","required":["message"],"properties":{"message":{"type":"string"},"model":{"type":"string"},"instructions":{"type":"string"},"max_tokens":{"type":"integer"}}}""",
+            """{"type":"object","properties":{"message":{"type":"string"},"messages":{"type":"array","items":{"type":"object","properties":{"role":{"type":"string"},"content":{"type":"string"}}},"tool_results":{"type":"array","items":{"type":"object","properties":{"tool":{"type":"string"},"content":{"type":"string"},"result":{"type":"object"}}},"model":{"type":"string"},"instructions":{"type":"string"},"max_tokens":{"type":"integer"}}}""",
             "none",
             defaultChatModel is null
                 ? "No local chat model is visible."

@@ -423,24 +423,26 @@ R8 接线状态：
 交付物：
 
 1. ✅ Tomur 本地 chat runtime 到 `Microsoft.Extensions.AI.IChatClient` 的适配层。
-2. 🚧 Agent Framework 文本会话入口：`POST /api/agents/chat` 通过 `Microsoft.Agents.AI.ChatClientAgent` 调用本地 `IChatClient`。
+2. 🚧 Agent Framework 文本会话入口：`POST /api/agents/chat` 通过 `Microsoft.Agents.AI.ChatClientAgent` 调用本地 `IChatClient`，并支持手动只读工具结果作为 `tool_results` 回填上下文。
 3. 🚧 工具目录与状态映射：`GET /api/agents/runtime` 与 `GET /api/agents/tools` 暴露 chat、image、vision、OCR、ASR、TTS、files 和 runtime diagnostics 的当前状态、路由、schema 和诊断动作；`GET /api/agents/tool-bindings` 暴露当前 `Microsoft.Extensions.AI.AITool` 绑定。
-4. ⏳ 图像生成工具：从会话中调用 `/v1/images/generations` 或内部 stable-diffusion.cpp adapter；当前手动入口为 `/v1/images/generations`，自动 tool-calling 仍留到 R9 后续受控调用流程，FLUX.2 成功出图 smoke 仍需补证据。
-5. ⏳ 视觉理解工具：从会话中调用 VLM adapter，支持 data URI / base64 图片输入。
-6. ⏳ OCR 工具：从会话中调用 OCR adapter，返回文本、版面和诊断信息。
-7. ⏳ ASR 工具：从会话中调用 Whisper adapter，返回 transcript、语言、时间片段和诊断信息。
-8. ⏳ TTS 工具：从会话中调用 llama.cpp GGUF TTS adapter，返回音频、音色、采样率和诊断信息；当前手动入口为 `/v1/audio/speech`，自动 tool-calling 仍留到 R9 后续受控调用流程。
-9. ⏳ 文件问答工具：对接本地文件、SQLite 索引和基础 RAG，不引入 PostgreSQL 作为 Community 默认依赖。
-10. ⏳ runtime 工具：允许会话读取 `doctor` / native / model readiness 诊断，但修复类动作必须有明确用户确认。
-11. ⏳ Agent Framework telemetry 接入 Tomur 本地日志和后续 OpenTelemetry 管线，记录工具调用、耗时、失败原因和模型使用量。
+4. ✅ 受控只读工具调用入口：`POST /api/agents/tools/invoke` 只允许调用 `runtime.diagnose` 与 `tools.inspect`，返回 schema、审计、耗时和诊断结果；有副作用工具必须返回阻塞诊断。
+5. ⏳ 图像生成工具：从会话中调用 `/v1/images/generations` 或内部 stable-diffusion.cpp adapter；当前手动入口为 `/v1/images/generations`，自动 tool-calling 仍留到 R9 后续受控调用流程，FLUX.2 成功出图 smoke 仍需补证据。
+6. ⏳ 视觉理解工具：从会话中调用 VLM adapter，支持 data URI / base64 图片输入。
+7. ⏳ OCR 工具：从会话中调用 OCR adapter，返回文本、版面和诊断信息。
+8. ⏳ ASR 工具：从会话中调用 Whisper adapter，返回 transcript、语言、时间片段和诊断信息。
+9. ⏳ TTS 工具：从会话中调用 llama.cpp GGUF TTS adapter，返回音频、音色、采样率和诊断信息；当前手动入口为 `/v1/audio/speech`，自动 tool-calling 仍留到 R9 后续受控调用流程。
+10. ⏳ 文件问答工具：对接本地文件、SQLite 索引和基础 RAG，不引入 PostgreSQL 作为 Community 默认依赖。
+11. ⏳ runtime 工具：允许会话读取 `doctor` / native / model readiness 诊断，但修复类动作必须有明确用户确认。
+12. ⏳ Agent Framework telemetry 接入 Tomur 本地日志和后续 OpenTelemetry 管线，记录工具调用、耗时、失败原因和模型使用量。
 
 R9 接线状态：
 
 1. `Tomur.csproj` 已引入 `Microsoft.Extensions.AI`、`Microsoft.Agents.AI` 与 `Microsoft.Agents.AI.Workflows`，但 workflow execution 仍未接入公开会话路径。
 2. `LocalChatClient` 已把 Tomur R7 文本 chat runtime 适配为 `IChatClient`，支持模型解析、基础采样参数、system instructions 和 text/tool content 序列化。
-3. `AgentRuntimeService` 已能构造本地 `ChatClientAgent` 并提供 `POST /api/agents/chat` 纯文本会话入口；该入口使用 `ChatToolMode.None`，不让模型自动调用尚未闭环的 R8 工具。
+3. `AgentRuntimeService` 已能构造本地 `ChatClientAgent` 并提供 `POST /api/agents/chat` 纯文本会话入口；该入口使用 `ChatToolMode.None`，不让模型自动调用尚未闭环的 R8 工具，但允许把手动只读工具调用结果作为 `tool_results` 回填给下一轮对话。
 4. `GET /api/agents/runtime` 与 `GET /api/agents/tools` 已暴露本地工具地图。`chat.respond` 是 agent endpoint；`runtime.diagnose` 与 `tools.inspect` 已作为只读 `AIFunction` 暴露在 `GET /api/agents/tool-bindings`；VLM、OCR、ASR、TTS 与 image generation 会随 backend readiness 标记；`files.search` 仍为 planned。
-5. R9 当前只代表 Microsoft AI 抽象、只读 AITool 绑定与 Agent Framework 文本编排起步，不代表多工具工作流、自动 tool-calling、checkpoint、telemetry 或本地文件 RAG 已完成。
+5. `POST /api/agents/tools/invoke` 已提供受控只读工具调用入口，当前只执行 `runtime.diagnose` 与 `tools.inspect`，并返回输入 schema、审计字段和 source-generated JSON 结果；图像生成、VLM、OCR、ASR、TTS、files 和修复类 runtime 动作会返回阻塞诊断，不会被自动调用。
+6. R9 当前只代表 Microsoft AI 抽象、只读 AITool 绑定、受控只读工具调用与 Agent Framework 文本编排起步，不代表多工具工作流、自动 tool-calling、checkpoint、telemetry 或本地文件 RAG 已完成。
 
 验收：
 
@@ -542,6 +544,6 @@ R9 接线状态：
 5. 为 R7 增强逐 token streaming、GPU offload 选择、多模型常驻和更细的 session 诊断。
 6. 在后期测试阶段补充 R5 的 Windows Service、Linux systemd、macOS launchd 和 Windows 托盘实机 smoke 验收记录。
 7. 补齐并验证 macOS `osx-x64` / `osx-arm64` native runtime bundle 资产。
-8. 继续推进 R9：在已接入 `runtime.diagnose` / `tools.inspect` 只读 AITool 的基础上，补 Tomur 本地 tool-calling 协议解析、受控调用审计和工作流执行；等待 R8 图像与 TTS 成功 smoke 证据补齐后再开放对应自动生成工具。
+8. 继续推进 R9：在已接入 `runtime.diagnose` / `tools.inspect` 只读 AITool、`POST /api/agents/tools/invoke` 受控调用入口和手动 `tool_results` 回填的基础上，补 Tomur 本地自动 tool-calling 循环和工作流执行；等待 R8 图像与 TTS 成功 smoke 证据补齐后再开放对应自动生成工具。
 9. 为 R10 设计语音回合的最小闭环：录音/上传、ASR、会话处理、TTS、播放和产物登记。
 10. 为 R12 建立 AOT 审计清单，区分必须 AOT 的核心路径与可暂时走自包含 fallback 的高级编排路径。

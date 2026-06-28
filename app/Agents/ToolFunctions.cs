@@ -1,10 +1,16 @@
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Tomur.Runtime;
+using Tomur.Serialization;
 
 namespace Tomur.Agents;
 
-public sealed class RuntimeDiagnoseFunction : AIFunction
+public interface ILocalAgentTool
+{
+    ValueTask<object?> InvokeLocalAsync(JsonElement? arguments, CancellationToken cancellationToken);
+}
+
+public sealed class RuntimeDiagnoseFunction : AIFunction, ILocalAgentTool
 {
     public const string ToolName = "runtime.diagnose";
 
@@ -33,6 +39,15 @@ public sealed class RuntimeDiagnoseFunction : AIFunction
     {
         cancellationToken.ThrowIfCancellationRequested();
         _ = arguments;
+        return InvokeLocalAsync(null, cancellationToken);
+    }
+
+    public ValueTask<object?> InvokeLocalAsync(
+        JsonElement? arguments,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        _ = arguments;
 
         var status = diagnosticsProvider.GetRuntimeStatus();
         var summary = new RuntimeDiagnoseToolResult(
@@ -52,7 +67,7 @@ public sealed class RuntimeDiagnoseFunction : AIFunction
     }
 }
 
-public sealed class ToolMapFunction : AIFunction
+public sealed class ToolMapFunction : AIFunction, ILocalAgentTool
 {
     public const string ToolName = "tools.inspect";
 
@@ -81,11 +96,20 @@ public sealed class ToolMapFunction : AIFunction
     {
         cancellationToken.ThrowIfCancellationRequested();
         _ = arguments;
+        return InvokeLocalAsync(null, cancellationToken);
+    }
+
+    public ValueTask<object?> InvokeLocalAsync(
+        JsonElement? arguments,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        _ = arguments;
         return ValueTask.FromResult<object?>(agentRuntime.GetToolMap());
     }
 }
 
-public sealed class BlockedToolFunction : AIFunction
+public sealed class BlockedToolFunction : AIFunction, ILocalAgentTool
 {
     private readonly string name;
     private readonly string description;
@@ -121,7 +145,47 @@ public sealed class BlockedToolFunction : AIFunction
     {
         cancellationToken.ThrowIfCancellationRequested();
         _ = arguments;
+        return InvokeLocalAsync(null, cancellationToken);
+    }
+
+    public ValueTask<object?> InvokeLocalAsync(
+        JsonElement? arguments,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        _ = arguments;
         return ValueTask.FromResult<object?>(new BlockedToolResult(code, message, actions));
+    }
+}
+
+public static class AgentToolResultJson
+{
+    public static JsonElement ToJsonElement(object? value)
+    {
+        if (value is null)
+        {
+            return JsonSerializer.SerializeToElement((string?)null, AppJsonSerializerContext.Default.String);
+        }
+
+        return value switch
+        {
+            RuntimeDiagnoseToolResult result => JsonSerializer.SerializeToElement(
+                result,
+                AppJsonSerializerContext.Default.RuntimeDiagnoseToolResult),
+            AgentToolMapResponse result => JsonSerializer.SerializeToElement(
+                result,
+                AppJsonSerializerContext.Default.AgentToolMapResponse),
+            BlockedToolResult result => JsonSerializer.SerializeToElement(
+                result,
+                AppJsonSerializerContext.Default.BlockedToolResult),
+            JsonElement result => result.Clone(),
+            _ => JsonSerializer.SerializeToElement(
+                new BlockedToolResult(
+                    "unsupported_tool_result",
+                    $"Tool result type '{value.GetType().FullName}' is not registered for source-generated JSON.",
+                    ["Register the result type in AppJsonSerializerContext before exposing this tool."]),
+                AppJsonSerializerContext.Default.BlockedToolResult)
+        };
     }
 }
 
