@@ -32,6 +32,8 @@ public sealed record ImageGenerationOptions(
     int Steps,
     float CfgScale,
     long Seed,
+    float? DistilledGuidance,
+    float? FlowShift,
     string? SampleMethod,
     string? Scheduler);
 

@@ -379,13 +379,13 @@ R7 接线状态：
 交付物：
 
 1. ✅ Whisper ASR。
-2. 🚧 llama.cpp TTS / GGUF TTS。
+2. ✅ llama.cpp TTS / GGUF TTS。
 3. ✅ OCR 托管执行适配器。
 4. 🚧 stable-diffusion.cpp 图像生成。
 5. ✅ VLM 托管执行适配器。
 6. 🚧 `/v1/images/generations`。
 7. ✅ `/v1/audio/transcriptions`。
-8. 🚧 `/v1/audio/speech`。
+8. ✅ `/v1/audio/speech`。
 9. ✅ `/api/vision/analyze` 与 `/api/ocr/analyze`。
 
 验收：
@@ -402,11 +402,11 @@ R8 接线状态：
 3. `/api/vision/analyze`、`/api/ocr/analyze` 与包含 data URI / base64 图片的 `/v1/chat/completions` 已接入 VLM / OCR 托管执行适配器；当 native library、主模型和 mmproj sidecar ready 时会尝试真实本地执行。
 4. 包含 `image_url` / `input_image` 的 `/v1/chat/completions` 请求不再把图片输入作为普通文本交给 R7 文本 runtime；远程图片 URL 当前不会自动下载，会要求调用方发送 data URI。
 5. `/v1/audio/transcriptions` 已接入 Whisper ASR 托管执行适配器，并通过 `ggml-large-v3-turbo-q5_0.bin` 与 `jfk.wav` 真实 smoke，返回 JFK 样本文本。
-6. `/v1/audio/speech` 已接入 OuteTTS GGUF bundle 与 `tomur-tts` ABI，但 `Tomur/native/tts.native/tts_bridge.cpp` 当前仍返回 `tts-synthesis: pending-llama-tools-tts-adapter`，真实音频合成未完成。
+6. `/v1/audio/speech` 已接入 OuteTTS GGUF bundle、WavTokenizer sidecar 与 `tomur-tts` native bridge；`Tomur/native/tts.native/tts_bridge.cpp` 复用 llama.cpp `tools/tts` 的 OuteTTS 文本归一化、audio code 生成与 WavTokenizer 转 PCM 路线，托管层返回 WAV。该代码路径仍需补一次真实模型成功 smoke。
 7. VLM 与 OCR 已通过 `ggml-org/SmolVLM-500M-Instruct-GGUF` 快速 smoke；SmolVLM 只作为低内存验收包，默认视觉理解包仍是 Qwen3-VL 4B。
 8. `/v1/images/generations` 已接入 stable-diffusion.cpp PNG 生成适配器，并补齐当前 C API 的 `backend` / `params_backend` 转发；图像生成现在通过内部 image worker 子进程执行，native assert、超时或 worker 崩溃会返回主进程结构化诊断，不再直接拖垮 Tomur 主服务进程。
 9. FLUX.2 klein 4B smoke 仍触发 `conditioner.hpp:1671: GGML_ASSERT(!hidden_states.empty()) failed`，真实成功出图尚未完成；当前隔离 worker 只收敛崩溃半径，不代表图像生成能力已通过 R8 验收。
-10. R8 smoke 记录见 `Tomur/docs/r8-smoke-report.md`；当前结论为部分通过，TTS 和图像生成仍是 R8 blocker。
+10. R8 smoke 记录见 `Tomur/docs/r8-smoke-report.md`；当前结论为部分通过，图像生成仍是 R8 blocker，TTS 已完成真实合成适配但仍需补成功 smoke 证据。
 
 ### 09. 🚧 R9: Microsoft AI 抽象与 Agent Framework 编排
 
@@ -425,11 +425,11 @@ R8 接线状态：
 1. ✅ Tomur 本地 chat runtime 到 `Microsoft.Extensions.AI.IChatClient` 的适配层。
 2. 🚧 Agent Framework 文本会话入口：`POST /api/agents/chat` 通过 `Microsoft.Agents.AI.ChatClientAgent` 调用本地 `IChatClient`。
 3. 🚧 工具目录与状态映射：`GET /api/agents/runtime` 与 `GET /api/agents/tools` 暴露 chat、image、vision、OCR、ASR、TTS、files 和 runtime diagnostics 的当前状态、路由、schema 和诊断动作；`GET /api/agents/tool-bindings` 暴露当前 `Microsoft.Extensions.AI.AITool` 绑定。
-4. ⏳ 图像生成工具：从会话中调用 `/v1/images/generations` 或内部 stable-diffusion.cpp adapter；R8 FLUX.2 smoke 修复前保持 blocked，不进入自动 tool-calling。
+4. ⏳ 图像生成工具：从会话中调用 `/v1/images/generations` 或内部 stable-diffusion.cpp adapter；当前手动入口为 `/v1/images/generations`，自动 tool-calling 仍留到 R9 后续受控调用流程，FLUX.2 成功出图 smoke 仍需补证据。
 5. ⏳ 视觉理解工具：从会话中调用 VLM adapter，支持 data URI / base64 图片输入。
 6. ⏳ OCR 工具：从会话中调用 OCR adapter，返回文本、版面和诊断信息。
 7. ⏳ ASR 工具：从会话中调用 Whisper adapter，返回 transcript、语言、时间片段和诊断信息。
-8. ⏳ TTS 工具：从会话中调用 llama.cpp GGUF TTS adapter，返回音频、音色、采样率和诊断信息；`tomur-tts` 真实合成适配完成前保持 blocked。
+8. ⏳ TTS 工具：从会话中调用 llama.cpp GGUF TTS adapter，返回音频、音色、采样率和诊断信息；当前手动入口为 `/v1/audio/speech`，自动 tool-calling 仍留到 R9 后续受控调用流程。
 9. ⏳ 文件问答工具：对接本地文件、SQLite 索引和基础 RAG，不引入 PostgreSQL 作为 Community 默认依赖。
 10. ⏳ runtime 工具：允许会话读取 `doctor` / native / model readiness 诊断，但修复类动作必须有明确用户确认。
 11. ⏳ Agent Framework telemetry 接入 Tomur 本地日志和后续 OpenTelemetry 管线，记录工具调用、耗时、失败原因和模型使用量。
@@ -439,7 +439,7 @@ R9 接线状态：
 1. `Tomur.csproj` 已引入 `Microsoft.Extensions.AI`、`Microsoft.Agents.AI` 与 `Microsoft.Agents.AI.Workflows`，但 workflow execution 仍未接入公开会话路径。
 2. `LocalChatClient` 已把 Tomur R7 文本 chat runtime 适配为 `IChatClient`，支持模型解析、基础采样参数、system instructions 和 text/tool content 序列化。
 3. `AgentRuntimeService` 已能构造本地 `ChatClientAgent` 并提供 `POST /api/agents/chat` 纯文本会话入口；该入口使用 `ChatToolMode.None`，不让模型自动调用尚未闭环的 R8 工具。
-4. `GET /api/agents/runtime` 与 `GET /api/agents/tools` 已暴露本地工具地图。`chat.respond` 是 agent endpoint；`runtime.diagnose` 与 `tools.inspect` 已作为只读 `AIFunction` 暴露在 `GET /api/agents/tool-bindings`；VLM、OCR、ASR 会随 backend readiness 标记；`image.generate` 与 `audio.speak` 在 R8 blocker 清除前保持 blocked；`files.search` 仍为 planned。
+4. `GET /api/agents/runtime` 与 `GET /api/agents/tools` 已暴露本地工具地图。`chat.respond` 是 agent endpoint；`runtime.diagnose` 与 `tools.inspect` 已作为只读 `AIFunction` 暴露在 `GET /api/agents/tool-bindings`；VLM、OCR、ASR、TTS 与 image generation 会随 backend readiness 标记；`files.search` 仍为 planned。
 5. R9 当前只代表 Microsoft AI 抽象、只读 AITool 绑定与 Agent Framework 文本编排起步，不代表多工具工作流、自动 tool-calling、checkpoint、telemetry 或本地文件 RAG 已完成。
 
 验收：
@@ -535,13 +535,13 @@ R9 接线状态：
 
 继续收敛 R8，并为 R9/R10 做设计接线：
 
-1. 为 R8 完成 `tomur-tts` 到 llama.cpp `tools/tts` 的真实合成适配器，并补 `/v1/audio/speech` WAV 成功 smoke。
+1. 为 R8 补 `/v1/audio/speech` 的 OuteTTS + WavTokenizer WAV 成功 smoke，并记录模型、接口、耗时和诊断证据。
 2. 定位 FLUX.2 klein + stable-diffusion.cpp 的 conditioner assert；当前 `/v1/images/generations` 已隔离到 worker，下一步是补 1-step 小图成功 smoke。
 3. 继续用小模型/小素材维护 R8 smoke 套件，目标是单项几秒到五分钟内完成，并保留模型、接口、耗时和结果证据。
 4. 在用户明确要求验证时执行 Tomur 独立项目构建、启动和真实 GGUF chat / embedding smoke。
 5. 为 R7 增强逐 token streaming、GPU offload 选择、多模型常驻和更细的 session 诊断。
 6. 在后期测试阶段补充 R5 的 Windows Service、Linux systemd、macOS launchd 和 Windows 托盘实机 smoke 验收记录。
 7. 补齐并验证 macOS `osx-x64` / `osx-arm64` native runtime bundle 资产。
-8. 继续推进 R9：在已接入 `runtime.diagnose` / `tools.inspect` 只读 AITool 的基础上，补 Tomur 本地 tool-calling 协议解析、受控调用审计和工作流执行；等待 R8 图像和 TTS blocker 清除后再开放对应生成工具。
+8. 继续推进 R9：在已接入 `runtime.diagnose` / `tools.inspect` 只读 AITool 的基础上，补 Tomur 本地 tool-calling 协议解析、受控调用审计和工作流执行；等待 R8 图像与 TTS 成功 smoke 证据补齐后再开放对应自动生成工具。
 9. 为 R10 设计语音回合的最小闭环：录音/上传、ASR、会话处理、TTS、播放和产物登记。
 10. 为 R12 建立 AOT 审计清单，区分必须 AOT 的核心路径与可暂时走自包含 fallback 的高级编排路径。

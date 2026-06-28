@@ -73,7 +73,7 @@ public sealed class ToolFactory
             [
                 "Only read-only runtime tools are invokable in R9 without user confirmation.",
                 "Multimodal tool declarations are exposed for schema inspection but remain blocked from automatic tool-calling.",
-                "Image generation and TTS stay blocked until the R8 native runtime blockers are cleared.",
+                "Image generation and TTS are available through their dedicated OpenAI-compatible endpoints when the backend is ready.",
                 "POST /api/agents/chat keeps ChatToolMode.None for the initial local text path."
             ]);
     }

@@ -657,15 +657,18 @@ public static class ApiRouteExtensions
             return;
         }
 
+        var imageDefaults = ResolveImageGenerationDefaults(model);
         var options = new ImageGenerationOptions(
             request.Prompt.Trim(),
             request.NegativePrompt,
             width,
             height,
-            Math.Clamp(request.Steps ?? 20, 1, 100),
-            Math.Clamp(ToFloat(request.CfgScale, 7.0f), 1.0f, 20.0f),
+            Math.Clamp(request.Steps ?? imageDefaults.Steps, 1, 100),
+            Math.Clamp(ToFloat(request.CfgScale, imageDefaults.CfgScale), 1.0f, 20.0f),
             request.Seed ?? -1,
-            request.SampleMethod,
+            ToOptionalFloat(request.DistilledGuidance),
+            ToOptionalFloat(request.FlowShift),
+            request.SampleMethod ?? imageDefaults.SampleMethod,
             request.Scheduler);
 
         try
@@ -2368,6 +2371,19 @@ public static class ApiRouteExtensions
         return normalized is "url" or "b64_json" ? normalized : null;
     }
 
+    private static ImageGenerationDefaults ResolveImageGenerationDefaults(LocalModelDescriptor model)
+    {
+        if (model.PackageId?.Contains("flux2-klein", StringComparison.OrdinalIgnoreCase) == true ||
+            model.Id.Contains("flux2-klein", StringComparison.OrdinalIgnoreCase) ||
+            model.Name.Contains("flux.2 klein", StringComparison.OrdinalIgnoreCase) ||
+            model.FileName.Contains("flux-2-klein", StringComparison.OrdinalIgnoreCase))
+        {
+            return new ImageGenerationDefaults(4, 1.0f, "euler");
+        }
+
+        return new ImageGenerationDefaults(20, 7.0f, null);
+    }
+
     private static string? NormalizeSpeechResponseFormat(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -2384,6 +2400,16 @@ public static class ApiRouteExtensions
         if (value is null || double.IsNaN(value.Value) || double.IsInfinity(value.Value))
         {
             return fallback;
+        }
+
+        return (float)value.Value;
+    }
+
+    private static float? ToOptionalFloat(double? value)
+    {
+        if (value is null || double.IsNaN(value.Value) || double.IsInfinity(value.Value))
+        {
+            return null;
         }
 
         return (float)value.Value;
@@ -2453,6 +2479,11 @@ public static class ApiRouteExtensions
 
     private static MultimodalInputSummary EmptyInputSummary()
         => new(0, 0, null, null, null);
+
+    private sealed record ImageGenerationDefaults(
+        int Steps,
+        float CfgScale,
+        string? SampleMethod);
 
     private static int EstimateJsonElementCharacters(JsonElement? element)
     {

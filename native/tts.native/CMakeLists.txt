@@ -40,12 +40,14 @@ include(GNUInstallDirs)
 list(PREPEND CMAKE_PREFIX_PATH "${CMAKE_CURRENT_SOURCE_DIR}/..")
 
 find_package(llama CONFIG REQUIRED)
+find_package(Threads REQUIRED)
 
 add_library(tomur-tts SHARED tts_bridge.cpp)
 target_compile_features(tomur-tts PRIVATE cxx_std_17)
 target_include_directories(tomur-tts PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/../llama.cpp/include")
-target_link_libraries(tomur-tts PRIVATE llama)
+    "${CMAKE_CURRENT_SOURCE_DIR}/../llama.cpp/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../llama.cpp/vendor")
+target_link_libraries(tomur-tts PRIVATE llama Threads::Threads)
 set_target_properties(tomur-tts PROPERTIES
     OUTPUT_NAME "tomur-tts"
     POSITION_INDEPENDENT_CODE ON)

@@ -50,7 +50,7 @@ public sealed class AgentRuntimeService
             new AgentFrameworkStatus(
                 "wired",
                 "Microsoft.Agents.AI.ChatClientAgent / Microsoft.Agents.AI.Workflows",
-                "Agent Framework packages and Tomur-local AI boundaries are present. Plain local ChatClientAgent execution is wired, and read-only Tomur diagnostics are exposed as Microsoft.Extensions.AI.AITool objects. Automatic multimodal tool-calling remains an R9 follow-up after R8 image and TTS blockers are cleared.",
+                "Agent Framework packages and Tomur-local AI boundaries are present. Plain local ChatClientAgent execution is wired, and read-only Tomur diagnostics are exposed as Microsoft.Extensions.AI.AITool objects. Automatic multimodal tool-calling remains an R9 follow-up; image generation and TTS stay available through their dedicated OpenAI-compatible endpoints when backend readiness allows.",
                 [
                     "POST /api/agents/chat runs the local ChatClientAgent text path.",
                     "GET /api/agents/tools exposes the Tomur tool map.",
@@ -70,7 +70,7 @@ public sealed class AgentRuntimeService
             [
                 "Community keeps Agent Framework optional and local-first.",
                 "Tool schemas are represented by source-generated JSON contracts before full workflow persistence is added.",
-                "R9 does not make blocked R8 image-generation or TTS tools callable by default.",
+                "R9 does not make side-effect multimodal tools callable automatically by default.",
                 "Repair or download actions still require explicit user confirmation in later R10/R11 flows."
             ]);
     }
@@ -292,12 +292,6 @@ public sealed class AgentRuntimeService
         var status = string.Equals(backend.Status, "ready", StringComparison.OrdinalIgnoreCase)
             ? ResolveExecutableToolStatus(backendId)
             : backend.Status;
-        var message = backendId switch
-        {
-            "image-generation" when status == "blocked" => "Backend assets are visible, but current stable-diffusion.cpp FLUX.2 smoke is isolated because native generation can still fail inside the worker.",
-            "tts" when status == "blocked" => "Backend assets are visible, but the tomur-tts bridge still returns the pending llama.cpp tools/tts adapter diagnostic.",
-            _ => backend.Message
-        };
 
         return new AgentToolDescriptor(
             name,
@@ -308,12 +302,12 @@ public sealed class AgentRuntimeService
             ResolveToolRoute(backendId),
             ResolveToolInputSchema(backendId),
             ResolveToolSideEffect(backendId),
-            message,
+            backend.Message,
             backend.Actions);
     }
 
     private static string ResolveExecutableToolStatus(string backendId)
-        => backendId is "image-generation" or "tts" ? "blocked" : "ready";
+        => "ready";
 
     private static bool IsChatModel(LocalModelDescriptor model)
         => model.Capabilities.Any(static capability =>

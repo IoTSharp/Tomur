@@ -61,7 +61,9 @@ R8 is partially smoke-validated, not complete.
 Post-smoke code update:
 
 - `/v1/images/generations` now calls stable-diffusion.cpp from an internal image worker subprocess. A native assert, timeout, missing worker response, or worker crash is mapped back to a structured `InferenceException` so the main Tomur service process can continue serving text, ASR, OCR and VLM requests.
-- This isolation does not change the recorded FLUX.2 result above. The FLUX.2 klein path still needs a successful small-image smoke before image generation can be marked complete.
+- The stable-diffusion bridge now resolves upstream default sampler/scheduler values, forwards finite `distilled_guidance` and `flow_shift`, and releases generated images with `free_sd_images`. The OpenAI image endpoint also applies FLUX.2 klein defaults of `steps=4`, `cfg_scale=1.0`, and `sample_method=euler` when the caller does not provide overrides.
+- These code updates do not change the recorded FLUX.2 result above because this report has not been rerun. The FLUX.2 klein path still needs a successful small-image smoke before image generation can be marked complete.
+- `/v1/audio/speech` has since been connected to the llama.cpp `tools/tts` path in `tomur-tts`: OuteTTS generates audio code tokens, WavTokenizer produces embeddings, and the managed adapter returns WAV. This report has not been rerun yet, so the TTS row above remains historical smoke evidence until a new WAV success run is recorded.
 
 Passing real-model paths:
 
@@ -74,5 +76,5 @@ Passing real-model paths:
 
 Blocking paths:
 
-- OpenAI audio speech: native TTS bridge is still an ABI-ready diagnostic stub.
-- OpenAI image generation: FLUX.2 klein path still fails inside stable-diffusion.cpp conditioner setup; the crash is now isolated to the image worker.
+- OpenAI audio speech: post-smoke code now contains the real TTS adapter, but a successful WAV smoke is still outstanding.
+- OpenAI image generation: post-smoke code now contains the worker isolation, native bridge default fixes, and FLUX.2 klein request defaults, but a successful image smoke is still outstanding.

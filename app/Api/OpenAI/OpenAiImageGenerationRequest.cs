@@ -11,6 +11,8 @@ public sealed record OpenAiImageGenerationRequest(
     [property: JsonPropertyName("negative_prompt")] string? NegativePrompt,
     [property: JsonPropertyName("steps")] int? Steps,
     [property: JsonPropertyName("cfg_scale")] double? CfgScale,
+    [property: JsonPropertyName("distilled_guidance")] double? DistilledGuidance,
+    [property: JsonPropertyName("flow_shift")] double? FlowShift,
     [property: JsonPropertyName("seed")] long? Seed,
     [property: JsonPropertyName("sample_method")] string? SampleMethod,
     [property: JsonPropertyName("scheduler")] string? Scheduler);

@@ -264,8 +264,8 @@ public sealed class MultimodalExecutionService
                 Height = options.Height,
                 Steps = options.Steps,
                 CfgScale = options.CfgScale,
-                DistilledGuidance = float.NaN,
-                FlowShift = float.NaN,
+                DistilledGuidance = options.DistilledGuidance ?? float.NaN,
+                FlowShift = options.FlowShift ?? float.NaN,
                 Seed = options.Seed
             };
 
@@ -298,6 +298,15 @@ public sealed class MultimodalExecutionService
                     $"scheduler: {NormalizeSamplingToken(options.Scheduler)}",
                     "format: png"
                 };
+                if (options.DistilledGuidance is { } distilledGuidance)
+                {
+                    diagnostics.Add($"distilled-guidance: {distilledGuidance:0.##}");
+                }
+
+                if (options.FlowShift is { } flowShift)
+                {
+                    diagnostics.Add($"flow-shift: {flowShift:0.##}");
+                }
 
                 return new NativeImageResult(
                     bytes,
@@ -1100,9 +1109,10 @@ public sealed class MultimodalExecutionService
             Text = AllocateUtf8(options.Text);
             AcousticModelPath = AllocateUtf8(acousticModelPath);
             VoiceModelPath = AllocateUtf8(voiceModelPath);
-            SpeakerPrompt = string.IsNullOrWhiteSpace(options.Voice)
+            var speakerFile = ResolveSpeakerFile(options.Voice);
+            SpeakerPrompt = string.IsNullOrWhiteSpace(speakerFile)
                 ? nint.Zero
-                : AllocateUtf8(options.Voice);
+                : AllocateUtf8(speakerFile);
         }
 
         public nint Text { get; }
@@ -1130,6 +1140,24 @@ public sealed class MultimodalExecutionService
             var pointer = Marshal.StringToCoTaskMemUTF8(value);
             utf8Strings.Add(pointer);
             return pointer;
+        }
+
+        private static string? ResolveSpeakerFile(string? voice)
+        {
+            if (string.IsNullOrWhiteSpace(voice))
+            {
+                return null;
+            }
+
+            var trimmed = voice.Trim();
+            if (!trimmed.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            return Path.IsPathFullyQualified(trimmed) && File.Exists(trimmed)
+                ? trimmed
+                : null;
         }
     }
 }

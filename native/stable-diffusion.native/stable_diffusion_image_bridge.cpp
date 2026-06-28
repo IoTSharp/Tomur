@@ -116,6 +116,18 @@ SD_API bool tomur_sd_generate_png(sd_ctx_t* sd_ctx,
         native_params.sample_params.guidance.distilled_guidance = generation_params->distilled_guidance;
     }
 
+    if (std::isfinite(generation_params->flow_shift)) {
+        native_params.sample_params.flow_shift = generation_params->flow_shift;
+    }
+
+    if (native_params.sample_params.sample_method == SAMPLE_METHOD_COUNT) {
+        native_params.sample_params.sample_method = sd_get_default_sample_method(sd_ctx);
+    }
+
+    if (native_params.sample_params.scheduler == SCHEDULER_COUNT) {
+        native_params.sample_params.scheduler = sd_get_default_scheduler(sd_ctx, native_params.sample_params.sample_method);
+    }
+
     native_params.seed = generation_params->seed;
 
     sd_image_t* images = generate_image(sd_ctx, &native_params);
@@ -139,14 +151,12 @@ SD_API bool tomur_sd_generate_png(sd_ctx_t* sd_ctx,
             encoded_image->data = encoded_bytes;
             encoded_image->length = encoded_length;
             success = true;
+        } else if (encoded_bytes != NULL) {
+            free(encoded_bytes);
         }
     }
 
-    if (images[0].data != NULL) {
-        free(images[0].data);
-    }
-
-    free(images);
+    free_sd_images(images, native_params.batch_count);
     return success;
 }
 
