@@ -24,6 +24,10 @@ export interface OpenAiModel {
   object: "model";
   created: number;
   owned_by: string;
+  family?: string;
+  format?: string;
+  quantization?: string;
+  capabilities?: string[];
 }
 
 export interface OpenAiChatCompletionResponse {

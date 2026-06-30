@@ -27,14 +27,15 @@ public sealed class SessionManager : IDisposable
         LocalModelDescriptor model,
         string prompt,
         CompletionOptions options,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<string>? onToken = null)
     {
         ArgumentNullException.ThrowIfNull(options);
 
         lock (gate)
         {
             var session = GetOrLoadCore(model, embeddings: false, options.ContextSize);
-            return session.Generate(prompt, options, cancellationToken);
+            return session.Generate(prompt, options, cancellationToken, onToken);
         }
     }
 

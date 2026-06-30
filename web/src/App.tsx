@@ -150,18 +150,25 @@ function App() {
     [activeConversationId, conversations]
   );
 
-  const selectedModelLabel = selectedModel ?? models.at(0)?.id;
-  const chatReady = Boolean(selectedModelLabel);
+  const chatModels = useMemo(() => models.filter(isChatModel), [models]);
+  const selectedChatModel = useMemo(
+    () => chatModels.find((model) => model.id === selectedModel) ?? chatModels.at(0),
+    [chatModels, selectedModel]
+  );
+  const chatReady = Boolean(selectedChatModel);
   const runtimeOk = runtimeStatus?.status === "ok";
   const runtimeSeverity = runtimeOk ? "success" : "warning";
   const visibleChatModels = useMemo(
     () =>
-      models.map((model) => ({
+      chatModels.map((model) => ({
         value: model.id,
-        label: model.id
+        label: model.capabilities?.length
+          ? `${model.id} · ${model.capabilities.join(", ")}`
+          : model.id
       })),
-    [models]
+    [chatModels]
   );
+  const selectedModelLabel = selectedChatModel?.id;
 
   const warningDiagnostics = useMemo(
     () =>
@@ -210,7 +217,12 @@ function App() {
       setInstalledModels(nextInstalledModels);
       setCatalog(nextCatalog);
       setMultimodalStatus(nextMultimodalStatus);
-      setSelectedModel((current) => current ?? nextModels.data.at(0)?.id);
+      const nextChatModels = nextModels.data.filter(isChatModel);
+      setSelectedModel((current) =>
+        current && nextChatModels.some((model) => model.id === current)
+          ? current
+          : nextChatModels.at(0)?.id
+      );
     } catch (error) {
       message.error(error instanceof Error ? error.message : "Tomur 状态刷新失败");
     } finally {
@@ -522,10 +534,10 @@ function App() {
             <Select
               className="model-select"
               placeholder="选择本地模型"
-              value={selectedModel}
+              value={selectedModelLabel}
               options={visibleChatModels}
               onChange={(value) => setSelectedModel(value)}
-              disabled={models.length === 0}
+              disabled={chatModels.length === 0}
             />
             <Tooltip title="刷新状态">
               <Button
@@ -552,8 +564,8 @@ function App() {
           />
           <StatusPill
             label="Models"
-            value={String(models.length)}
-            tone={models.length > 0 ? "success" : "warning"}
+            value={String(chatModels.length)}
+            tone={chatModels.length > 0 ? "success" : "warning"}
             onClick={() => openSettings("models")}
           />
           <StatusPill
@@ -685,7 +697,7 @@ function App() {
               <Flex justify="space-between" align="center" wrap gap={8}>
                 <Typography.Text type="secondary">
                   {chatReady
-                    ? "使用 Tomur 本地 OpenAI 兼容接口；若后端未提供逐 token streaming，界面将按实际能力展示。"
+                    ? `使用 ${selectedModelLabel} 通过 Tomur 本地 OpenAI 兼容接口会话。`
                     : "模型缺失时不会伪造回复。"}
                 </Typography.Text>
                 <Space size={4}>
@@ -1600,6 +1612,17 @@ function formatRelativeTime(value: string) {
 
 function createTitle(content: string) {
   return content.length > 20 ? `${content.slice(0, 20)}...` : content;
+}
+
+function isChatModel(model: OpenAiModel) {
+  const capabilities = model.capabilities ?? [];
+  if (capabilities.length === 0) {
+    return model.format === "gguf" || model.format === "ggml" || model.family === "llama";
+  }
+
+  return capabilities.some(
+    (capability) => capability === "chat" || capability === "completion"
+  );
 }
 
 function tagColor(status: string) {

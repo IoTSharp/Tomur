@@ -81,10 +81,10 @@ export async function sendChatCompletion(
       model,
       stream: true,
       messages: messages
-        .filter((message) => message.role !== "system")
+        .filter((message) => message.content.trim().length > 0 && message.status !== "loading")
         .map((message) => ({
           role: message.role,
-          content: message.content
+          content: message.content.trim()
         }))
     }),
     signal

@@ -263,7 +263,7 @@ R4 审计结论：
 
 1. ✅ 无虚标：R4 完成口径限定为首批 OpenAI / Ollama 协议面、请求校验、兼容风格错误响应、streaming 错误帧和轻量本地模型发现；真实文本推理归 R7，图像、视觉、OCR、ASR 与 TTS 执行归 R8，不计入 R4 完成条件。
 2. ✅ R4 范围内未发现阻塞缺陷：`/v1/models`、`/v1/chat/completions`、`/v1/completions`、`/v1/embeddings`、`/v1/images/generations`、`/api/version`、`/api/tags`、`/api/show`、`/api/generate` 与 `/api/chat` 均已接线，并返回对应协议风格的成功响应或诊断错误。
-3. ⏭️ 未闭环事项已归入后续阶段：真实 GGUF smoke、逐 token streaming、GPU offload、多模型常驻、真实 Whisper ASR、llama.cpp GGUF TTS 与多模态真实模型 smoke 继续在 R7 增强和 R8 中跟踪。
+3. ⏭️ 未闭环事项已归入后续阶段：真实 GGUF smoke、GPU offload、多模型常驻、真实 Whisper ASR、llama.cpp GGUF TTS 与多模态真实模型 smoke 继续在 R7 增强和 R8 中跟踪。
 
 ### 05. ✅ R5: Windows Service / Linux systemd / macOS launchd
 
@@ -368,7 +368,7 @@ R7 接线状态：
 
 1. llama.cpp P/Invoke、受管理 native import resolver、进程内单 session manager 与按需模型加载已接入。
 2. `/v1/chat/completions`、`/v1/completions`、`/v1/embeddings`、`/api/generate` 和 `/api/chat` 会在模型可见且能力匹配时调用本地 runtime。
-3. OpenAI / Ollama 非流式成功响应已返回文本和基础 token usage；streaming 成功路径当前先返回兼容帧中的整段结果，逐 token streaming 留待后续增强。
+3. OpenAI / Ollama 非流式成功响应已返回文本和基础 token usage；OpenAI 文本 streaming 成功路径会随本地生成回调输出文本增量，Ollama streaming 仍先返回兼容帧中的整段结果。
 4. `/api/runtime/status` 会报告 llama native prepared、native 缺失或当前加载的 llama.cpp session，包含 generation / embeddings 模式；`POST /api/runtime/session/unload` 可卸载当前 session，`tomur ps` 继续列出可见资产并提示服务进程内按需加载。
 5. native runtime 缺失、模型加载失败、上下文超限、模型能力不匹配和 embedding 不可用会返回诊断错误。
 6. 本阶段按协作规则未主动执行构建、启动和真实 GGUF smoke 验证；GPU offload、多模型常驻、reranker 和 R8 多模态不属于本次完成范围。
@@ -509,7 +509,7 @@ R11 当前接线状态：
 
 1. `web/` 已形成可继续演进的 Ant Design X 工作台源码，默认入口为 Chat-first 单页工作台，而不是管理后台式首页。
 2. 工作台已接入 `/api/version`、`/api/runtime/status`、`/api/runtime/multimodal`、`/api/models/catalog`、`/api/models/installed` 与 `/v1/models`，可读取本地版本、模型、下载与 runtime 诊断。
-3. 工作台已接入 `/v1/chat/completions`，支持基础消息发送、停止生成、重新生成与复制；若后端未提供成功 token streaming，界面按当前 API 能力显示，不伪造流式体验。
+3. 工作台已接入 `/v1/chat/completions`，支持基础消息发送、OpenAI 文本增量 streaming、停止生成、重新生成与复制；界面按当前 API 能力显示，不伪造未接通能力。
 4. Models、Downloads、Runtime、Files 已收敛到 Settings 分组、状态条、状态抽屉与 Chat 内联诊断入口，符合 Chat-first 信息架构约束。
 5. Settings 已具备 General、Models、Downloads、Runtime、API、Files 与 Advanced 分组入口；除 Runtime 操作区外，其余分组当前主要是只读状态、可复制命令和下一步指引，不代表完整编辑、下载队列或文件索引能力已完成。
 6. Runtime 分组已接入 native bundle 状态、component 状态、诊断提示、`POST /api/runtime/native/prepare`、`POST /api/runtime/session/unload`、最近 prepare 文件结果、复制 CLI/API 动作和明确下一步；prepare 失败时也会保留结构化结果，不伪装为成功。
@@ -536,7 +536,7 @@ Chat 上下文入口：
 
 1. 默认入口提供可直接使用的 Chat 工作台。
 2. 首屏不出现 Models、Downloads、Runtime、Files 作为默认一级导航；相关管理能力位于 Settings、状态抽屉或 Chat 诊断入口。
-3. 支持 streaming 消息、停止生成、重新生成、复制、附件入口和模型选择；若后端尚未支持成功 token streaming，UI 必须按当前 API 能力展示，不伪造流式能力。
+3. 支持 OpenAI 文本 streaming 消息、停止生成、重新生成、复制、附件入口和模型选择；UI 必须按当前 API 能力展示，不伪造未接通能力。
 4. Runtime、Downloads 和模型状态可以在 UI 中刷新，并能跳转到对应 Settings 分组。
 5. 所有文案只描述 Tomur 当前已接通能力。
 6. Chat 页面支持文本、图片、文件和音频入口；未接通的 backend 显示诊断和修复动作，不展示为已可用能力。
@@ -576,7 +576,7 @@ Chat 上下文入口：
 2. 继续定位 FLUX.2 klein + stable-diffusion.cpp 的 conditioner assert；当前 `/v1/images/generations` 已隔离到 worker，默认 sampler / scheduler 已按上层成功链路交给 upstream auto/default，`stable-diffusion.native` bridge 会输出上游版本、sidecar 传入状态和生成参数诊断，下一步是用默认 `steps=4` 小图 smoke 补成功出图或更完整失败日志。
 3. 继续用小模型/小素材维护 R8 smoke 套件，目标是单项几秒到五分钟内完成，并保留模型、接口、耗时和结果证据。
 4. 在用户明确要求验证时执行 Tomur 独立项目构建、启动和真实 GGUF chat / embedding smoke。
-5. 为 R7 增强逐 token streaming、GPU offload 选择、多模型常驻和更细的 session 诊断。
+5. 为 R7 增强 GPU offload 选择、多模型常驻、更细的 session 诊断和 Ollama 增量 streaming。
 6. 在后期测试阶段补充 R5 的 Windows Service、Linux systemd、macOS launchd 和 Windows 托盘实机 smoke 验收记录。
 7. 补齐并验证 macOS `osx-x64` / `osx-arm64` native runtime bundle 资产。
 8. 继续推进 R9：在已接入 `runtime.diagnose` / `tools.inspect` 只读 AITool、`POST /api/agents/tools/invoke`、`tool_mode=auto_read_only`、`POST /api/agents/workflows/read-only`、`GET /api/agents/events` 和统一 agent error JSON 的基础上，补构建/启动 smoke、OpenTelemetry 草案与后续受控 tool-calling 循环；等待 R8 图像与 TTS 成功 smoke 证据补齐后再开放对应自动生成工具。

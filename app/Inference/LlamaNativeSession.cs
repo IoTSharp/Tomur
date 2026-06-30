@@ -90,7 +90,11 @@ internal sealed class LlamaNativeSession : IDisposable
 
     public DateTimeOffset LoadedAt { get; }
 
-    public CompletionResult Generate(string prompt, CompletionOptions options, CancellationToken cancellationToken)
+    public CompletionResult Generate(
+        string prompt,
+        CompletionOptions options,
+        CancellationToken cancellationToken,
+        Action<string>? onToken = null)
     {
         ArgumentNullException.ThrowIfNull(options);
 
@@ -129,7 +133,7 @@ internal sealed class LlamaNativeSession : IDisposable
             LlamaNativeMethods.ClearMemory(contextHandle.DangerousGetHandle());
             LlamaNativeMethods.SamplerReset(sampler.DangerousGetHandle());
 
-            var text = RunDecodeLoop(tokens, sampler.DangerousGetHandle(), options, cancellationToken, out var generatedTokenCount);
+            var text = RunDecodeLoop(tokens, sampler.DangerousGetHandle(), options, cancellationToken, out var generatedTokenCount, onToken);
             stopwatch.Stop();
 
             Interlocked.Increment(ref requestCount);
@@ -298,7 +302,8 @@ internal sealed class LlamaNativeSession : IDisposable
         nint samplerHandle,
         CompletionOptions options,
         CancellationToken cancellationToken,
-        out int generatedTokenCount)
+        out int generatedTokenCount,
+        Action<string>? onToken)
     {
         unsafe
         {
@@ -320,6 +325,7 @@ internal sealed class LlamaNativeSession : IDisposable
         var decoder = Encoding.UTF8.GetDecoder();
         Span<char> charBuffer = stackalloc char[512];
         var emittedTokenCount = 0;
+        var emittedCharacters = 0;
 
         for (var generated = 0; generated < Math.Max(1, options.MaxOutputTokens); generated++)
         {
@@ -340,9 +346,12 @@ internal sealed class LlamaNativeSession : IDisposable
 
             if (TryFindStop(output, options.StopSequences, out var stopIndex))
             {
+                EmitTextUpTo(output, stopIndex, ref emittedCharacters, onToken);
                 generatedTokenCount = emittedTokenCount;
                 return output.ToString(0, stopIndex);
             }
+
+            EmitPendingText(output, options.StopSequences, ref emittedCharacters, onToken, flush: false);
 
             unsafe
             {
@@ -363,9 +372,12 @@ internal sealed class LlamaNativeSession : IDisposable
 
         if (TryFindStop(output, options.StopSequences, out var finalStopIndex))
         {
+            EmitTextUpTo(output, finalStopIndex, ref emittedCharacters, onToken);
             generatedTokenCount = emittedTokenCount;
             return output.ToString(0, finalStopIndex);
         }
+
+        EmitPendingText(output, options.StopSequences, ref emittedCharacters, onToken, flush: true);
 
         generatedTokenCount = emittedTokenCount;
         return output.ToString();
@@ -533,6 +545,74 @@ internal sealed class LlamaNativeSession : IDisposable
         }
 
         return stopIndex >= 0;
+    }
+
+    private static void EmitPendingText(
+        StringBuilder builder,
+        IReadOnlyList<string> stopSequences,
+        ref int emittedCharacters,
+        Action<string>? onToken,
+        bool flush)
+    {
+        if (onToken is null)
+        {
+            emittedCharacters = builder.Length;
+            return;
+        }
+
+        var safeLength = flush ? builder.Length : ResolveSafeEmitLength(builder, stopSequences);
+        if (safeLength <= emittedCharacters)
+        {
+            return;
+        }
+
+        onToken(builder.ToString(emittedCharacters, safeLength - emittedCharacters));
+        emittedCharacters = safeLength;
+    }
+
+    private static void EmitTextUpTo(
+        StringBuilder builder,
+        int endIndex,
+        ref int emittedCharacters,
+        Action<string>? onToken)
+    {
+        if (onToken is null || endIndex <= emittedCharacters)
+        {
+            emittedCharacters = Math.Max(emittedCharacters, endIndex);
+            return;
+        }
+
+        onToken(builder.ToString(emittedCharacters, endIndex - emittedCharacters));
+        emittedCharacters = endIndex;
+    }
+
+    private static int ResolveSafeEmitLength(StringBuilder builder, IReadOnlyList<string> stopSequences)
+    {
+        if (stopSequences.Count == 0 || builder.Length == 0)
+        {
+            return builder.Length;
+        }
+
+        var text = builder.ToString();
+        var heldCharacters = 0;
+        foreach (var stop in stopSequences)
+        {
+            if (string.IsNullOrEmpty(stop))
+            {
+                continue;
+            }
+
+            var maxPrefixLength = Math.Min(stop.Length - 1, text.Length);
+            for (var length = 1; length <= maxPrefixLength; length++)
+            {
+                if (text.EndsWith(stop[..length], StringComparison.Ordinal))
+                {
+                    heldCharacters = Math.Max(heldCharacters, length);
+                }
+            }
+        }
+
+        return Math.Max(0, builder.Length - heldCharacters);
     }
 
     private sealed class EmbeddingBatch : IDisposable

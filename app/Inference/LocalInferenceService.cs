@@ -17,18 +17,20 @@ public sealed class LocalInferenceService
         LocalModelDescriptor model,
         string prompt,
         CompletionOptions options,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<string>? onToken = null)
     {
         EnsureTextModel(model);
         var preparedPrompt = promptBuilder.PrepareCompletionPrompt(prompt, options.ContextSize);
-        return sessionManager.Generate(model, preparedPrompt, options, cancellationToken);
+        return sessionManager.Generate(model, preparedPrompt, options, cancellationToken, onToken);
     }
 
     public CompletionResult Chat(
         LocalModelDescriptor model,
         IReadOnlyList<ChatTurn> messages,
         CompletionOptions options,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<string>? onToken = null)
     {
         EnsureTextModel(model);
         var prompt = promptBuilder.BuildChatPrompt(messages, model.Name);
@@ -38,7 +40,7 @@ public sealed class LocalInferenceService
         };
 
         var preparedPrompt = promptBuilder.PrepareCompletionPrompt(prompt, chatOptions.ContextSize);
-        return sessionManager.Generate(model, preparedPrompt, chatOptions, cancellationToken);
+        return sessionManager.Generate(model, preparedPrompt, chatOptions, cancellationToken, onToken);
     }
 
     public EmbeddingResult Embed(

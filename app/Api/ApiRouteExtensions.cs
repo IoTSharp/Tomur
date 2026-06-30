@@ -224,7 +224,11 @@ public static class ApiRouteExtensions
             .Select(static model => new OpenAiModelResponse(
                 model.Id,
                 new DateTimeOffset(model.LastModifiedUtc, TimeSpan.Zero).ToUnixTimeSeconds(),
-                "local"))
+                "local",
+                model.Family,
+                model.Format,
+                model.QuantizationLevel,
+                model.Capabilities))
             .ToArray();
 
         var response = new OpenAiModelListResponse(models);
@@ -655,8 +659,18 @@ public static class ApiRouteExtensions
 
         try
         {
+            if (request.Stream == true)
+            {
+                await WriteOpenAiChatCompletionStreamAsync(
+                    context,
+                    model.Id,
+                    onGenerate: emit => inferenceService.Chat(model, messages, options, context.RequestAborted, emit),
+                    onInferenceError: exception => diagnosticsProvider.GetRuntimeFailure(model.Id, exception));
+                return;
+            }
+
             var result = inferenceService.Chat(model, messages, options, context.RequestAborted);
-            await WriteOpenAiChatCompletionSuccessAsync(context, model.Id, result, request.Stream == true);
+            await WriteOpenAiChatCompletionSuccessAsync(context, model.Id, result, stream: false);
         }
         catch (InferenceException exception)
         {
@@ -709,8 +723,18 @@ public static class ApiRouteExtensions
 
         try
         {
+            if (request.Stream == true)
+            {
+                await WriteOpenAiCompletionStreamAsync(
+                    context,
+                    model.Id,
+                    onGenerate: emit => inferenceService.Complete(model, prompt, options, context.RequestAborted, emit),
+                    onInferenceError: exception => diagnosticsProvider.GetRuntimeFailure(model.Id, exception));
+                return;
+            }
+
             var result = inferenceService.Complete(model, prompt, options, context.RequestAborted);
-            await WriteOpenAiCompletionSuccessAsync(context, model.Id, result, request.Stream == true);
+            await WriteOpenAiCompletionSuccessAsync(context, model.Id, result, stream: false);
         }
         catch (InferenceException exception)
         {
@@ -2045,6 +2069,210 @@ public static class ApiRouteExtensions
             AppJsonSerializerContext.Default.OpenAiCompletionResponse);
     }
 
+    private static async Task WriteOpenAiChatCompletionStreamAsync(
+        HttpContext context,
+        string model,
+        Func<Action<string>, CompletionResult> onGenerate,
+        Func<InferenceException, RuntimeDiagnostic> onInferenceError)
+    {
+        var id = $"chatcmpl-{Guid.NewGuid():N}";
+        var created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var streamStarted = false;
+
+        var wroteRole = false;
+        CompletionResult result;
+        try
+        {
+            result = onGenerate(chunk =>
+            {
+                if (string.IsNullOrEmpty(chunk))
+                {
+                    return;
+                }
+
+                var role = wroteRole ? null : "assistant";
+                wroteRole = true;
+                EnsureStreamStarted();
+                WriteOpenAiChatChunkAsync(
+                    context,
+                    new OpenAiChatCompletionChunk(
+                        id,
+                        "chat.completion.chunk",
+                        created,
+                        model,
+                        [new OpenAiChatCompletionChunkChoice(0, new OpenAiChatCompletionDelta(role, chunk), null)],
+                        null)).GetAwaiter().GetResult();
+            });
+        }
+        catch (InferenceException exception)
+        {
+            await WriteOpenAiStreamErrorAsync(
+                context,
+                OpenAiErrorResponse.RuntimeUnavailable(onInferenceError(exception)));
+            return;
+        }
+        catch (Exception exception) when (IsNativeRuntimeException(exception))
+        {
+            await WriteOpenAiStreamErrorAsync(
+                context,
+                OpenAiErrorResponse.RuntimeUnavailable(onInferenceError(CreateNativeRuntimeException(exception))));
+            return;
+        }
+
+        EnsureStreamStarted();
+        if (!wroteRole)
+        {
+            await WriteOpenAiChatChunkAsync(
+                context,
+                new OpenAiChatCompletionChunk(
+                    id,
+                    "chat.completion.chunk",
+                    created,
+                    model,
+                    [new OpenAiChatCompletionChunkChoice(0, new OpenAiChatCompletionDelta("assistant", null), null)],
+                    null));
+        }
+
+        await WriteOpenAiChatChunkAsync(
+            context,
+            new OpenAiChatCompletionChunk(
+                id,
+                "chat.completion.chunk",
+                created,
+                model,
+                [new OpenAiChatCompletionChunkChoice(0, new OpenAiChatCompletionDelta(null, null), "stop")],
+                ToOpenAiUsage(result.Usage)));
+
+        await context.Response.WriteAsync("data: [DONE]\n\n", context.RequestAborted);
+        await context.Response.Body.FlushAsync(context.RequestAborted);
+
+        void EnsureStreamStarted()
+        {
+            if (streamStarted)
+            {
+                return;
+            }
+
+            StartOpenAiStream(context);
+            streamStarted = true;
+        }
+    }
+
+    private static async Task WriteOpenAiCompletionStreamAsync(
+        HttpContext context,
+        string model,
+        Func<Action<string>, CompletionResult> onGenerate,
+        Func<InferenceException, RuntimeDiagnostic> onInferenceError)
+    {
+        var id = $"cmpl-{Guid.NewGuid():N}";
+        var created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var streamStarted = false;
+
+        var wroteText = false;
+        CompletionResult result;
+        try
+        {
+            result = onGenerate(chunk =>
+            {
+                if (string.IsNullOrEmpty(chunk))
+                {
+                    return;
+                }
+
+                wroteText = true;
+                EnsureStreamStarted();
+                WriteOpenAiCompletionChunkAsync(
+                    context,
+                    new OpenAiCompletionChunk(
+                        id,
+                        "text_completion",
+                        created,
+                        model,
+                        [new OpenAiCompletionChunkChoice(chunk, 0, null)],
+                        null)).GetAwaiter().GetResult();
+            });
+        }
+        catch (InferenceException exception)
+        {
+            await WriteOpenAiStreamErrorAsync(
+                context,
+                OpenAiErrorResponse.RuntimeUnavailable(onInferenceError(exception)));
+            return;
+        }
+        catch (Exception exception) when (IsNativeRuntimeException(exception))
+        {
+            await WriteOpenAiStreamErrorAsync(
+                context,
+                OpenAiErrorResponse.RuntimeUnavailable(onInferenceError(CreateNativeRuntimeException(exception))));
+            return;
+        }
+
+        EnsureStreamStarted();
+        if (!wroteText)
+        {
+            await WriteOpenAiCompletionChunkAsync(
+                context,
+                new OpenAiCompletionChunk(
+                    id,
+                    "text_completion",
+                    created,
+                    model,
+                    [new OpenAiCompletionChunkChoice(string.Empty, 0, null)],
+                    null));
+        }
+
+        await WriteOpenAiCompletionChunkAsync(
+            context,
+            new OpenAiCompletionChunk(
+                id,
+                "text_completion",
+                created,
+                model,
+                [new OpenAiCompletionChunkChoice(string.Empty, 0, "stop")],
+                ToOpenAiUsage(result.Usage)));
+
+        await context.Response.WriteAsync("data: [DONE]\n\n", context.RequestAborted);
+        await context.Response.Body.FlushAsync(context.RequestAborted);
+
+        void EnsureStreamStarted()
+        {
+            if (streamStarted)
+            {
+                return;
+            }
+
+            StartOpenAiStream(context);
+            streamStarted = true;
+        }
+    }
+
+    private static void StartOpenAiStream(HttpContext context)
+    {
+        context.Response.StatusCode = StatusCodes.Status200OK;
+        context.Response.ContentType = "text/event-stream; charset=utf-8";
+        context.Response.Headers.CacheControl = "no-cache";
+    }
+
+    private static async Task WriteOpenAiStreamErrorAsync(HttpContext context, OpenAiErrorResponse error)
+    {
+        if (!context.Response.HasStarted)
+        {
+            await StreamingErrorResponse.WriteOpenAiAsync(context, error);
+            return;
+        }
+
+        await context.Response.WriteAsync("event: error\n", context.RequestAborted);
+        await context.Response.WriteAsync("data: ", context.RequestAborted);
+        await JsonSerializer.SerializeAsync(
+            context.Response.Body,
+            error,
+            AppJsonSerializerContext.Default.OpenAiErrorResponse,
+            context.RequestAborted);
+        await context.Response.WriteAsync("\n\n", context.RequestAborted);
+        await context.Response.WriteAsync("data: [DONE]\n\n", context.RequestAborted);
+        await context.Response.Body.FlushAsync(context.RequestAborted);
+    }
+
     private static async Task WriteOllamaGenerateSuccessAsync(
         HttpContext context,
         string model,
@@ -2125,6 +2353,7 @@ public static class ApiRouteExtensions
             AppJsonSerializerContext.Default.OpenAiChatCompletionChunk,
             context.RequestAborted);
         await context.Response.WriteAsync("\n\n", context.RequestAborted);
+        await context.Response.Body.FlushAsync(context.RequestAborted);
     }
 
     private static async Task WriteOpenAiCompletionChunkAsync(HttpContext context, OpenAiCompletionChunk chunk)
@@ -2136,6 +2365,7 @@ public static class ApiRouteExtensions
             AppJsonSerializerContext.Default.OpenAiCompletionChunk,
             context.RequestAborted);
         await context.Response.WriteAsync("\n\n", context.RequestAborted);
+        await context.Response.Body.FlushAsync(context.RequestAborted);
     }
 
     private static async Task WriteOpenAiInvalidRequestAsync(HttpContext context, string message, bool stream = false)
