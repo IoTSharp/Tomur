@@ -7,13 +7,16 @@ public sealed class ToolInvoker
 {
     private readonly AgentRuntimeService agentRuntime;
     private readonly ToolFactory toolFactory;
+    private readonly AgentEventLog eventLog;
 
     public ToolInvoker(
         AgentRuntimeService agentRuntime,
-        ToolFactory toolFactory)
+        ToolFactory toolFactory,
+        AgentEventLog eventLog)
     {
         this.agentRuntime = agentRuntime;
         this.toolFactory = toolFactory;
+        this.eventLog = eventLog;
     }
 
     public async Task<AgentToolInvokeResponse> InvokeAsync(
@@ -61,7 +64,7 @@ public sealed class ToolInvoker
         {
             var started = DateTimeOffset.UtcNow;
             var result = await invokable.InvokeLocalAsync(request.Arguments, cancellationToken).ConfigureAwait(false);
-            return new AgentToolInvokeResponse(
+            var response = new AgentToolInvokeResponse(
                 "ok",
                 safeTool.Name,
                 "Microsoft.Extensions.AI.AITool",
@@ -80,6 +83,8 @@ public sealed class ToolInvoker
                     descriptor.SideEffect,
                     false,
                     descriptor.Actions));
+            await eventLog.WriteToolInvocationAsync(response, invocationKind, cancellationToken).ConfigureAwait(false);
+            return response;
         }
 
         var blocked = new BlockedToolResult(
@@ -91,7 +96,7 @@ public sealed class ToolInvoker
                 ? [ResolveBlockedAction(descriptor)]
                 : descriptor.Actions);
 
-        return new AgentToolInvokeResponse(
+        var blockedResponse = new AgentToolInvokeResponse(
             "blocked",
             descriptor.Name,
             "Microsoft.Extensions.AI.AITool",
@@ -110,6 +115,8 @@ public sealed class ToolInvoker
                 descriptor.SideEffect,
                 descriptor.RequiresConfirmation,
                 blocked.Actions));
+        await eventLog.WriteToolInvocationAsync(blockedResponse, invocationKind, cancellationToken).ConfigureAwait(false);
+        return blockedResponse;
     }
 
     private static string ResolveBlockedAction(AgentToolDescriptor descriptor)

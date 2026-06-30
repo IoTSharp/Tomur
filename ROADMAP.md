@@ -428,14 +428,16 @@ R8 接线状态：
 3. ✅ 工具目录与状态映射：`GET /api/agents/runtime` 与 `GET /api/agents/tools` 暴露 chat、image、vision、OCR、ASR、TTS、files 和 runtime diagnostics 的当前状态、路由、schema、side effect、callable、requires confirmation、invocation modes 和诊断动作；`GET /api/agents/tool-bindings` 暴露当前 `Microsoft.Extensions.AI.AITool` 绑定与同样的安全边界字段。
 4. ✅ 受控只读工具调用入口：`POST /api/agents/tools/invoke` 只允许调用 `runtime.diagnose` 与 `tools.inspect`，返回 schema、审计、耗时和诊断结果；有副作用工具必须返回阻塞诊断。
 5. ✅ 受控只读 workflow：`POST /api/agents/workflows/read-only` 先通过 Tomur 的 bounded tool plan 执行 `runtime.diagnose` / `tools.inspect` 两个只读步骤，并可选通过 `Microsoft.Agents.AI.Workflows` sequential workflow 托管本地 `ChatClientAgent` 摘要工具结果。
-6. ⏳ 图像生成工具：从会话中调用 `/v1/images/generations` 或内部 stable-diffusion.cpp adapter；当前手动入口为 `/v1/images/generations`，自动 tool-calling 仍留到 R9 后续受控调用流程，FLUX.2 成功出图 smoke 仍需补证据。
-7. ⏳ 视觉理解工具：从会话中调用 VLM adapter，支持 data URI / base64 图片输入。
-8. ⏳ OCR 工具：从会话中调用 OCR adapter，返回文本、版面和诊断信息。
-9. ⏳ ASR 工具：从会话中调用 Whisper adapter，返回 transcript、语言、时间片段和诊断信息。
-10. ⏳ TTS 工具：从会话中调用 llama.cpp GGUF TTS adapter，返回音频、音色、采样率和诊断信息；当前手动入口为 `/v1/audio/speech`，自动 tool-calling 仍留到 R9 后续受控调用流程。
-11. ⏳ 文件问答工具：对接本地文件、SQLite 索引和基础 RAG，不引入 PostgreSQL 作为 Community 默认依赖。
-12. ⏳ runtime 工具：允许会话读取 `doctor` / native / model readiness 诊断，但修复类动作必须有明确用户确认。
-13. ⏳ Agent Framework telemetry 接入 Tomur 本地日志和后续 OpenTelemetry 管线，记录工具调用、耗时、失败原因和模型使用量。
+6. ✅ 本地事件摘要：agent chat、受控工具调用、只读 workflow 以及对应失败事件会写入 `<data>/logs/agents.jsonl`，`GET /api/agents/events` 可读取最近事件；事件只记录事件名、工具名（如适用）、模式、状态、耗时、阻塞状态和诊断动作，不记录用户消息正文或完整工具结果。
+7. ✅ 结构化 agent 错误响应：`POST /api/agents/chat`、`POST /api/agents/workflows/read-only` 与 `POST /api/agents/tools/invoke` 在失败时返回统一的 agent error JSON，包含事件名、模式、工具名（如适用）、runtime、model 与 `RuntimeDiagnostic`，便于后续 UI 状态抽屉和本地调试。
+8. ⏳ 图像生成工具：从会话中调用 `/v1/images/generations` 或内部 stable-diffusion.cpp adapter；当前手动入口为 `/v1/images/generations`，自动 tool-calling 仍留到 R9 后续受控调用流程，FLUX.2 成功出图 smoke 仍需补证据。
+9. ⏳ 视觉理解工具：从会话中调用 VLM adapter，支持 data URI / base64 图片输入。
+10. ⏳ OCR 工具：从会话中调用 OCR adapter，返回文本、版面和诊断信息。
+11. ⏳ ASR 工具：从会话中调用 Whisper adapter，返回 transcript、语言、时间片段和诊断信息。
+12. ⏳ TTS 工具：从会话中调用 llama.cpp GGUF TTS adapter，返回音频、音色、采样率和诊断信息；当前手动入口为 `/v1/audio/speech`，自动 tool-calling 仍留到 R9 后续受控调用流程。
+13. ⏳ 文件问答工具：对接本地文件、SQLite 索引和基础 RAG，不引入 PostgreSQL 作为 Community 默认依赖。
+14. ⏳ runtime 工具：允许会话读取 `doctor` / native / model readiness 诊断，但修复类动作必须有明确用户确认。
+15. ⏳ Agent Framework telemetry 接入后续 OpenTelemetry 管线，记录工具调用、耗时、失败原因和模型使用量。
 
 R9 接线状态：
 
@@ -445,7 +447,9 @@ R9 接线状态：
 4. `GET /api/agents/runtime` 与 `GET /api/agents/tools` 已暴露本地工具地图。`chat.respond` 是 agent endpoint；`runtime.diagnose` 与 `tools.inspect` 已作为只读 `AIFunction` 暴露在 `GET /api/agents/tool-bindings`；所有工具描述都带 route、schema、side effect、callable、requires confirmation 与 invocation modes；VLM、OCR、ASR、TTS 与 image generation 会随 backend readiness 标记；`files.search` 仍为 planned。
 5. `POST /api/agents/tools/invoke` 已提供受控只读工具调用入口，当前只执行 `runtime.diagnose` 与 `tools.inspect`，并返回输入 schema、审计字段和 source-generated JSON 结果；图像生成、VLM、OCR、ASR、TTS、files 和修复类 runtime 动作会返回阻塞诊断，不会被自动调用。
 6. `POST /api/agents/workflows/read-only` 已接入受控只读 workflow：可以显式给出 `tools[]`，也可以由 Tomur 从请求消息中规划 `runtime.diagnose` / `tools.inspect`；`respond=false` 时只返回工具步骤，默认在存在本地 chat 模型时用 Agent Framework sequential workflow 托管 `ChatClientAgent` 摘要结果。
-7. R9 当前只代表 Microsoft AI 抽象、只读 AITool 绑定、受控只读工具调用、显式/自动只读工具上下文和 Agent Framework 文本/只读 workflow 编排，不代表模型自动选择多模态 tool-calling、checkpoint、telemetry 或本地文件 RAG 已完成。
+7. `GET /api/agents/events` 已接入本地事件摘要读取；agent chat、受控工具调用、只读 workflow 及其失败路径都会写入 `<data>/logs/agents.jsonl`，用于后续 UI 状态抽屉和本地诊断。事件不记录用户消息正文或完整工具结果。
+8. `/api/agents/chat`、`/api/agents/workflows/read-only` 与 `/api/agents/tools/invoke` 失败时已返回统一的 agent error JSON，而不再只回裸 `RuntimeDiagnostic`，便于 UI 和本地调试直接识别事件类型、模式、工具名、runtime、model 与诊断动作。
+9. R9 当前只代表 Microsoft AI 抽象、只读 AITool 绑定、受控只读工具调用、显式/自动只读工具上下文、本地事件摘要、结构化 agent 错误响应和 Agent Framework 文本/只读 workflow 编排，不代表模型自动选择多模态 tool-calling、checkpoint、OpenTelemetry 或本地文件 RAG 已完成。
 
 验收：
 
@@ -564,6 +568,6 @@ Chat 上下文入口：
 5. 为 R7 增强逐 token streaming、GPU offload 选择、多模型常驻和更细的 session 诊断。
 6. 在后期测试阶段补充 R5 的 Windows Service、Linux systemd、macOS launchd 和 Windows 托盘实机 smoke 验收记录。
 7. 补齐并验证 macOS `osx-x64` / `osx-arm64` native runtime bundle 资产。
-8. 继续推进 R9：在已接入 `runtime.diagnose` / `tools.inspect` 只读 AITool、`POST /api/agents/tools/invoke`、`tool_mode=auto_read_only` 和 `POST /api/agents/workflows/read-only` 的基础上，补构建/启动 smoke、工作流错误帧、telemetry 草案与后续受控 tool-calling 循环；等待 R8 图像与 TTS 成功 smoke 证据补齐后再开放对应自动生成工具。
+8. 继续推进 R9：在已接入 `runtime.diagnose` / `tools.inspect` 只读 AITool、`POST /api/agents/tools/invoke`、`tool_mode=auto_read_only`、`POST /api/agents/workflows/read-only`、`GET /api/agents/events` 和统一 agent error JSON 的基础上，补构建/启动 smoke、OpenTelemetry 草案与后续受控 tool-calling 循环；等待 R8 图像与 TTS 成功 smoke 证据补齐后再开放对应自动生成工具。
 9. 为 R10 设计语音回合的最小闭环：录音/上传、ASR、会话处理、TTS、播放和产物登记。
 10. 为 R12 建立 AOT 审计清单，区分必须 AOT 的核心路径与可暂时走自包含 fallback 的高级编排路径。

@@ -78,6 +78,19 @@ public static class ApiRouteExtensions
             await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.AgentFrameworkToolBindingResponse);
         });
 
+        app.MapGet("/api/agents/events", static async (HttpContext context, AgentEventLog eventLog) =>
+        {
+            int? limit = null;
+            if (context.Request.Query.TryGetValue("limit", out var limitValues) &&
+                int.TryParse(limitValues.FirstOrDefault(), out var parsedLimit))
+            {
+                limit = parsedLimit;
+            }
+
+            var response = eventLog.ReadRecent(limit);
+            await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.AgentEventLogRecentResponse);
+        });
+
         app.MapPost("/api/agents/chat", HandleAgentChatAsync);
         app.MapPost("/api/agents/workflows/read-only", HandleAgentReadOnlyWorkflowAsync);
         app.MapPost("/api/agents/tools/invoke", HandleAgentToolInvokeAsync);
@@ -189,6 +202,7 @@ public static class ApiRouteExtensions
                     "/api/agents/runtime",
                     "/api/agents/tools",
                     "/api/agents/tool-bindings",
+                    "/api/agents/events",
                     "POST /api/agents/chat",
                     "POST /api/agents/workflows/read-only",
                     "POST /api/agents/tools/invoke",
@@ -230,6 +244,7 @@ public static class ApiRouteExtensions
                     "/api/agents/runtime",
                     "/api/agents/tools",
                     "/api/agents/tool-bindings",
+                    "/api/agents/events",
                     "POST /api/agents/chat",
                     "POST /api/agents/workflows/read-only",
                     "POST /api/agents/tools/invoke",
@@ -275,7 +290,8 @@ public static class ApiRouteExtensions
         HttpContext context,
         RuntimeDiagnosticsProvider diagnosticsProvider,
         AgentRuntimeService agentRuntime,
-        ToolInvoker toolInvoker)
+        ToolInvoker toolInvoker,
+        AgentEventLog eventLog)
     {
         var request = await ReadAgentRequestAsync(
             context,
@@ -292,23 +308,66 @@ public static class ApiRouteExtensions
         }
         catch (InferenceException exception) when (IsInvalidRequestInferenceException(exception))
         {
-            await WriteAgentDiagnosticAsync(
+            var diagnostic = diagnosticsProvider.GetRuntimeFailure(request.Model, exception);
+            await eventLog.WriteErrorAsync(
+                "agent_chat",
+                request.ToolMode,
+                null,
+                "Microsoft.Agents.AI.ChatClientAgent",
+                request.Model,
+                diagnostic,
+                context.RequestAborted);
+            await WriteAgentErrorAsync(
                 context,
-                diagnosticsProvider.GetRuntimeFailure(request.Model, exception),
+                "agent_chat",
+                request.ToolMode,
+                null,
+                "Microsoft.Agents.AI.ChatClientAgent",
+                request.Model,
+                diagnostic,
                 StatusCodes.Status400BadRequest);
         }
         catch (InferenceException exception)
         {
-            await WriteAgentDiagnosticAsync(
+            var diagnostic = diagnosticsProvider.GetRuntimeFailure(request.Model, exception);
+            await eventLog.WriteErrorAsync(
+                "agent_chat",
+                request.ToolMode,
+                null,
+                "Microsoft.Agents.AI.ChatClientAgent",
+                request.Model,
+                diagnostic,
+                context.RequestAborted);
+            await WriteAgentErrorAsync(
                 context,
-                diagnosticsProvider.GetRuntimeFailure(request.Model, exception),
+                "agent_chat",
+                request.ToolMode,
+                null,
+                "Microsoft.Agents.AI.ChatClientAgent",
+                request.Model,
+                diagnostic,
                 StatusCodes.Status503ServiceUnavailable);
         }
         catch (Exception exception) when (IsNativeRuntimeException(exception))
         {
-            await WriteAgentDiagnosticAsync(
+            var runtimeException = CreateNativeRuntimeException(exception);
+            var diagnostic = diagnosticsProvider.GetRuntimeFailure(request.Model, runtimeException);
+            await eventLog.WriteErrorAsync(
+                "agent_chat",
+                request.ToolMode,
+                null,
+                "Microsoft.Agents.AI.ChatClientAgent",
+                request.Model,
+                diagnostic,
+                context.RequestAborted);
+            await WriteAgentErrorAsync(
                 context,
-                diagnosticsProvider.GetRuntimeFailure(request.Model, CreateNativeRuntimeException(exception)),
+                "agent_chat",
+                request.ToolMode,
+                null,
+                "Microsoft.Agents.AI.ChatClientAgent",
+                request.Model,
+                diagnostic,
                 StatusCodes.Status503ServiceUnavailable);
         }
     }
@@ -317,7 +376,8 @@ public static class ApiRouteExtensions
         HttpContext context,
         RuntimeDiagnosticsProvider diagnosticsProvider,
         AgentRuntimeService agentRuntime,
-        ToolInvoker toolInvoker)
+        ToolInvoker toolInvoker,
+        AgentEventLog eventLog)
     {
         var request = await ReadAgentRequestAsync(
             context,
@@ -337,30 +397,74 @@ public static class ApiRouteExtensions
         }
         catch (InferenceException exception) when (IsInvalidRequestInferenceException(exception))
         {
-            await WriteAgentDiagnosticAsync(
+            var diagnostic = diagnosticsProvider.GetRuntimeFailure(request.Model, exception);
+            await eventLog.WriteErrorAsync(
+                "read_only_workflow",
+                "workflow",
+                null,
+                "Microsoft.Agents.AI.Workflows",
+                request.Model,
+                diagnostic,
+                context.RequestAborted);
+            await WriteAgentErrorAsync(
                 context,
-                diagnosticsProvider.GetRuntimeFailure(request.Model, exception),
+                "read_only_workflow",
+                "workflow",
+                null,
+                "Microsoft.Agents.AI.Workflows",
+                request.Model,
+                diagnostic,
                 StatusCodes.Status400BadRequest);
         }
         catch (InferenceException exception)
         {
-            await WriteAgentDiagnosticAsync(
+            var diagnostic = diagnosticsProvider.GetRuntimeFailure(request.Model, exception);
+            await eventLog.WriteErrorAsync(
+                "read_only_workflow",
+                "workflow",
+                null,
+                "Microsoft.Agents.AI.Workflows",
+                request.Model,
+                diagnostic,
+                context.RequestAborted);
+            await WriteAgentErrorAsync(
                 context,
-                diagnosticsProvider.GetRuntimeFailure(request.Model, exception),
+                "read_only_workflow",
+                "workflow",
+                null,
+                "Microsoft.Agents.AI.Workflows",
+                request.Model,
+                diagnostic,
                 StatusCodes.Status503ServiceUnavailable);
         }
         catch (Exception exception) when (IsNativeRuntimeException(exception))
         {
-            await WriteAgentDiagnosticAsync(
+            var runtimeException = CreateNativeRuntimeException(exception);
+            var diagnostic = diagnosticsProvider.GetRuntimeFailure(request.Model, runtimeException);
+            await eventLog.WriteErrorAsync(
+                "read_only_workflow",
+                "workflow",
+                null,
+                "Microsoft.Agents.AI.Workflows",
+                request.Model,
+                diagnostic,
+                context.RequestAborted);
+            await WriteAgentErrorAsync(
                 context,
-                diagnosticsProvider.GetRuntimeFailure(request.Model, CreateNativeRuntimeException(exception)),
+                "read_only_workflow",
+                "workflow",
+                null,
+                "Microsoft.Agents.AI.Workflows",
+                request.Model,
+                diagnostic,
                 StatusCodes.Status503ServiceUnavailable);
         }
     }
 
     private static async Task HandleAgentToolInvokeAsync(
         HttpContext context,
-        ToolInvoker toolInvoker)
+        ToolInvoker toolInvoker,
+        AgentEventLog eventLog)
     {
         var request = await ReadAgentRequestAsync(
             context,
@@ -384,14 +488,28 @@ public static class ApiRouteExtensions
         }
         catch (InferenceException exception)
         {
-            await WriteAgentDiagnosticAsync(
+            var diagnostic = new RuntimeDiagnostic(
+                "error",
+                exception.Code,
+                exception.Message,
+                request.Tool,
+                exception.Actions);
+            await eventLog.WriteErrorAsync(
+                "tool_invocation",
+                "manual",
+                request.Tool,
+                "Microsoft.Extensions.AI.AITool",
+                null,
+                diagnostic,
+                context.RequestAborted);
+            await WriteAgentErrorAsync(
                 context,
-                new RuntimeDiagnostic(
-                    "error",
-                    exception.Code,
-                    exception.Message,
-                    request.Tool,
-                    exception.Actions),
+                "tool_invocation",
+                "manual",
+                request.Tool,
+                "Microsoft.Extensions.AI.AITool",
+                null,
+                diagnostic,
                 StatusCodes.Status400BadRequest);
         }
     }
@@ -1801,6 +1919,32 @@ public static class ApiRouteExtensions
             context,
             diagnostic,
             AppJsonSerializerContext.Default.RuntimeDiagnostic,
+            statusCode);
+    }
+
+    private static async Task WriteAgentErrorAsync(
+        HttpContext context,
+        string eventName,
+        string? mode,
+        string? tool,
+        string? runtime,
+        string? model,
+        RuntimeDiagnostic diagnostic,
+        int statusCode)
+    {
+        var response = new AgentErrorResponse(
+            "error",
+            eventName,
+            string.IsNullOrWhiteSpace(mode) ? null : mode,
+            string.IsNullOrWhiteSpace(tool) ? null : tool,
+            string.IsNullOrWhiteSpace(runtime) ? null : runtime,
+            string.IsNullOrWhiteSpace(model) ? null : model,
+            diagnostic);
+
+        await JsonHttpResponse.WriteAsync(
+            context,
+            response,
+            AppJsonSerializerContext.Default.AgentErrorResponse,
             statusCode);
     }
 

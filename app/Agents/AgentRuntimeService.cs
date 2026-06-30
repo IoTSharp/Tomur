@@ -18,17 +18,20 @@ public sealed class AgentRuntimeService
     private readonly LocalModelCatalog modelCatalog;
     private readonly MultimodalRuntimeService multimodalRuntime;
     private readonly LocalChatClient chatClient;
+    private readonly AgentEventLog eventLog;
     private readonly IServiceProvider services;
 
     public AgentRuntimeService(
         LocalModelCatalog modelCatalog,
         MultimodalRuntimeService multimodalRuntime,
         LocalChatClient chatClient,
+        AgentEventLog eventLog,
         IServiceProvider services)
     {
         this.modelCatalog = modelCatalog;
         this.multimodalRuntime = multimodalRuntime;
         this.chatClient = chatClient;
+        this.eventLog = eventLog;
         this.services = services;
     }
 
@@ -58,6 +61,7 @@ public sealed class AgentRuntimeService
                     "POST /api/agents/chat runs the local ChatClientAgent text path.",
                     "GET /api/agents/tools exposes the Tomur tool map.",
                     "GET /api/agents/tool-bindings exposes the current AITool binding set.",
+                    "GET /api/agents/events exposes recent local Agent Framework event summaries.",
                     "POST /api/agents/tools/invoke can invoke runtime.diagnose and tools.inspect as read-only tools.",
                     "POST /api/agents/workflows/read-only runs a bounded Tomur read-only tool plan and can ask an Agent Framework workflow-hosted ChatClientAgent to summarize the results.",
                     "Use /api/agents/runtime to inspect the local tool map.",
@@ -138,7 +142,7 @@ public sealed class AgentRuntimeService
                 cancellationToken)
             .ConfigureAwait(false);
 
-        return new AgentChatResponse(
+        var agentResponse = new AgentChatResponse(
             toolCalls.Any(static tool => tool.Status == "blocked") ? "partial" : "ok",
             AgentName,
             AgentRuntime,
@@ -149,6 +153,8 @@ public sealed class AgentRuntimeService
             response.Text ?? string.Empty,
             (long)Math.Round((DateTimeOffset.UtcNow - started).TotalMilliseconds),
             BuildChatDiagnostics(requestedToolMode, toolCalls));
+        await eventLog.WriteChatAsync(agentResponse, cancellationToken).ConfigureAwait(false);
+        return agentResponse;
     }
 
     public async Task<AgentReadOnlyWorkflowResponse> RunReadOnlyWorkflowAsync(
@@ -204,7 +210,7 @@ public sealed class AgentRuntimeService
             model = summary.Model;
         }
 
-        return new AgentReadOnlyWorkflowResponse(
+        var workflowResponse = new AgentReadOnlyWorkflowResponse(
             steps.Any(static step => step.Status == "blocked") ? "partial" : "ok",
             "read-only-tools",
             WorkflowRuntime,
@@ -214,6 +220,8 @@ public sealed class AgentRuntimeService
             text,
             (long)Math.Round((DateTimeOffset.UtcNow - started).TotalMilliseconds),
             BuildWorkflowDiagnostics(steps, shouldRespond));
+        await eventLog.WriteWorkflowAsync(workflowResponse, cancellationToken).ConfigureAwait(false);
+        return workflowResponse;
     }
 
     private async Task<WorkflowSummary> RunWorkflowSummaryAsync(

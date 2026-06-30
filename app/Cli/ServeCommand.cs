@@ -138,6 +138,7 @@ internal static class ServeCommand
         builder.Services.AddSingleton<MultimodalRuntimeService>();
         builder.Services.AddSingleton<MultimodalExecutionService>();
         builder.Services.AddSingleton<IsolatedImageGenerationService>();
+        builder.Services.AddSingleton<AgentEventLog>();
         builder.Services.AddSingleton<AgentRuntimeService>();
         builder.Services.AddSingleton<ToolFactory>();
         builder.Services.AddSingleton<ToolInvoker>();

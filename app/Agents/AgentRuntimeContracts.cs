@@ -175,3 +175,12 @@ public sealed record AgentToolInvokeAudit(
     [property: JsonPropertyName("side_effect")] string SideEffect,
     [property: JsonPropertyName("requires_confirmation")] bool RequiresConfirmation,
     [property: JsonPropertyName("actions")] IReadOnlyList<string> Actions);
+
+public sealed record AgentErrorResponse(
+    [property: JsonPropertyName("status")] string Status,
+    [property: JsonPropertyName("event")] string Event,
+    [property: JsonPropertyName("mode")] string? Mode,
+    [property: JsonPropertyName("tool")] string? Tool,
+    [property: JsonPropertyName("runtime")] string? Runtime,
+    [property: JsonPropertyName("model")] string? Model,
+    [property: JsonPropertyName("diagnostic")] Tomur.Runtime.RuntimeDiagnostic Diagnostic);
