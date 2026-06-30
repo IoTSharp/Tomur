@@ -34,7 +34,6 @@ import {
   RefreshCcw,
   RotateCcw,
   Settings,
-  Sparkles,
   Square,
   Trash2,
   Wrench
@@ -460,7 +459,7 @@ function App() {
         <div className="brand">
           <div className="brand-copy">
             <span className="brand-mark">
-              <Sparkles size={16} />
+              <img src="/icons/app-icon.svg" alt="" aria-hidden="true" />
             </span>
             <div>
               <Typography.Title level={4}>Tomur</Typography.Title>

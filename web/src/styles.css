@@ -105,10 +105,15 @@ button {
   justify-content: center;
   width: 38px;
   height: 38px;
+  flex: 0 0 38px;
   border-radius: 12px;
-  color: #fff;
-  background: linear-gradient(135deg, var(--accent), #169179);
   box-shadow: 0 10px 24px rgba(13, 107, 95, 0.24);
+}
+
+.brand-mark img {
+  display: block;
+  width: 38px;
+  height: 38px;
 }
 
 .brand .ant-typography {

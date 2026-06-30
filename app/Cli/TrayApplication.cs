@@ -23,6 +23,7 @@ internal sealed class TrayApplication : IDisposable
     private Exception? startupException;
     private IntPtr windowHandle;
     private IntPtr iconHandle;
+    private bool ownsIconHandle;
 
     private TrayApplication(string serviceUrl, Action stopApplication)
     {
@@ -84,7 +85,7 @@ internal sealed class TrayApplication : IDisposable
         try
         {
             windowHandle = CreateHiddenWindow();
-            iconHandle = NativeMethods.LoadIcon(IntPtr.Zero, NativeMethods.IdiApplication);
+            (iconHandle, ownsIconHandle) = LoadTrayIcon();
             AddIcon();
             started = true;
             ready.Set();
@@ -108,6 +109,14 @@ internal sealed class TrayApplication : IDisposable
                 _ = NativeMethods.DestroyWindow(windowHandle);
                 windowHandle = IntPtr.Zero;
             }
+
+            if (ownsIconHandle && iconHandle != IntPtr.Zero)
+            {
+                _ = NativeMethods.DestroyIcon(iconHandle);
+            }
+
+            iconHandle = IntPtr.Zero;
+            ownsIconHandle = false;
         }
     }
 
@@ -309,6 +318,58 @@ internal sealed class TrayApplication : IDisposable
         return new Win32Exception(error, $"{operation} failed with Win32 error {error}.");
     }
 
+    private static (IntPtr IconHandle, bool OwnsHandle) LoadTrayIcon()
+    {
+        var instance = NativeMethods.GetModuleHandle(null);
+        if (instance != IntPtr.Zero)
+        {
+            var icon = NativeMethods.LoadImage(
+                instance,
+                NativeMethods.IdiApplication,
+                NativeMethods.ImageIcon,
+                0,
+                0,
+                NativeMethods.LrDefaultSize | NativeMethods.LrShared);
+
+            if (icon != IntPtr.Zero)
+            {
+                return (icon, false);
+            }
+        }
+
+        var processPath = Environment.ProcessPath;
+        if (!string.IsNullOrWhiteSpace(processPath))
+        {
+            var largeIcon = IntPtr.Zero;
+            var smallIcon = IntPtr.Zero;
+            if (NativeMethods.ExtractIconEx(processPath, 0, ref largeIcon, ref smallIcon, 1) > 0)
+            {
+                if (smallIcon != IntPtr.Zero)
+                {
+                    if (largeIcon != IntPtr.Zero)
+                    {
+                        _ = NativeMethods.DestroyIcon(largeIcon);
+                    }
+
+                    return (smallIcon, true);
+                }
+
+                if (largeIcon != IntPtr.Zero)
+                {
+                    return (largeIcon, true);
+                }
+            }
+        }
+
+        var fallback = NativeMethods.LoadIcon(IntPtr.Zero, NativeMethods.IdiApplication);
+        if (fallback == IntPtr.Zero)
+        {
+            throw CreateWin32Exception("LoadIconW");
+        }
+
+        return (fallback, false);
+    }
+
     private static class NativeMethods
     {
         public const uint WmNull = 0x0000;
@@ -336,6 +397,9 @@ internal sealed class TrayApplication : IDisposable
         public const uint TpmRightButton = 0x0002;
         public const uint TpmNonotify = 0x0080;
         public const uint TpmReturnCommand = 0x0100;
+        public const uint ImageIcon = 1;
+        public const uint LrDefaultSize = 0x00000040;
+        public const uint LrShared = 0x00008000;
 
         public static readonly IntPtr IdiApplication = new(32512);
 
@@ -448,6 +512,21 @@ internal sealed class TrayApplication : IDisposable
 
         [DllImport("user32.dll", EntryPoint = "LoadIconW", CharSet = CharSet.Unicode, SetLastError = true)]
         public static extern IntPtr LoadIcon(IntPtr instance, IntPtr iconName);
+
+        [DllImport("user32.dll", EntryPoint = "LoadImageW", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern IntPtr LoadImage(IntPtr instance, IntPtr iconName, uint type, int width, int height, uint flags);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool DestroyIcon(IntPtr icon);
+
+        [DllImport("shell32.dll", EntryPoint = "ExtractIconExW", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern uint ExtractIconEx(
+            string file,
+            int iconIndex,
+            ref IntPtr largeIcon,
+            ref IntPtr smallIcon,
+            uint icons);
 
         [DllImport("kernel32.dll", EntryPoint = "GetModuleHandleW", CharSet = CharSet.Unicode, SetLastError = true)]
         public static extern IntPtr GetModuleHandle(string? moduleName);

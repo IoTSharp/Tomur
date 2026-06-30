@@ -374,7 +374,7 @@ public sealed class AgentRuntimeService
             ]);
     }
 
-    private static IReadOnlyList<ChatMessage> BuildMessages(AgentChatRequest request)
+    private static List<ChatMessage> BuildMessages(AgentChatRequest request)
     {
         var messages = new List<ChatMessage>();
         if (request.Messages is { Count: > 0 })
@@ -402,7 +402,7 @@ public sealed class AgentRuntimeService
             ["Provide a user message or a prior read-only tool result before invoking /api/agents/chat."]);
     }
 
-    private static IReadOnlyList<ChatMessage> BuildMessagesForWorkflow(AgentReadOnlyWorkflowRequest request)
+    private static List<ChatMessage> BuildMessagesForWorkflow(AgentReadOnlyWorkflowRequest request)
     {
         var chatRequest = new AgentChatRequest(
             request.Model,

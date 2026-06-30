@@ -1,0 +1,22 @@
+{
+  "name": "Tomur",
+  "short_name": "Tomur",
+  "description": "Tomur local AI workbench.",
+  "icons": [
+    {
+      "src": "/icons/app-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/app-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "display": "standalone",
+  "background_color": "#fffdf8",
+  "theme_color": "#0d6b5f"
+}

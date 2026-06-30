@@ -159,13 +159,13 @@ public sealed class IsolatedImageGenerationService
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             TryKill(process);
-            var stdout = await ReadWorkerOutputAsync(stdoutTask).ConfigureAwait(false);
-            var stderr = await ReadWorkerOutputAsync(stderrTask).ConfigureAwait(false);
+            var timeoutStdout = await ReadWorkerOutputAsync(stdoutTask).ConfigureAwait(false);
+            var timeoutStderr = await ReadWorkerOutputAsync(stderrTask).ConfigureAwait(false);
             throw new InferenceException(
                 "image_generation_worker_timeout",
                 $"The image generation worker exceeded the {WorkerTimeout.TotalMinutes:0}-minute timeout.",
                 BuildWorkerActions(
-                    new WorkerRunResult(-1, stdout, stderr),
+                    new WorkerRunResult(-1, timeoutStdout, timeoutStderr),
                     "Try a smaller image size or fewer generation steps."));
         }
 

@@ -1,8 +1,12 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Reflection;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.SpaServices;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Hosting.WindowsServices;
 using Tomur.Api;
@@ -151,14 +155,61 @@ internal static class ServeCommand
         });
 
         builder.WebHost.UseUrls(state.ServerOptions.Urls);
-        builder.WebHost.UseWebRoot(Path.Combine(AppContext.BaseDirectory, "wwwroot"));
 
         var app = builder.Build();
-        app.UseDefaultFiles();
-        app.UseStaticFiles();
         app.MapApiRoutes();
-        app.MapFallbackToFile("index.html");
+        app.MapWhen(ShouldUseSpa, spaApp =>
+        {
+            var spaFileProvider = CreateSpaFileProvider(app.Environment);
+            spaApp.UseStaticFiles(new StaticFileOptions
+            {
+                FileProvider = spaFileProvider
+            });
+            spaApp.UseSpa(spa =>
+            {
+                spa.Options.DefaultPageStaticFileOptions = new StaticFileOptions
+                {
+                    FileProvider = spaFileProvider
+                };
+                spa.Options.DefaultPage = "/index.html";
+
+                if (app.Environment.IsDevelopment())
+                {
+                    spa.UseProxyToSpaDevelopmentServer("http://127.0.0.1:5173");
+                }
+            });
+        });
         return app;
+    }
+
+    private static bool ShouldUseSpa(HttpContext context)
+    {
+        var path = context.Request.Path;
+        return !path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase) &&
+            !path.StartsWithSegments("/v1", StringComparison.OrdinalIgnoreCase) &&
+            !path.StartsWithSegments("/health", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static IFileProvider CreateSpaFileProvider(IWebHostEnvironment environment)
+    {
+        if (environment.IsDevelopment())
+        {
+            return new PhysicalFileProvider(ResolveWebRootPath());
+        }
+
+        return new ManifestEmbeddedFileProvider(Assembly.GetExecutingAssembly(), "wwwroot");
+    }
+
+    private static string ResolveWebRootPath()
+    {
+        var candidates = new[]
+        {
+            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "wwwroot")),
+            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "wwwroot")),
+            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "wwwroot"))
+        };
+
+        return candidates.FirstOrDefault(Directory.Exists) ?? candidates[0];
     }
 
     private static bool TryBuildHostState(string[] args, out HostState state, out string error)

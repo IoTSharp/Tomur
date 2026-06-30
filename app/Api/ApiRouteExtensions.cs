@@ -174,61 +174,6 @@ public static class ApiRouteExtensions
         app.MapPost("/api/generate", HandleOllamaGenerateAsync);
         app.MapPost("/api/chat", HandleOllamaChatAsync);
 
-        app.MapGet("/", static async (HttpContext context) =>
-        {
-            var environment = context.RequestServices.GetRequiredService<IWebHostEnvironment>();
-            var webRootPath = environment.WebRootPath;
-            if (!string.IsNullOrWhiteSpace(webRootPath))
-            {
-                var indexPath = Path.Combine(webRootPath, "index.html");
-                if (File.Exists(indexPath))
-                {
-                    context.Response.ContentType = "text/html; charset=utf-8";
-                    await context.Response.SendFileAsync(indexPath, context.RequestAborted);
-                    return;
-                }
-            }
-
-            var response = new RootResponse(
-                Defaults.ProductName,
-                "Tomur local API is running.",
-                [
-                    "/health",
-                    "/api/version",
-                    "/api/runtime/status",
-                    "POST /api/runtime/session/unload",
-                    "/api/runtime/native",
-                    "/api/runtime/multimodal",
-                    "/api/agents/runtime",
-                    "/api/agents/tools",
-                    "/api/agents/tool-bindings",
-                    "/api/agents/events",
-                    "POST /api/agents/chat",
-                    "POST /api/agents/workflows/read-only",
-                    "POST /api/agents/tools/invoke",
-                    "/api/models/catalog",
-                    "/api/models/installed",
-                    "POST /api/runtime/native/prepare",
-                    "/api/runtime/native/{componentId}/{libraryName}",
-                    "POST /api/runtime/native/{componentId}/{libraryName}/load",
-                    "/v1/models",
-                    "POST /v1/chat/completions",
-                    "POST /v1/completions",
-                    "POST /v1/embeddings",
-                    "POST /v1/images/generations",
-                    "POST /v1/audio/transcriptions",
-                    "POST /v1/audio/speech",
-                    "POST /api/vision/analyze",
-                    "POST /api/ocr/analyze",
-                    "/api/tags",
-                    "POST /api/show",
-                    "POST /api/generate",
-                    "POST /api/chat"
-                ]);
-
-            await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.RootResponse);
-        });
-
         app.MapGet("/api", static async (HttpContext context) =>
         {
             var response = new RootResponse(
