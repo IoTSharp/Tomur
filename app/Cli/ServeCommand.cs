@@ -12,6 +12,7 @@ using Microsoft.Extensions.Hosting.WindowsServices;
 using Tomur.Api;
 using Tomur.Agents;
 using Tomur.Config;
+using Tomur.Hardware;
 using Tomur.Inference;
 using Tomur.Multimodal;
 using Tomur.Native;
@@ -134,6 +135,8 @@ internal static class ServeCommand
         builder.Services.AddSingleton<INativeLibraryLoader>(provider =>
             new NativeLibraryLoader(provider.GetRequiredService<INativeLibraryResolver>()));
         builder.Services.AddSingleton<LlamaImportResolver>();
+        builder.Services.AddSingleton<LlamaBackendInitializer>();
+        builder.Services.AddSingleton<HardwareAccelerationService>();
         builder.Services.AddSingleton<SessionManager>();
         builder.Services.AddSingleton<LocalInferenceService>();
         builder.Services.AddSingleton<LocalChatClient>();

@@ -23,6 +23,13 @@
         { "name": "ggml", "required": true },
         { "name": "ggml-base", "required": true },
         { "name": "ggml-cpu", "required": true },
+        { "name": "ggml-cuda", "required": false },
+        { "name": "ggml-cann", "required": false },
+        { "name": "ggml-metal", "required": false },
+        { "name": "ggml-vulkan", "required": false },
+        { "name": "ggml-sycl", "required": false },
+        { "name": "ggml-openvino", "required": false },
+        { "name": "ggml-opencl", "required": false },
         { "name": "tomur-llama-mtmd", "required": false },
         { "name": "tomur-llama-vlm", "required": false }
       ],

@@ -263,7 +263,7 @@ R4 审计结论：
 
 1. ✅ 无虚标：R4 完成口径限定为首批 OpenAI / Ollama 协议面、请求校验、兼容风格错误响应、streaming 错误帧和轻量本地模型发现；真实文本推理归 R7，图像、视觉、OCR、ASR 与 TTS 执行归 R8，不计入 R4 完成条件。
 2. ✅ R4 范围内未发现阻塞缺陷：`/v1/models`、`/v1/chat/completions`、`/v1/completions`、`/v1/embeddings`、`/v1/images/generations`、`/api/version`、`/api/tags`、`/api/show`、`/api/generate` 与 `/api/chat` 均已接线，并返回对应协议风格的成功响应或诊断错误。
-3. ⏭️ 未闭环事项已归入后续阶段：真实 GGUF smoke、GPU offload、多模型常驻、真实 Whisper ASR、llama.cpp GGUF TTS 与多模态真实模型 smoke 继续在 R7 增强和 R8 中跟踪。
+3. ⏭️ 未闭环事项已归入后续阶段：真实 GGUF smoke、多模型常驻、真实 Whisper ASR、llama.cpp GGUF TTS 与多模态真实模型 smoke 继续在 R7 增强和 R8 中跟踪；GPU / NPU offload 策略已接入，真实加速能力取决于对应 ggml accelerator backend 动态库是否进入 runtime bundle。
 
 ### 05. ✅ R5: Windows Service / Linux systemd / macOS launchd
 
@@ -371,7 +371,8 @@ R7 接线状态：
 3. OpenAI / Ollama 非流式成功响应已返回文本和基础 token usage；OpenAI 文本 streaming 成功路径会随本地生成回调输出文本增量，Ollama streaming 仍先返回兼容帧中的整段结果。
 4. `/api/runtime/status` 会报告 llama native prepared、native 缺失或当前加载的 llama.cpp session，包含 generation / embeddings 模式；`POST /api/runtime/session/unload` 可卸载当前 session，`tomur ps` 继续列出可见资产并提示服务进程内按需加载。
 5. native runtime 缺失、模型加载失败、上下文超限、模型能力不匹配和 embedding 不可用会返回诊断错误。
-6. 本阶段按协作规则未主动执行构建、启动和真实 GGUF smoke 验证；GPU offload、多模型常驻、reranker 和 R8 多模态不属于本次完成范围。
+6. llama.cpp backend catalog 设备探测、CUDA / NPU / Metal / Vulkan / SYCL / OpenVINO 等 accelerator backend 可见性诊断、GPU/NPU 优先 offload 策略和 CPU fallback 已接入；实际加速需要 `ggml-cuda`、`ggml-cann` 等对应动态库存在并成功被 native runtime 枚举。
+7. 本阶段按协作规则未主动执行启动和真实 GGUF smoke 验证；多模型常驻、reranker 和 R8 多模态不属于本次完成范围。
 
 ### 08. 🚧 R8: 多模态能力
 
@@ -576,7 +577,7 @@ Chat 上下文入口：
 2. 继续定位 FLUX.2 klein + stable-diffusion.cpp 的 conditioner assert；当前 `/v1/images/generations` 已隔离到 worker，默认 sampler / scheduler 已按上层成功链路交给 upstream auto/default，`stable-diffusion.native` bridge 会输出上游版本、sidecar 传入状态和生成参数诊断，下一步是用默认 `steps=4` 小图 smoke 补成功出图或更完整失败日志。
 3. 继续用小模型/小素材维护 R8 smoke 套件，目标是单项几秒到五分钟内完成，并保留模型、接口、耗时和结果证据。
 4. 在用户明确要求验证时执行 Tomur 独立项目构建、启动和真实 GGUF chat / embedding smoke。
-5. 为 R7 增强 GPU offload 选择、多模型常驻、更细的 session 诊断和 Ollama 增量 streaming。
+5. 为 R7 增强多模型常驻、更细的 session 诊断、真实 CUDA / NPU offload smoke 和 Ollama 增量 streaming。
 6. 在后期测试阶段补充 R5 的 Windows Service、Linux systemd、macOS launchd 和 Windows 托盘实机 smoke 验收记录。
 7. 补齐并验证 macOS `osx-x64` / `osx-arm64` native runtime bundle 资产。
 8. 继续推进 R9：在已接入 `runtime.diagnose` / `tools.inspect` 只读 AITool、`POST /api/agents/tools/invoke`、`tool_mode=auto_read_only`、`POST /api/agents/workflows/read-only`、`GET /api/agents/events` 和统一 agent error JSON 的基础上，补构建/启动 smoke、OpenTelemetry 草案与后续受控 tool-calling 循环；等待 R8 图像与 TTS 成功 smoke 证据补齐后再开放对应自动生成工具。

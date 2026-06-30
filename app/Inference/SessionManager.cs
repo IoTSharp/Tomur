@@ -1,26 +1,26 @@
 using Tomur.Runtime;
+using Tomur.Hardware;
 
 namespace Tomur.Inference;
 
 public sealed class SessionManager : IDisposable
 {
-    private static readonly object BackendGate = new();
-    private static bool backendInitialized;
-
-    private readonly LlamaImportResolver importResolver;
-    private readonly Tomur.Native.INativeLibraryResolver libraryResolver;
+    private readonly LlamaBackendInitializer backendInitializer;
+    private readonly HardwareAccelerationService accelerationService;
     private readonly object gate = new();
     private LlamaNativeSession? currentSession;
     private string? currentModelId;
     private string? currentModelPath;
     private int currentContextSize;
     private bool currentEmbeddings;
+    private int currentGpuLayers;
+    private string? currentAcceleratorKey;
     private bool disposed;
 
-    public SessionManager(LlamaImportResolver importResolver, Tomur.Native.INativeLibraryResolver libraryResolver)
+    public SessionManager(LlamaBackendInitializer backendInitializer, HardwareAccelerationService accelerationService)
     {
-        this.importResolver = importResolver;
-        this.libraryResolver = libraryResolver;
+        this.backendInitializer = backendInitializer;
+        this.accelerationService = accelerationService;
     }
 
     internal CompletionResult Generate(
@@ -61,11 +61,14 @@ public sealed class SessionManager : IDisposable
         ObjectDisposedException.ThrowIf(disposed, this);
         var effectiveContextSize = Math.Clamp(contextSize, 512, 131072);
 
+        var accelerationPlan = accelerationService.ResolvePlan(model);
         if (currentSession is not null &&
             string.Equals(currentModelId, model.Id, StringComparison.OrdinalIgnoreCase) &&
             string.Equals(currentModelPath, model.AbsolutePath, StringComparison.OrdinalIgnoreCase) &&
             currentContextSize == effectiveContextSize &&
-            currentEmbeddings == embeddings)
+            currentEmbeddings == embeddings &&
+            currentGpuLayers == accelerationPlan.EffectiveGpuLayers &&
+            string.Equals(currentAcceleratorKey, accelerationPlan.SelectedAcceleratorKey, StringComparison.OrdinalIgnoreCase))
         {
             return currentSession;
         }
@@ -76,15 +79,18 @@ public sealed class SessionManager : IDisposable
         currentModelPath = null;
         currentContextSize = 0;
         currentEmbeddings = false;
+        currentGpuLayers = 0;
+        currentAcceleratorKey = null;
 
-        EnsureBackendInitialized();
+        backendInitializer.EnsureInitialized();
         try
         {
             currentSession = new LlamaNativeSession(
                 model.Id,
                 model.AbsolutePath,
                 contextSize: effectiveContextSize,
-                gpuLayers: 0,
+                gpuLayers: accelerationPlan.EffectiveGpuLayers,
+                acceleratorKey: accelerationPlan.SelectedAcceleratorKey,
                 embeddings: embeddings);
         }
         catch (Exception exception) when (exception is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
@@ -103,6 +109,8 @@ public sealed class SessionManager : IDisposable
         currentModelPath = model.AbsolutePath;
         currentContextSize = effectiveContextSize;
         currentEmbeddings = embeddings;
+        currentGpuLayers = accelerationPlan.EffectiveGpuLayers;
+        currentAcceleratorKey = accelerationPlan.SelectedAcceleratorKey;
         return currentSession;
     }
 
@@ -116,6 +124,8 @@ public sealed class SessionManager : IDisposable
             currentModelPath = null;
             currentContextSize = 0;
             currentEmbeddings = false;
+            currentGpuLayers = 0;
+            currentAcceleratorKey = null;
         }
     }
 
@@ -154,59 +164,9 @@ public sealed class SessionManager : IDisposable
             currentSession = null;
             currentContextSize = 0;
             currentEmbeddings = false;
+            currentGpuLayers = 0;
+            currentAcceleratorKey = null;
             disposed = true;
-        }
-    }
-
-    private void EnsureBackendInitialized()
-    {
-        importResolver.Register();
-
-        lock (BackendGate)
-        {
-            if (backendInitialized)
-            {
-                return;
-            }
-
-            try
-            {
-                TryLoadDynamicBackends();
-                LlamaNativeMethods.BackendInit();
-            }
-            catch (Exception exception) when (exception is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
-            {
-                throw new InferenceException(
-                    "native_runtime_unavailable",
-                    $"The llama.cpp native runtime could not be initialized: {exception.Message}",
-                    [
-                        "Run tomur native prepare to extract or repair the managed runtime bundle.",
-                        "Run tomur doctor to inspect native runtime status."
-                    ],
-                    exception);
-            }
-
-            backendInitialized = true;
-        }
-    }
-
-    private void TryLoadDynamicBackends()
-    {
-        var resolution = libraryResolver.Resolve("llama", "llama");
-        if (!resolution.Exists || string.IsNullOrWhiteSpace(resolution.RuntimeRoot))
-        {
-            return;
-        }
-
-        try
-        {
-            LlamaNativeMethods.GgmlBackendLoadAllFromPath(resolution.RuntimeRoot);
-        }
-        catch (EntryPointNotFoundException)
-        {
-        }
-        catch (DllNotFoundException)
-        {
         }
     }
 }

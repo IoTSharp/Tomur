@@ -67,15 +67,26 @@ export interface RuntimeStatusResponse {
   status: string;
   checked_at: string;
   version: string;
+  system: SystemSnapshot;
   paths: PathConfiguration;
   configuration: ConfigurationState;
   directories: DirectoryState[];
   disk: DiskState;
   proxy: ProxyState;
   port: PortState;
+  acceleration: AccelerationPlan;
   native_bundle: NativeBundleStatus;
   runtime: RuntimeDiagnostic;
   diagnostics: DiagnosticItem[];
+}
+
+export interface SystemSnapshot {
+  os_description: string;
+  process_architecture: string;
+  framework_description: string;
+  processor_count: number;
+  cpu_name?: string | null;
+  total_memory_bytes?: number | null;
 }
 
 export interface PathConfiguration {
@@ -178,6 +189,40 @@ export interface RuntimeDiagnostic {
   actions: string[];
 }
 
+export interface AccelerationPlan {
+  status: string;
+  preferred_backend: string;
+  effective_backend: string;
+  configured_gpu_layers: number;
+  effective_gpu_layers: number;
+  recommended_gpu_layers: number;
+  selected_accelerator_key?: string | null;
+  selected_accelerator?: AcceleratorDevice | null;
+  devices: AcceleratorDevice[];
+  backends: AccelerationBackendStatus[];
+  actions: string[];
+}
+
+export interface AcceleratorDevice {
+  device_index: number;
+  kind: string;
+  name: string;
+  memory_bytes?: number | null;
+  selection_key: string;
+  backend: string;
+  integrated: boolean;
+  device_id?: string | null;
+}
+
+export interface AccelerationBackendStatus {
+  id: string;
+  display_name: string;
+  library_name: string;
+  status: string;
+  path?: string | null;
+  message: string;
+}
+
 export interface DiagnosticItem {
   name: string;
   status: string;
@@ -239,6 +284,7 @@ export interface ModelCatalogResponse {
     total_memory_bytes?: number | null;
     tier: string;
     recommendations: string[];
+    acceleration: AccelerationPlan;
   };
   packages: ModelCatalogPackage[];
 }

@@ -114,12 +114,12 @@ public sealed class NativeBundleProbe : INativeBundleProbe
         var requiredUnverified = libraries.Any(static library =>
             library.Required && library.Exists && library.ChecksumStatus == "unverified");
         var optionalIssue = libraries.Any(static library =>
-            !library.Required && (!library.Exists || library.ChecksumStatus is "mismatch" or "unverified"));
+            !library.Required && library.Exists && library.ChecksumStatus is "mismatch" or "unverified");
         var status = requiredProblem ? "error" : requiredUnverified || optionalIssue ? "warning" : "ok";
         var message = status switch
         {
-            "ok" => "Required and optional native libraries are present.",
-            "warning" => "Required native libraries are present, but some libraries are optional or unverified.",
+            "ok" => "Required native libraries are present; optional accelerator libraries may be absent.",
+            "warning" => "Required native libraries are present, but some present optional libraries are unverified or damaged.",
             _ => "A required native library is missing or failed checksum verification."
         };
 

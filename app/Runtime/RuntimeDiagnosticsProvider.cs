@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Runtime.InteropServices;
 using Tomur.Config;
+using Tomur.Hardware;
 using Tomur.Inference;
 using Tomur.Multimodal;
 using Tomur.Native;
@@ -17,19 +18,22 @@ public sealed class RuntimeDiagnosticsProvider
     private readonly INativeBundleProbe nativeBundleProbe;
     private readonly ServerOptions serverOptions;
     private readonly LocalInferenceService? inferenceService;
+    private readonly HardwareAccelerationService? accelerationService;
 
     public RuntimeDiagnosticsProvider(
         ConfigurationStore configurationStore,
         DataPaths basePaths,
         INativeBundleProbe? nativeBundleProbe = null,
         ServerOptions? serverOptions = null,
-        LocalInferenceService? inferenceService = null)
+        LocalInferenceService? inferenceService = null,
+        HardwareAccelerationService? accelerationService = null)
     {
         this.configurationStore = configurationStore;
         this.basePaths = basePaths;
         this.nativeBundleProbe = nativeBundleProbe ?? new NativeBundleProbe(basePaths);
         this.serverOptions = serverOptions ?? new ServerOptions();
         this.inferenceService = inferenceService;
+        this.accelerationService = accelerationService;
     }
 
     public RuntimeDiagnostic GetRuntimeUnavailable(string? model)
@@ -141,8 +145,9 @@ public sealed class RuntimeDiagnosticsProvider
         var proxy = GetProxyState();
         var port = GetPortState(ResolveServiceUrls(configuration.Configuration));
         var nativeBundle = nativeBundleProbe.Probe(paths.RuntimeDirectory);
+        var acceleration = GetAccelerationPlan(nativeBundle);
         var runtime = GetRuntimeDiagnostic(nativeBundle);
-        var diagnostics = BuildDiagnostics(configuration, directories, database, apiKeys, disk, proxy, port, nativeBundle, runtime);
+        var diagnostics = BuildDiagnostics(configuration, directories, database, apiKeys, disk, proxy, port, nativeBundle, acceleration, runtime);
         var resolvedPathConfiguration = paths.ToPathConfiguration();
 
         return new RuntimeStatusResponse(
@@ -158,6 +163,7 @@ public sealed class RuntimeDiagnosticsProvider
             disk,
             proxy,
             port,
+            acceleration,
             nativeBundle,
             runtime,
             diagnostics);
@@ -226,6 +232,31 @@ public sealed class RuntimeDiagnosticsProvider
                 $"Prompt tokens: {snapshot.PromptTokens}",
                 $"Completion tokens: {snapshot.CompletionTokens}"
             ]);
+    }
+
+    private AccelerationPlan GetAccelerationPlan(NativeBundleProbeResult nativeBundle)
+    {
+        if (accelerationService is not null)
+        {
+            return accelerationService.GetProfile();
+        }
+
+        var backends = RuntimeBackendCatalog.ProbeBackends(nativeBundle.RuntimeRoot);
+        var cpuReady = backends.Any(static backend => backend.Id == "cpu" && backend.Status == "available");
+        return new AccelerationPlan(
+            cpuReady ? "cpu" : "error",
+            "cpu",
+            cpuReady ? "cpu" : "unavailable",
+            0,
+            0,
+            0,
+            null,
+            null,
+            [],
+            backends,
+            cpuReady
+                ? ["CPU inference is available. Start tomur serve to probe llama.cpp accelerator devices."]
+                : ["Run tomur native prepare to extract or repair llama.cpp native runtime assets."]);
     }
 
     private static SystemSnapshot GetSystemSnapshot()
@@ -360,6 +391,7 @@ public sealed class RuntimeDiagnosticsProvider
         ProxyState proxy,
         PortState port,
         NativeBundleProbeResult nativeBundle,
+        AccelerationPlan acceleration,
         RuntimeDiagnostic runtime)
     {
         var diagnostics = new List<DiagnosticItem>
@@ -433,6 +465,14 @@ public sealed class RuntimeDiagnosticsProvider
             nativeBundle.Status == "ok" ? [] : ["Run tomur native prepare to extract or repair the versioned runtime bundle."]));
 
         diagnostics.Add(ToDiagnostic(
+            "acceleration",
+            acceleration.Status,
+            acceleration.Status == "error" ? "error" : "ok",
+            BuildAccelerationDiagnosticMessage(acceleration),
+            acceleration.SelectedAcceleratorKey ?? acceleration.EffectiveBackend,
+            acceleration.Actions));
+
+        diagnostics.Add(ToDiagnostic(
             "runtime",
             runtime.Status,
             runtime.Status == "error" ? "error" : "ok",
@@ -441,6 +481,18 @@ public sealed class RuntimeDiagnosticsProvider
             runtime.Actions));
 
         return diagnostics;
+    }
+
+    private static string BuildAccelerationDiagnosticMessage(AccelerationPlan acceleration)
+    {
+        if (acceleration.SelectedAccelerator is not null)
+        {
+            return $"Selected {acceleration.SelectedAccelerator.Kind} accelerator '{acceleration.SelectedAccelerator.Name}' with {acceleration.EffectiveGpuLayers} GPU layers.";
+        }
+
+        return acceleration.Status == "cpu"
+            ? "No GPU or NPU accelerator is active; Tomur will use CPU inference."
+            : "No usable local inference acceleration path is available.";
     }
 
     private static DiagnosticItem ToDiagnostic(

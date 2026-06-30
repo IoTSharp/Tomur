@@ -1,4 +1,6 @@
 using Tomur.Config;
+using Tomur.Hardware;
+using Tomur.Inference;
 using Tomur.Native;
 using Tomur.Runtime;
 
@@ -21,10 +23,16 @@ internal static class DoctorCommand
         }
 
         var paths = new DataPaths(pathOptions);
+        var nativeBundleProbe = new NativeBundleProbe(paths);
+        var libraryResolver = new NativeLibraryResolver(nativeBundleProbe);
+        var importResolver = new LlamaImportResolver(libraryResolver);
+        var backendInitializer = new LlamaBackendInitializer(importResolver, libraryResolver);
+        var accelerationService = new HardwareAccelerationService(backendInitializer, nativeBundleProbe);
         var diagnostics = new RuntimeDiagnosticsProvider(
             new ConfigurationStore(paths),
             paths,
-            new NativeBundleProbe(paths)).GetDoctorReport();
+            nativeBundleProbe,
+            accelerationService: accelerationService).GetDoctorReport();
 
         Console.WriteLine($"{Defaults.ProductName} doctor");
         Console.WriteLine($"  Version: {diagnostics.Version}");
@@ -53,6 +61,16 @@ internal static class DoctorCommand
         Console.WriteLine($"  Proxy: {diagnostics.Details.Proxy.Status}");
         Console.WriteLine($"  Port: {diagnostics.Details.Port.Status} ({diagnostics.Details.Port.Url})");
         Console.WriteLine($"  API keys: {diagnostics.Details.ApiKeys.Status} ({diagnostics.Details.ApiKeys.ActiveKeyCount} active)");
+        Console.WriteLine($"  Acceleration: {diagnostics.Details.Acceleration.Status} ({diagnostics.Details.Acceleration.EffectiveBackend})");
+        if (diagnostics.Details.Acceleration.SelectedAccelerator is not null)
+        {
+            var accelerator = diagnostics.Details.Acceleration.SelectedAccelerator;
+            Console.WriteLine($"  Accelerator: {accelerator.Name} [{accelerator.Kind}]");
+            Console.WriteLine($"  Accelerator key: {accelerator.SelectionKey}");
+            Console.WriteLine($"  Accelerator memory: {CommandLineHelpers.FormatNullableBytes(accelerator.MemoryBytes is null ? null : (long)accelerator.MemoryBytes.Value)}");
+            Console.WriteLine($"  GPU layers: {diagnostics.Details.Acceleration.EffectiveGpuLayers}");
+        }
+
         Console.WriteLine($"  Native bundle: {diagnostics.NativeBundle.Status} ({diagnostics.NativeBundle.Rid})");
         Console.WriteLine($"  Runtime: {diagnostics.Runtime.Status} / {diagnostics.Runtime.Code}");
         Console.WriteLine();

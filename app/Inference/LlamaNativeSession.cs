@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using Tomur.Hardware;
 
 namespace Tomur.Inference;
 
@@ -13,6 +14,8 @@ internal sealed class LlamaNativeSession : IDisposable
     private readonly string modelId;
     private readonly string modelPath;
     private readonly int contextSize;
+    private readonly int gpuLayers;
+    private readonly string? acceleratorKey;
     private readonly bool embeddings;
     private readonly LlamaModelHandle modelHandle;
     private readonly LlamaContextHandle contextHandle;
@@ -22,15 +25,24 @@ internal sealed class LlamaNativeSession : IDisposable
     private long promptTokens;
     private long completionTokens;
 
-    public LlamaNativeSession(string modelId, string modelPath, int contextSize, int gpuLayers, bool embeddings)
+    public LlamaNativeSession(string modelId, string modelPath, int contextSize, int gpuLayers, string? acceleratorKey, bool embeddings)
     {
         this.modelId = modelId;
         this.modelPath = modelPath;
         this.contextSize = Math.Max(512, contextSize);
+        this.gpuLayers = Math.Max(0, gpuLayers);
+        this.acceleratorKey = string.IsNullOrWhiteSpace(acceleratorKey) ? null : acceleratorKey.Trim();
         this.embeddings = embeddings;
 
         var modelParams = LlamaNativeMethods.ModelDefaultParams();
-        modelParams.n_gpu_layers = Math.Max(0, gpuLayers);
+        modelParams.n_gpu_layers = this.gpuLayers;
+        using var selectedDeviceList = TryBuildSelectedDeviceList(this.acceleratorKey, this.gpuLayers);
+        if (selectedDeviceList.Pointer != nint.Zero)
+        {
+            modelParams.devices = selectedDeviceList.Pointer;
+            modelParams.main_gpu = 0;
+        }
+
         var rawModelHandle = LlamaNativeMethods.ModelLoadFromFile(modelPath, modelParams);
         if (rawModelHandle == nint.Zero)
         {
@@ -56,8 +68,8 @@ internal sealed class LlamaNativeSession : IDisposable
         contextParams.n_threads_batch = threads;
         contextParams.embeddings = embeddings;
         contextParams.pooling_type = embeddings ? PoolingTypeMean : PoolingTypeNone;
-        contextParams.offload_kqv = gpuLayers > 0;
-        contextParams.op_offload = gpuLayers > 0;
+        contextParams.offload_kqv = this.gpuLayers > 0;
+        contextParams.op_offload = this.gpuLayers > 0;
 
         var rawContextHandle = LlamaNativeMethods.InitFromModel(rawModelHandle, contextParams);
         if (rawContextHandle == nint.Zero)
@@ -148,6 +160,8 @@ internal sealed class LlamaNativeSession : IDisposable
                     $"model-id: {modelId}",
                     $"model-path: {modelPath}",
                     $"context-size: {contextSize}",
+                    $"gpu-layers: {gpuLayers}",
+                    $"accelerator: {acceleratorKey ?? "auto-or-cpu"}",
                     $"prompt-tokens: {tokens.Length}",
                     $"completion-tokens: {generatedTokenCount}"
                 ]);
@@ -225,6 +239,8 @@ internal sealed class LlamaNativeSession : IDisposable
                     $"model-id: {modelId}",
                     $"model-path: {modelPath}",
                     $"context-size: {contextSize}",
+                    $"gpu-layers: {gpuLayers}",
+                    $"accelerator: {acceleratorKey ?? "auto-or-cpu"}",
                     $"input-tokens: {tokens.Length}",
                     $"embedding-size: {vector.Length}"
                 ]);
@@ -246,6 +262,8 @@ internal sealed class LlamaNativeSession : IDisposable
             [
                 $"context-size: {contextSize}",
                 $"mode: {(embeddings ? "embeddings" : "generation")}",
+                $"gpu-layers: {gpuLayers}",
+                $"accelerator: {acceleratorKey ?? "auto-or-cpu"}",
                 $"model-path: {modelPath}"
             ]);
     }
@@ -497,6 +515,26 @@ internal sealed class LlamaNativeSession : IDisposable
     private static float NormalizePenalty(float value)
         => float.IsFinite(value) ? value : 0.0f;
 
+    private static SelectedDeviceListHandle TryBuildSelectedDeviceList(string? selectedAcceleratorKey, int selectedGpuLayers)
+    {
+        if (selectedGpuLayers <= 0 || string.IsNullOrWhiteSpace(selectedAcceleratorKey))
+        {
+            return SelectedDeviceListHandle.Empty;
+        }
+
+        try
+        {
+            var selectedDevice = LlamaBackendDeviceCatalog.FindBySelectionKey(selectedAcceleratorKey);
+            return selectedDevice is null
+                ? SelectedDeviceListHandle.Empty
+                : SelectedDeviceListHandle.Create(selectedDevice.DeviceHandle);
+        }
+        catch
+        {
+            return SelectedDeviceListHandle.Empty;
+        }
+    }
+
     private static void AppendDecodedText(
         ReadOnlySpan<byte> bytes,
         Decoder decoder,
@@ -701,6 +739,38 @@ internal sealed class LlamaNativeSession : IDisposable
             Marshal.FreeHGlobal(sequenceCountsBuffer);
             Marshal.FreeHGlobal(positionBuffer);
             Marshal.FreeHGlobal(tokenBuffer);
+        }
+    }
+
+    private readonly struct SelectedDeviceListHandle(nint pointer) : IDisposable
+    {
+        public static SelectedDeviceListHandle Empty { get; } = new(nint.Zero);
+
+        public nint Pointer { get; } = pointer;
+
+        public static SelectedDeviceListHandle Create(params nint[] deviceHandles)
+        {
+            if (deviceHandles.Length == 0)
+            {
+                return Empty;
+            }
+
+            var buffer = Marshal.AllocHGlobal((deviceHandles.Length + 1) * IntPtr.Size);
+            for (var index = 0; index < deviceHandles.Length; index++)
+            {
+                Marshal.WriteIntPtr(buffer, index * IntPtr.Size, deviceHandles[index]);
+            }
+
+            Marshal.WriteIntPtr(buffer, deviceHandles.Length * IntPtr.Size, IntPtr.Zero);
+            return new SelectedDeviceListHandle(buffer);
+        }
+
+        public void Dispose()
+        {
+            if (Pointer != nint.Zero)
+            {
+                Marshal.FreeHGlobal(Pointer);
+            }
         }
     }
 }

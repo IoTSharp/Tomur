@@ -77,7 +77,8 @@ public sealed class LlamaImportResolver
     {
         return libraryName switch
         {
-            "llama" or "ggml" or "ggml-base" or "ggml-cpu" or "tomur-llama-mtmd" or "tomur-llama-vlm" => "llama",
+            "llama" or "ggml" or "ggml-base" or "ggml-cpu" or "ggml-cuda" or "ggml-cann" or "ggml-metal" or
+            "ggml-vulkan" or "ggml-sycl" or "ggml-openvino" or "ggml-opencl" or "tomur-llama-mtmd" or "tomur-llama-vlm" => "llama",
             "whisper" or "parakeet" => "whisper",
             "tomur-ocr" or "tomur-mtmd" => "ocr",
             "tomur-tts" => "tts",

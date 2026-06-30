@@ -35,7 +35,10 @@ internal sealed class TrayApplication : IDisposable
             IsBackground = true,
             Name = "Tomur tray"
         };
-        thread.SetApartmentState(ApartmentState.STA);
+        if (OperatingSystem.IsWindows())
+        {
+            thread.SetApartmentState(ApartmentState.STA);
+        }
     }
 
     public static TrayApplication? TryStart(string serviceUrl, Action stopApplication)

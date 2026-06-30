@@ -10,6 +10,7 @@ using Tomur.Api.Models;
 using Tomur.Api.Ollama;
 using Tomur.Api.OpenAI;
 using Tomur.Config;
+using Tomur.Hardware;
 using Tomur.Inference;
 using Tomur.Models;
 using Tomur.Multimodal;
@@ -95,9 +96,9 @@ public static class ApiRouteExtensions
         app.MapPost("/api/agents/workflows/read-only", HandleAgentReadOnlyWorkflowAsync);
         app.MapPost("/api/agents/tools/invoke", HandleAgentToolInvokeAsync);
 
-        app.MapGet("/api/models/catalog", static async (HttpContext context, DataPaths paths) =>
+        app.MapGet("/api/models/catalog", static async (HttpContext context, DataPaths paths, HardwareAccelerationService accelerationService) =>
         {
-            var response = CreateModelCatalogResponse(paths);
+            var response = CreateModelCatalogResponse(paths, accelerationService);
             await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.ModelCatalogResponse);
         });
 
@@ -463,9 +464,10 @@ public static class ApiRouteExtensions
         }
     }
 
-    private static ModelCatalogResponse CreateModelCatalogResponse(DataPaths paths)
+    private static ModelCatalogResponse CreateModelCatalogResponse(DataPaths paths, HardwareAccelerationService accelerationService)
     {
         var hardware = HardwareProfile.Detect();
+        var acceleration = accelerationService.GetProfile();
         var catalog = new ModelCatalog();
         var manifest = new InstallManifestStore(paths).Read();
         var packages = catalog.GetAll()
@@ -524,7 +526,8 @@ public static class ApiRouteExtensions
                 hardware.ProcessorCount,
                 hardware.TotalMemoryBytes,
                 hardware.Tier,
-                hardware.Recommendations),
+                hardware.Recommendations,
+                acceleration),
             packages);
     }
 

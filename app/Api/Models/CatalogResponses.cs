@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Tomur.Hardware;
 
 namespace Tomur.Api.Models;
 
@@ -12,7 +13,8 @@ public sealed record ModelHardwareProfileResponse(
     [property: JsonPropertyName("processor_count")] int ProcessorCount,
     [property: JsonPropertyName("total_memory_bytes")] ulong? TotalMemoryBytes,
     [property: JsonPropertyName("tier")] string Tier,
-    [property: JsonPropertyName("recommendations")] IReadOnlyList<string> Recommendations);
+    [property: JsonPropertyName("recommendations")] IReadOnlyList<string> Recommendations,
+    [property: JsonPropertyName("acceleration")] AccelerationPlan Acceleration);
 
 public sealed record ModelCatalogPackageResponse(
     [property: JsonPropertyName("id")] string Id,

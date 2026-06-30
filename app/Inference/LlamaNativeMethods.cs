@@ -7,6 +7,7 @@ internal static partial class LlamaNativeMethods
 {
     internal const string LibraryName = "llama";
     internal const string GgmlLibraryName = "ggml";
+    internal const string GgmlBaseLibraryName = "ggml-base";
 
     [LibraryImport(LibraryName, EntryPoint = "llama_backend_init")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
@@ -15,6 +16,30 @@ internal static partial class LlamaNativeMethods
     [LibraryImport(GgmlLibraryName, EntryPoint = "ggml_backend_load_all_from_path", StringMarshalling = StringMarshalling.Utf8)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial void GgmlBackendLoadAllFromPath(string directoryPath);
+
+    [LibraryImport(GgmlLibraryName, EntryPoint = "ggml_backend_dev_count")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial nuint BackendDeviceCount();
+
+    [LibraryImport(GgmlLibraryName, EntryPoint = "ggml_backend_dev_get")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial nint BackendDeviceGet(nuint index);
+
+    [LibraryImport(GgmlBaseLibraryName, EntryPoint = "ggml_backend_dev_type")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial GgmlBackendDeviceType BackendDeviceType(nint deviceHandle);
+
+    [DllImport(GgmlBaseLibraryName, EntryPoint = "ggml_backend_dev_get_props")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    private static extern void BackendDeviceGetPropsCore(nint deviceHandle, out GgmlBackendDevicePropertiesNative properties);
+
+    [LibraryImport(GgmlBaseLibraryName, EntryPoint = "ggml_backend_dev_backend_reg")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial nint BackendDeviceBackendReg(nint deviceHandle);
+
+    [LibraryImport(GgmlBaseLibraryName, EntryPoint = "ggml_backend_reg_name")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    private static partial nint BackendRegNameCore(nint backendRegHandle);
 
     [DllImport(LibraryName, EntryPoint = "llama_model_default_params")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
@@ -168,7 +193,68 @@ internal static partial class LlamaNativeMethods
             MemoryClear(memoryHandle, data: true);
         }
     }
+
+    internal static string? GetBackendRegName(nint backendRegHandle)
+        => PtrToStringUtf8(BackendRegNameCore(backendRegHandle));
+
+    internal static GgmlBackendDeviceProperties GetBackendDeviceProperties(nint deviceHandle)
+    {
+        BackendDeviceGetPropsCore(deviceHandle, out var nativeProperties);
+
+        return new GgmlBackendDeviceProperties(
+            PtrToStringUtf8(nativeProperties.name),
+            PtrToStringUtf8(nativeProperties.description),
+            (ulong)nativeProperties.memory_total,
+            PtrToStringUtf8(nativeProperties.device_id),
+            nativeProperties.type);
+    }
+
+    private static string? PtrToStringUtf8(nint value)
+        => value == nint.Zero ? null : Marshal.PtrToStringUTF8(value);
 }
+
+internal enum GgmlBackendDeviceType
+{
+    Cpu = 0,
+    Gpu = 1,
+    IntegratedGpu = 2,
+    Accelerator = 3
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct GgmlBackendDeviceCapabilities
+{
+    [MarshalAs(UnmanagedType.I1)]
+    public bool @async;
+
+    [MarshalAs(UnmanagedType.I1)]
+    public bool host_buffer;
+
+    [MarshalAs(UnmanagedType.I1)]
+    public bool buffer_from_host_ptr;
+
+    [MarshalAs(UnmanagedType.I1)]
+    public bool events;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct GgmlBackendDevicePropertiesNative
+{
+    public nint name;
+    public nint description;
+    public nuint memory_free;
+    public nuint memory_total;
+    public GgmlBackendDeviceType type;
+    public nint device_id;
+    public GgmlBackendDeviceCapabilities caps;
+}
+
+internal readonly record struct GgmlBackendDeviceProperties(
+    string? Name,
+    string? Description,
+    ulong MemoryTotalBytes,
+    string? DeviceId,
+    GgmlBackendDeviceType Type);
 
 [StructLayout(LayoutKind.Sequential)]
 internal struct LlamaModelParams

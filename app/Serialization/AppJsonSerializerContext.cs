@@ -5,6 +5,7 @@ using Tomur.Api.OpenAI;
 using Tomur.Api.Ollama;
 using Tomur.Agents;
 using Tomur.Config;
+using Tomur.Hardware;
 using Tomur.Multimodal;
 using Tomur.Native;
 using Tomur.Runtime;
@@ -114,6 +115,9 @@ namespace Tomur.Serialization;
 [JsonSerializable(typeof(ConfigurationState))]
 [JsonSerializable(typeof(ServerOptions))]
 [JsonSerializable(typeof(RuntimeDiagnostic))]
+[JsonSerializable(typeof(AccelerationPlan))]
+[JsonSerializable(typeof(AcceleratorDevice))]
+[JsonSerializable(typeof(AccelerationBackendStatus))]
 [JsonSerializable(typeof(RuntimeStatusResponse))]
 [JsonSerializable(typeof(DoctorReport))]
 [JsonSerializable(typeof(NativeBundleManifest))]
