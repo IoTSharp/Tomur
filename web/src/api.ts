@@ -4,6 +4,7 @@ import type {
   InstalledModelsResponse,
   ModelCatalogResponse,
   MultimodalRuntimeStatus,
+  NativeBundlePrepareResult,
   OpenAiChatCompletionResponse,
   OpenAiErrorResponse,
   OpenAiModelListResponse,
@@ -37,6 +38,34 @@ export async function getModelCatalog(signal?: AbortSignal): Promise<ModelCatalo
 
 export async function getMultimodalStatus(signal?: AbortSignal): Promise<MultimodalRuntimeStatus> {
   return getJson<MultimodalRuntimeStatus>("/api/runtime/multimodal", signal);
+}
+
+export async function prepareNativeRuntime(signal?: AbortSignal): Promise<NativeBundlePrepareResult> {
+  const response = await fetch("/api/runtime/native/prepare", {
+    method: "POST",
+    headers: jsonHeaders,
+    signal
+  });
+
+  if (!response.ok) {
+    const errorResponse = response.clone();
+    try {
+      const data = (await response.json()) as NativeBundlePrepareResult;
+      if (data.message) {
+        return data;
+      }
+    } catch {
+      // Fall through to the common API error parser.
+    }
+
+    throw await createApiError(errorResponse);
+  }
+
+  return (await response.json()) as NativeBundlePrepareResult;
+}
+
+export async function unloadRuntimeSession(signal?: AbortSignal): Promise<RuntimeStatusResponse> {
+  return postJson<RuntimeStatusResponse>("/api/runtime/session/unload", undefined, signal);
 }
 
 export async function sendChatCompletion(
@@ -118,6 +147,21 @@ async function readOpenAiStream(
 
 async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(url, { signal });
+  if (!response.ok) {
+    throw await createApiError(response);
+  }
+
+  return (await response.json()) as T;
+}
+
+async function postJson<T>(url: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: jsonHeaders,
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal
+  });
+
   if (!response.ok) {
     throw await createApiError(response);
   }

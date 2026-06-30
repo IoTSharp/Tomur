@@ -144,6 +144,28 @@ export interface NativeComponentStatus {
   message: string;
 }
 
+export interface NativeBundlePrepareResult {
+  status: string;
+  prepared_at: string;
+  rid: string;
+  bundle_id: string;
+  version: string;
+  manifest_path: string;
+  source_runtime_root: string;
+  runtime_root: string;
+  files: NativeBundleFilePrepareResult[];
+  message: string;
+}
+
+export interface NativeBundleFilePrepareResult {
+  source_path: string;
+  destination_path: string;
+  status: string;
+  size_bytes?: number | null;
+  sha256?: string | null;
+  message: string;
+}
+
 export interface RuntimeDiagnostic {
   status: string;
   code: string;
@@ -179,6 +201,17 @@ export interface InstalledModelPackage {
   license_notice: string;
   installed_at_utc: string;
   updated_at_utc: string;
+  assets: InstalledModelAsset[];
+}
+
+export interface InstalledModelAsset {
+  path: string;
+  source_repository_id: string;
+  source_relative_path: string;
+  expected_sha256?: string | null;
+  actual_sha256?: string | null;
+  sha256_verified: boolean;
+  size_bytes: number;
 }
 
 export interface VisibleModel {
@@ -219,14 +252,41 @@ export interface ModelCatalogPackage {
   quantization?: string | null;
   license?: string | null;
   size_bytes?: number | null;
+  parameter_count?: number | null;
+  primary_file_name?: string | null;
   recommended: boolean;
   optional: boolean;
   research: boolean;
   installed: boolean;
   install_status: string;
+  minimum_memory_bytes?: number | null;
   hardware_tier: string;
   license_notice: string;
   tags: string[];
+  assets: ModelCatalogAsset[];
+  bundle_assets: ModelCatalogBundleAsset[];
+}
+
+export interface ModelCatalogAsset {
+  repository_id: string;
+  relative_path: string;
+  target_relative_path: string;
+  expected_sha256?: string | null;
+  source_kind: string;
+}
+
+export interface ModelCatalogBundleAsset {
+  asset_key: string;
+  role: string;
+  is_required: boolean;
+  relative_path: string;
+  file_name: string;
+  format?: string | null;
+  quantization?: string | null;
+  license?: string | null;
+  size_bytes?: number | null;
+  expected_sha256?: string | null;
+  description: string;
 }
 
 export interface MultimodalRuntimeStatus {
