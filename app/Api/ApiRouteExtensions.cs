@@ -3450,7 +3450,7 @@ public static class ApiRouteExtensions
             model.Name.Contains("flux.2 klein", StringComparison.OrdinalIgnoreCase) ||
             model.FileName.Contains("flux-2-klein", StringComparison.OrdinalIgnoreCase))
         {
-            return new ImageGenerationDefaults(4, 1.0f, null);
+            return new ImageGenerationDefaults(4, 1.0f, "euler");
         }
 
         return new ImageGenerationDefaults(20, 7.0f, null);

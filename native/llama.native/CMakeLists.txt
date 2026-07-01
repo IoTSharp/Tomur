@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.21)
 project(llama_native VERSION 1.0 LANGUAGES C CXX)
 
+set(TOMUR_GGML_MAX_NAME "128" CACHE STRING "Tomur ggml tensor name capacity")
+add_compile_definitions(GGML_MAX_NAME=${TOMUR_GGML_MAX_NAME})
+
 if(APPLE)
     set(CMAKE_INSTALL_RPATH "@loader_path")
 elseif(UNIX)

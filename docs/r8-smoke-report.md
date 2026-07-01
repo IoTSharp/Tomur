@@ -1,81 +1,69 @@
 # R8 Multimodal Smoke Report
 
-Date: 2026-06-28
+Date: 2026-07-02
 
-This report records the first real-model R8 smoke run for the standalone Tomur app. It is intentionally evidence-oriented: successful endpoint wiring and successful model execution are listed separately from native/runtime blockers.
+This report records the R8 real-model smoke closure for the standalone Tomur app. It keeps the earlier blockers visible, but the current verdict is based on the latest full public-interface smoke run.
 
 ## Environment
 
-- App: `Tomur/app/Tomur.csproj`
-- Data directory: `D:\source\Camel.NET\.tomur-r8-smoke`
-- Model directory: `D:\source\Camel.NET\local-models`
-- Base URL: `http://127.0.0.1:5138`
-- Result artifacts: `D:\source\Camel.NET\.tomur-r8-smoke\results`
-- Logs: `D:\source\Camel.NET\.tomur-r8-smoke\logs`
+- App: `app/Tomur.csproj`
+- Data directory: `%LOCALAPPDATA%\Tomur`
+- Base URL: `http://127.0.0.1:5140`
+- Evidence directory: `docs/r8-smoke-evidence/2026-07-02`
+- Service logs: `docs/r8-smoke-evidence/2026-07-02/serve.out.log`, `docs/r8-smoke-evidence/2026-07-02/serve.err.log`
 
 ## Models
 
-- Text/VLM smoke: `ggml-org/SmolVLM-500M-Instruct-GGUF`, `SmolVLM-500M-Instruct-Q8_0.gguf` with `mmproj-SmolVLM-500M-Instruct-Q8_0.gguf`
-- Embeddings: `ggml-org/embeddinggemma-300M-GGUF`, `embeddinggemma-300M-Q8_0.gguf`
-- ASR: `ggerganov/whisper.cpp`, `ggml-large-v3-turbo-q5_0.bin`
-- TTS: `OuteAI/OuteTTS-0.2-500M-GGUF`, `OuteTTS-0.2-500M-Q4_K_M.gguf` with WavTokenizer sidecar
-- Image generation: `unsloth/FLUX.2-klein-4B-GGUF`, `flux-2-klein-4b-Q4_K_M.gguf` with FLUX.2 VAE and Qwen3 4B text encoder sidecar
+- ASR: `whisper-large-v3-turbo-q5-0`
+- TTS: `outetts-0.2-500m-q4-k-m` with WavTokenizer sidecar
+- VLM / OCR smoke: `smolvlm-500m-instruct-q8-0` with `mmproj-SmolVLM-500M-Instruct-Q8_0.gguf`
+- Image generation: `flux-2-klein-4b-q4-k-m` with FLUX.2 VAE and Qwen3 text encoder sidecars
 
-SmolVLM is an optional low-memory smoke package. The default VLM catalog package remains Qwen3-VL 4B.
+SmolVLM is a low-memory smoke package for VLM/OCR verification. The default catalog vision package can still evolve independently.
 
 ## Build And Runtime Checks
 
-- `dotnet build Tomur/app/Tomur.csproj`: passed.
-- `cmake --build --preset windows-x64 --target install` under `Tomur/native/stable-diffusion.native`: passed after resetting the stale `build/windows-x64` intermediate directory.
-- `GET /health`: 200, 54 ms.
-- `GET /v1/models`: 200, 7 ms.
-- `GET /api/runtime/multimodal`: 200, 154 ms, all R8 backends reported `ready`.
-- `GET /api/models/installed`: 200, 3 ms.
+- `dotnet build app/Tomur.csproj`: passed, 0 warnings, 0 errors.
+- `native/llama.native` Windows x64 CPU and CUDA13 variants were rebuilt with `GGML_MAX_NAME=128`.
+- `native/stable-diffusion.native` Windows x64 CUDA13 variant was rebuilt and installed.
+- `tomur native prepare --data-dir=%LOCALAPPDATA%\Tomur`: repaired the managed runtime with the rebuilt ggml / llama DLLs.
+- `tomur doctor --data-dir=%LOCALAPPDATA%\Tomur`: native bundle `ok`, CUDA accelerator detected.
+- `GET /health`: 200.
+- `GET /v1/models`: 200, visible R8 models included ASR, TTS, VLM/OCR and image generation.
+- `GET /api/runtime/multimodal`: 200, all R8 backends reported `ready`.
 
 ## Endpoint Smoke Matrix
 
 | Area | Endpoint | Model | Status | Time | Evidence |
 | --- | --- | --- | --- | --- | --- |
-| Chat | `POST /v1/chat/completions` | `smolvlm-500m-instruct-q8-0` | 200 | 6441 ms | `chat-completions.json` |
-| Embeddings | `POST /v1/embeddings` | `embeddinggemma-300m-q8-0` | 200 | 1903 ms | vector count 1, dimensions 768 |
-| ASR | `POST /v1/audio/transcriptions` | `whisper-large-v3-turbo-q5-0` | 200 | 23185 ms | JFK sample transcript matched expected text |
-| TTS | `POST /v1/audio/speech` | `outetts-0.2-500m-q4-k-m` | 503 | 486 ms | native ABI reached, synthesis still pending |
-| VLM | `POST /v1/chat/completions` with image | `smolvlm-500m-instruct-q8-0` | 200 | 5322 ms | response contained `OK 42` |
-| OCR | `POST /api/ocr/analyze` | `smolvlm-500m-instruct-q8-0` | 200 | 3933 ms | response text `OK42` |
-| Image generation | `POST /v1/images/generations` | `flux-2-klein-4b-q4-k-m` | process crash | 14108 ms retest | native assert in stable-diffusion.cpp |
+| Runtime inventory | `GET /api/runtime/multimodal` | n/a | 200 | 1387 ms | `runtime-multimodal.response.json` |
+| ASR | `POST /v1/audio/transcriptions` | `whisper-large-v3-turbo-q5-0` | 200 | 30016 ms | `audio-transcriptions.response.json` |
+| TTS | `POST /v1/audio/speech` | `outetts-0.2-500m-q4-k-m` | 200 | 9574 ms | `audio-speech.wav`, 99244 bytes, `RIFF/WAVE` |
+| VLM chat | `POST /v1/chat/completions` with image | `smolvlm-500m-instruct-q8-0` | 200 | 7264 ms | `chat-completions-image.response.json`, text `OK42.` |
+| Vision API | `POST /api/vision/analyze` | `smolvlm-500m-instruct-q8-0` | 200 | 4852 ms | `vision-analyze.response.json`, text `OK42.` |
+| OCR | `POST /api/ocr/analyze` | `smolvlm-500m-instruct-q8-0` | 200 | 8990 ms | `ocr-analyze.response.json`, text `OK42.` |
+| Image generation | `POST /v1/images/generations` | `flux-2-klein-4b-q4-k-m` | 200 | 84566 ms | `images-generations.png`, 70659 bytes, PNG signature `89504E470D0A1A0A` |
 
 ## Findings
 
-1. Whisper ASR is now a real managed/native execution path. The smoke input was `Tomur/native/whisper.cpp/samples/jfk.wav`, and the endpoint returned:
-   `And so, my fellow Americans, ask not what your country can do for you, ask what you can do for your country.`
-2. VLM and OCR both executed through native model paths against a generated `OK 42` image.
-3. The recorded `/v1/audio/speech` smoke reached `tomur-tts`, validated the OuteTTS and WavTokenizer bundle, and returned a structured OpenAI-style error because synthesis was still pending at that time. Post-smoke code now connects this path to the llama.cpp `tools/tts` adapter as described below.
-4. `/v1/images/generations` reaches stable-diffusion.cpp but crashes the Tomur process with:
-   `D:\source\Camel.NET\Tomur\native\stable-diffusion.cpp\src\conditioning/conditioner.hpp:1671: GGML_ASSERT(!hidden_states.empty()) failed`
-5. The stable-diffusion native bridge now forwards `backend` and `params_backend` to the current stable-diffusion.cpp C API, but the recorded FLUX.2 klein smoke still failed with the same conditioner assert after rebuilding the Windows CPU runtime.
+1. Whisper ASR executed through the native adapter against `native/whisper.cpp/samples/jfk.wav` and returned the JFK sample transcript.
+2. TTS executed through the OuteTTS + WavTokenizer native route and returned a WAV payload with a valid `RIFF/WAVE` header.
+3. VLM chat, `/api/vision/analyze` and `/api/ocr/analyze` executed against a generated `OK42` PNG and returned `OK42.`.
+4. `/v1/images/generations` executed FLUX.2 klein through the isolated stable-diffusion.cpp image worker and returned a valid PNG from OpenAI-compatible `b64_json`.
+5. The previous FLUX.2 blocker was traced to shared ggml tensor-name capacity mismatch: stable-diffusion.cpp required `GGML_MAX_NAME=128`, while the shared llama.native ggml runtime had been built with the smaller default. Rebuilding shared ggml / llama with `GGML_MAX_NAME=128`, then rebuilding stable-diffusion CUDA13 and preparing the managed runtime, closed the blocker.
 
 ## Current R8 Verdict
 
-R8 is partially smoke-validated, not complete.
+R8 is smoke-validated and complete for the current backend/API scope.
 
-Post-smoke code update:
+Completion evidence:
 
-- `/v1/images/generations` now calls stable-diffusion.cpp from an internal image worker subprocess. A native assert, timeout, missing worker response, or worker crash is mapped back to a structured `InferenceException` so the main Tomur service process can continue serving text, ASR, OCR and VLM requests.
-- The stable-diffusion bridge now resolves upstream default sampler/scheduler values, forwards finite `distilled_guidance` and `flow_shift`, and releases generated images with `free_sd_images`. The OpenAI image endpoint applies FLUX.2 klein defaults of `steps=4` and `cfg_scale=1.0`; when the caller does not provide sampler or scheduler overrides, Tomur leaves them on the upstream auto/default path to match the previously successful upper-layer direct image test.
-- The stable-diffusion native bridge now writes Tomur-prefixed stderr diagnostics before context creation and image generation, including upstream version/commit, sidecar argument presence, backend assignments, size, steps, CFG, seed, sampler and scheduler. This keeps the vendored stable-diffusion.cpp source unchanged while improving the next smoke failure log.
-- These code updates do not change the recorded FLUX.2 result above because this report has not been rerun. The FLUX.2 klein path still needs a successful small-image smoke before image generation can be marked complete.
-- `/v1/audio/speech` has since been connected to the llama.cpp `tools/tts` path in `tomur-tts`: OuteTTS generates audio code tokens, WavTokenizer produces embeddings, and the managed adapter returns WAV. This report has not been rerun yet, so the TTS row above remains historical smoke evidence until a new WAV success run is recorded.
+- Every public R8 endpoint has at least one real-model smoke result in `docs/r8-smoke-evidence/2026-07-02/smoke-summary.json`.
+- Generated artifacts were checked for real binary signatures: `audio-speech.wav` has `RIFF/WAVE`, and `images-generations.png` has the PNG signature.
+- Image generation remains isolated in a worker subprocess, so native assert or worker crash failures return structured diagnostics without taking down the main Tomur service.
+- The R8 completion claim is limited to local backend adapters, public HTTP APIs, diagnostics and the existing Runtime UI diagnostic surface. It does not claim model-autonomous multimodal tool-calling, full attachment UX, file RAG, or release-grade cross-platform bundle validation.
 
-Passing real-model paths:
+Historical blocker evidence:
 
-- Health/model/runtime inventory
-- OpenAI chat success response
-- OpenAI embeddings success response
-- OpenAI audio transcription success response
-- VLM image chat success response
-- OCR analyze success response
-
-Blocking paths:
-
-- OpenAI audio speech: post-smoke code now contains the real TTS adapter, but a successful WAV smoke is still outstanding.
-- OpenAI image generation: post-smoke code now contains the worker isolation, native bridge default fixes, FLUX.2 klein request defaults, and bridge-level stderr diagnostics, but a successful image smoke is still outstanding.
+- `docs/r8-smoke-evidence/2026-07-01/images-generations-response.json` records the previous FLUX.2 worker crash.
+- The previous diagnostic included truncated tensor name `post_attention_layernorm.weigh` and `GGML_ASSERT(!hidden_states.empty())`, which is consistent with the ggml name-capacity mismatch fixed before the 2026-07-02 pass.
