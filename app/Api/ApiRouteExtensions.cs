@@ -10,6 +10,7 @@ using Tomur.Api.Models;
 using Tomur.Api.Ollama;
 using Tomur.Api.OpenAI;
 using Tomur.Config;
+using Tomur.Conversations;
 using Tomur.Hardware;
 using Tomur.Inference;
 using Tomur.Models;
@@ -95,6 +96,25 @@ public static class ApiRouteExtensions
         app.MapPost("/api/agents/chat", HandleAgentChatAsync);
         app.MapPost("/api/agents/workflows/read-only", HandleAgentReadOnlyWorkflowAsync);
         app.MapPost("/api/agents/tools/invoke", HandleAgentToolInvokeAsync);
+
+        app.MapGet("/api/conversations", static async (HttpContext context, ConversationStore conversations) =>
+        {
+            int? limit = null;
+            if (context.Request.Query.TryGetValue("limit", out var limitValues) &&
+                int.TryParse(limitValues.FirstOrDefault(), out var parsedLimit))
+            {
+                limit = parsedLimit;
+            }
+
+            var response = conversations.List(limit);
+            await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.ConversationListResponse);
+        });
+
+        app.MapPost("/api/conversations", HandleConversationCreateAsync);
+        app.MapGet("/api/conversations/{conversationId}", HandleConversationGetAsync);
+        app.MapPost("/api/conversations/{conversationId}/messages", HandleConversationAppendMessageAsync);
+        app.MapPost("/api/conversations/{conversationId}/artifacts", HandleConversationRegisterArtifactAsync);
+        app.MapPost("/api/conversations/{conversationId}/diagnostics", HandleConversationAppendDiagnosticAsync);
 
         app.MapGet("/api/models/catalog", static async (HttpContext context, DataPaths paths, HardwareAccelerationService accelerationService) =>
         {
@@ -194,6 +214,12 @@ public static class ApiRouteExtensions
                     "POST /api/agents/chat",
                     "POST /api/agents/workflows/read-only",
                     "POST /api/agents/tools/invoke",
+                    "/api/conversations",
+                    "POST /api/conversations",
+                    "/api/conversations/{conversationId}",
+                    "POST /api/conversations/{conversationId}/messages",
+                    "POST /api/conversations/{conversationId}/artifacts",
+                    "POST /api/conversations/{conversationId}/diagnostics",
                     "/api/models/catalog",
                     "/api/models/installed",
                     "POST /api/runtime/native/prepare",
@@ -461,6 +487,129 @@ public static class ApiRouteExtensions
                 null,
                 diagnostic,
                 StatusCodes.Status400BadRequest);
+        }
+    }
+
+    private static async Task HandleConversationCreateAsync(
+        HttpContext context,
+        ConversationStore conversations)
+    {
+        var request = await ReadConversationRequestAsync(
+            context,
+            AppJsonSerializerContext.Default.ConversationCreateRequest);
+        if (request is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var conversation = conversations.Create(request);
+            var response = new ConversationCreateResponse("ok", conversation);
+            await JsonHttpResponse.WriteAsync(
+                context,
+                response,
+                AppJsonSerializerContext.Default.ConversationCreateResponse,
+                StatusCodes.Status201Created);
+        }
+        catch (ConversationStoreException exception)
+        {
+            await WriteConversationErrorAsync(context, exception);
+        }
+    }
+
+    private static async Task HandleConversationGetAsync(
+        HttpContext context,
+        ConversationStore conversations,
+        string conversationId)
+    {
+        int? limit = null;
+        if (context.Request.Query.TryGetValue("limit", out var limitValues) &&
+            int.TryParse(limitValues.FirstOrDefault(), out var parsedLimit))
+        {
+            limit = parsedLimit;
+        }
+
+        try
+        {
+            var response = conversations.Get(conversationId, limit);
+            await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.ConversationDetailResponse);
+        }
+        catch (ConversationStoreException exception)
+        {
+            await WriteConversationErrorAsync(context, exception);
+        }
+    }
+
+    private static async Task HandleConversationAppendMessageAsync(
+        HttpContext context,
+        ConversationStore conversations,
+        string conversationId)
+    {
+        var request = await ReadConversationRequestAsync(
+            context,
+            AppJsonSerializerContext.Default.ConversationAppendMessageRequest);
+        if (request is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var response = conversations.AppendMessage(conversationId, request);
+            await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.ConversationAppendMessageResponse);
+        }
+        catch (ConversationStoreException exception)
+        {
+            await WriteConversationErrorAsync(context, exception);
+        }
+    }
+
+    private static async Task HandleConversationRegisterArtifactAsync(
+        HttpContext context,
+        ConversationStore conversations,
+        string conversationId)
+    {
+        var request = await ReadConversationRequestAsync(
+            context,
+            AppJsonSerializerContext.Default.ConversationRegisterArtifactRequest);
+        if (request is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var response = conversations.RegisterArtifact(conversationId, request);
+            await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.ConversationRegisterArtifactResponse);
+        }
+        catch (ConversationStoreException exception)
+        {
+            await WriteConversationErrorAsync(context, exception);
+        }
+    }
+
+    private static async Task HandleConversationAppendDiagnosticAsync(
+        HttpContext context,
+        ConversationStore conversations,
+        string conversationId)
+    {
+        var request = await ReadConversationRequestAsync(
+            context,
+            AppJsonSerializerContext.Default.ConversationAppendDiagnosticRequest);
+        if (request is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var response = conversations.AppendDiagnostic(conversationId, request);
+            await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.ConversationAppendDiagnosticResponse);
+        }
+        catch (ConversationStoreException exception)
+        {
+            await WriteConversationErrorAsync(context, exception);
         }
     }
 
@@ -1594,6 +1743,44 @@ public static class ApiRouteExtensions
         }
     }
 
+    private static async Task<T?> ReadConversationRequestAsync<T>(
+        HttpContext context,
+        System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> jsonTypeInfo)
+    {
+        try
+        {
+            var request = await JsonSerializer.DeserializeAsync(
+                context.Request.Body,
+                jsonTypeInfo,
+                context.RequestAborted);
+
+            if (request is not null)
+            {
+                return request;
+            }
+
+            await WriteConversationErrorAsync(
+                context,
+                new ConversationStoreException(
+                    "error",
+                    "invalid_request",
+                    "Request body is required.",
+                    ["Provide a JSON request body."]));
+            return default;
+        }
+        catch (JsonException exception)
+        {
+            await WriteConversationErrorAsync(
+                context,
+                new ConversationStoreException(
+                    "error",
+                    "invalid_request",
+                    $"Invalid JSON request body: {exception.Message}",
+                    ["Provide valid JSON."]));
+            return default;
+        }
+    }
+
     private static async Task<T?> ReadOllamaRequestAsync<T>(
         HttpContext context,
         System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> jsonTypeInfo)
@@ -1917,6 +2104,27 @@ public static class ApiRouteExtensions
             context,
             response,
             AppJsonSerializerContext.Default.AgentErrorResponse,
+            statusCode);
+    }
+
+    private static async Task WriteConversationErrorAsync(
+        HttpContext context,
+        ConversationStoreException exception)
+    {
+        var diagnostic = new RuntimeDiagnostic(
+            exception.Status,
+            exception.Code,
+            exception.Message,
+            null,
+            exception.Actions);
+        var statusCode = exception.Code == "conversation_not_found"
+            ? StatusCodes.Status404NotFound
+            : StatusCodes.Status400BadRequest;
+
+        await JsonHttpResponse.WriteAsync(
+            context,
+            diagnostic,
+            AppJsonSerializerContext.Default.RuntimeDiagnostic,
             statusCode);
     }
 

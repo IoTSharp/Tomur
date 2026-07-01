@@ -73,6 +73,9 @@ public sealed class LocalDatabaseInitializer
 
         var connection = new SqliteConnection(builder.ToString());
         connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA foreign_keys = ON;";
+        command.ExecuteNonQuery();
         return connection;
     }
 
@@ -82,6 +85,7 @@ public sealed class LocalDatabaseInitializer
         command.CommandText =
             """
             PRAGMA journal_mode = WAL;
+            PRAGMA foreign_keys = ON;
 
             CREATE TABLE IF NOT EXISTS metadata (
                 key TEXT PRIMARY KEY NOT NULL,
@@ -104,6 +108,73 @@ public sealed class LocalDatabaseInitializer
 
             CREATE INDEX IF NOT EXISTS ix_api_keys_active
             ON api_keys(revoked_at, created_at);
+
+            CREATE TABLE IF NOT EXISTS conversations (
+                id TEXT PRIMARY KEY NOT NULL,
+                title TEXT NOT NULL,
+                status TEXT NOT NULL,
+                model TEXT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                last_message_at TEXT NULL,
+                metadata_json TEXT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS ix_conversations_updated_at
+            ON conversations(status, updated_at DESC);
+
+            CREATE TABLE IF NOT EXISTS conversation_messages (
+                id TEXT PRIMARY KEY NOT NULL,
+                conversation_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                modality TEXT NOT NULL,
+                status TEXT NOT NULL,
+                model TEXT NULL,
+                created_at TEXT NOT NULL,
+                attachments_json TEXT NOT NULL,
+                tool_calls_json TEXT NOT NULL,
+                artifact_ids_json TEXT NOT NULL,
+                metadata_json TEXT NULL,
+                FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS ix_conversation_messages_conversation
+            ON conversation_messages(conversation_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS conversation_artifacts (
+                id TEXT PRIMARY KEY NOT NULL,
+                conversation_id TEXT NOT NULL,
+                type TEXT NOT NULL,
+                path TEXT NULL,
+                media_type TEXT NULL,
+                source TEXT NULL,
+                status TEXT NOT NULL,
+                bytes INTEGER NULL,
+                created_at TEXT NOT NULL,
+                metadata_json TEXT NULL,
+                FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS ix_conversation_artifacts_conversation
+            ON conversation_artifacts(conversation_id, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS conversation_diagnostics (
+                id TEXT PRIMARY KEY NOT NULL,
+                conversation_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                code TEXT NOT NULL,
+                message TEXT NOT NULL,
+                model TEXT NULL,
+                backend TEXT NULL,
+                created_at TEXT NOT NULL,
+                actions_json TEXT NOT NULL,
+                metadata_json TEXT NULL,
+                FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS ix_conversation_diagnostics_conversation
+            ON conversation_diagnostics(conversation_id, created_at DESC);
             """;
         command.Parameters.AddWithValue("$schema_version", Defaults.DatabaseSchemaVersion.ToString(CultureInfo.InvariantCulture));
         command.ExecuteNonQuery();

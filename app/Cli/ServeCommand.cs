@@ -12,6 +12,7 @@ using Microsoft.Extensions.Hosting.WindowsServices;
 using Tomur.Api;
 using Tomur.Agents;
 using Tomur.Config;
+using Tomur.Conversations;
 using Tomur.Hardware;
 using Tomur.Inference;
 using Tomur.Multimodal;
@@ -19,6 +20,7 @@ using Tomur.Native;
 using Tomur.Runtime;
 using Tomur.Serialization;
 using Tomur.Services;
+using Tomur.Storage;
 
 namespace Tomur.Cli;
 
@@ -128,6 +130,8 @@ internal static class ServeCommand
         builder.Services.AddSingleton(state.Paths);
         builder.Services.AddSingleton(state.ServerOptions);
         builder.Services.AddSingleton(state.ConfigurationStore);
+        builder.Services.AddSingleton<LocalDatabaseInitializer>();
+        builder.Services.AddSingleton<ConversationStore>();
         builder.Services.AddSingleton<INativeBundleProbe>(state.NativeBundleProbe);
         builder.Services.AddSingleton<INativeBundlePreparer, NativeBundlePreparer>();
         builder.Services.AddSingleton<INativeLibraryResolver>(provider =>

@@ -5,6 +5,7 @@ using Tomur.Api.OpenAI;
 using Tomur.Api.Ollama;
 using Tomur.Agents;
 using Tomur.Config;
+using Tomur.Conversations;
 using Tomur.Hardware;
 using Tomur.Multimodal;
 using Tomur.Native;
@@ -93,6 +94,24 @@ namespace Tomur.Serialization;
 [JsonSerializable(typeof(AgentErrorResponse))]
 [JsonSerializable(typeof(AgentEventLogRecentResponse))]
 [JsonSerializable(typeof(AgentEventLogEntry))]
+[JsonSerializable(typeof(ConversationListResponse))]
+[JsonSerializable(typeof(ConversationDetailResponse))]
+[JsonSerializable(typeof(ConversationCreateRequest))]
+[JsonSerializable(typeof(ConversationCreateResponse))]
+[JsonSerializable(typeof(ConversationAppendMessageRequest))]
+[JsonSerializable(typeof(ConversationAppendMessageResponse))]
+[JsonSerializable(typeof(ConversationRegisterArtifactRequest))]
+[JsonSerializable(typeof(ConversationRegisterArtifactResponse))]
+[JsonSerializable(typeof(ConversationAppendDiagnosticRequest))]
+[JsonSerializable(typeof(ConversationAppendDiagnosticResponse))]
+[JsonSerializable(typeof(ConversationRecord))]
+[JsonSerializable(typeof(ConversationMessageRecord))]
+[JsonSerializable(typeof(ConversationArtifactRecord))]
+[JsonSerializable(typeof(ConversationDiagnosticRecord))]
+[JsonSerializable(typeof(ConversationAttachment))]
+[JsonSerializable(typeof(ConversationToolCall))]
+[JsonSerializable(typeof(ConversationAttachment[]))]
+[JsonSerializable(typeof(ConversationToolCall[]))]
 [JsonSerializable(typeof(string))]
 [JsonSerializable(typeof(string[]))]
 [JsonSerializable(typeof(ModelCatalogResponse))]
