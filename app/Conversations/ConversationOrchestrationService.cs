@@ -1,9 +1,13 @@
 using System.Globalization;
+using System.Text;
+using System.Text.Json;
 using Tomur.Config;
 using Tomur.Agents;
+using Tomur.Api;
 using Tomur.Inference;
 using Tomur.Multimodal;
 using Tomur.Runtime;
+using Tomur.Serialization;
 
 namespace Tomur.Conversations;
 
@@ -14,6 +18,7 @@ public sealed class ConversationOrchestrationService
     private const int HttpBadRequest = 400;
     private const int HttpNotFound = 404;
     private const int HttpServiceUnavailable = 503;
+    private const int DefaultMaxToolRounds = 4;
     private readonly ConversationStore conversations;
     private readonly AgentRuntimeService agentRuntime;
     private readonly ToolInvoker toolInvoker;
@@ -52,49 +57,118 @@ public sealed class ConversationOrchestrationService
         ArgumentNullException.ThrowIfNull(request);
 
         var content = NormalizeContent(request.Content);
-        if (content is null)
+        var attachments = request.Attachments ?? [];
+        if (content is null && attachments.Count == 0)
         {
             throw new ConversationStoreException(
                 "error",
                 "invalid_request",
-                "Conversation turns require text content in the current R10 boundary.",
+                "Conversation turns require text content or at least one local attachment.",
                 [
                     "Send text content for this turn.",
-                    "Use POST /api/conversations/{conversationId}/messages to persist attachment-only messages until multimodal turn orchestration is wired."
+                    "Attach an image, audio recording or local file reference when using multimodal turn orchestration."
                 ]);
         }
+
+        var diagnostics = new List<ConversationDiagnosticRecord>();
+        var artifacts = new List<ConversationArtifactRecord>();
+        var attachmentPreparation = await PrepareAttachmentsAsync(
+                conversationId,
+                attachments,
+                cancellationToken)
+            .ConfigureAwait(false);
+        diagnostics.AddRange(attachmentPreparation.Diagnostics);
+        artifacts.AddRange(attachmentPreparation.Artifacts);
 
         var userAppend = conversations.AppendMessage(
             conversationId,
             new ConversationAppendMessageRequest(
                 "user",
-                content,
+                content ?? BuildAttachmentOnlyContent(attachmentPreparation.NormalizedAttachments),
                 NormalizeModality(request.Modality),
                 "ok",
                 request.Model,
-                request.Attachments,
+                attachmentPreparation.NormalizedAttachments,
                 null,
-                null,
+                artifacts.Select(static artifact => artifact.Id).ToArray(),
                 request.Metadata));
         var messages = new List<ConversationMessageRecord>
         {
             userAppend.Message
         };
-        var diagnostics = new List<ConversationDiagnosticRecord>();
         var model = request.Model ?? userAppend.Message.Model ?? userAppend.Conversation.Model;
         var toolMode = ResolveToolModeForAudit(request.ToolMode, request.Tools);
+        var plannedTools = new List<AgentChatToolRequest>();
+        var planningText = content ?? string.Empty;
 
         try
         {
+            plannedTools.AddRange(attachmentPreparation.Tools);
+
+            plannedTools.AddRange(PlanTurnTools(
+                request,
+                planningText,
+                attachmentPreparation.NormalizedAttachments));
+
+            var maxToolRounds = Math.Clamp(
+                request.MaxToolRounds ?? DefaultMaxToolRounds,
+                1,
+                DefaultMaxToolRounds);
+            var requestedToolCount = (request.Tools?.Count ?? 0) + plannedTools.Count;
+            if (requestedToolCount > maxToolRounds)
+            {
+                diagnostics.Add(AppendRuntimeDiagnostic(
+                    conversationId,
+                    new RuntimeDiagnostic(
+                        "warning",
+                        "tool_round_limit_applied",
+                        $"This turn planned {requestedToolCount} tool calls, but only {maxToolRounds} can run in the current local boundary.",
+                        model,
+                        ["Reduce attachments or set max_tool_rounds up to the local limit of 4."])));
+            }
+
+            var effectiveToolMode = ResolveEffectiveToolMode(request.ToolMode, request.Tools, plannedTools);
+            var effectiveTools = MergeToolRequests(request.Tools, plannedTools, maxToolRounds);
+            if (content is null && (effectiveTools is null || effectiveTools.Count == 0))
+            {
+                IReadOnlyList<ConversationDiagnosticRecord> responseDiagnostics = diagnostics.Count == 0
+                    ? new[]
+                    {
+                        AppendRuntimeDiagnostic(
+                            conversationId,
+                            new RuntimeDiagnostic(
+                                "error",
+                                "attachment_processing_unavailable",
+                                "No attachment could be prepared for this conversation turn.",
+                                model,
+                                ["Send a valid image, audio or local file attachment, or include text content."]))
+                    }
+                    : diagnostics;
+                var response = new ConversationTurnResponse(
+                    "error",
+                    userAppend.Conversation,
+                    messages,
+                    userAppend.Message,
+                    null,
+                    null,
+                    responseDiagnostics,
+                    artifacts,
+                    null,
+                    null,
+                    null,
+                    null);
+                return new ConversationTurnResult(response, HttpBadRequest);
+            }
+
             var recentMessages = conversations.ListRecentMessages(conversationId, request.HistoryLimit);
             var agentRequest = new AgentChatRequest(
                 model,
                 null,
                 BuildAgentMessages(recentMessages),
                 null,
-                request.ToolMode,
-                request.Tools,
-                request.MaxToolRounds,
+                effectiveToolMode,
+                effectiveTools,
+                ResolveMaxToolRounds(request.MaxToolRounds, effectiveTools),
                 request.Instructions,
                 request.MaxTokens,
                 request.Temperature,
@@ -123,6 +197,12 @@ public sealed class ConversationOrchestrationService
                 messages.Add(toolAppend.Message);
             }
 
+            var toolArtifacts = RegisterToolArtifacts(conversationId, agentResponse.ToolCalls);
+            foreach (var artifact in toolArtifacts)
+            {
+                artifacts.Add(artifact);
+            }
+
             ConversationAppendMessageResponse? assistantAppend = null;
             if (!string.IsNullOrWhiteSpace(agentResponse.Text))
             {
@@ -136,7 +216,7 @@ public sealed class ConversationOrchestrationService
                         agentResponse.Model,
                         null,
                         null,
-                        null,
+                        ResolveMessageArtifactIds(agentResponse.ToolCalls, toolArtifacts),
                         null));
                 messages.Add(assistantAppend.Message);
             }
@@ -156,6 +236,45 @@ public sealed class ConversationOrchestrationService
                 diagnostics.Add(diagnosticAppend.Diagnostic);
             }
 
+            foreach (var diagnostic in AppendFailedToolDiagnostics(conversationId, agentResponse))
+            {
+                diagnostics.Add(diagnostic);
+            }
+
+            ConversationArtifactRecord? speechArtifact = null;
+            string? speechMediaType = null;
+            long? speechBytes = null;
+            if (IsSpeechRequested(request, content) && request.Confirm != true)
+            {
+                diagnostics.Add(AppendRuntimeDiagnostic(
+                    conversationId,
+                    new RuntimeDiagnostic(
+                        "warning",
+                        "tool_requires_confirmation",
+                        "Conversation speech output generates a local audio artifact and requires confirm=true.",
+                        request.TtsModel,
+                        ["Set confirm=true when the user explicitly approves local speech synthesis."])));
+            }
+
+            if (ShouldSpeak(request, content, agentResponse.ToolCalls) &&
+                assistantAppend is not null &&
+                !string.IsNullOrWhiteSpace(assistantAppend.Message.Content))
+            {
+                var speech = TrySynthesizeTurnSpeech(
+                    conversationId,
+                    request,
+                    assistantAppend.Message.Content,
+                    diagnostics,
+                    cancellationToken);
+                speechArtifact = speech.Artifact;
+                speechMediaType = speech.MediaType;
+                speechBytes = speech.Bytes;
+                if (speech.Artifact is not null)
+                {
+                    artifacts.Add(speech.Artifact);
+                }
+            }
+
             var conversation = assistantAppend?.Conversation
                 ?? toolAppend?.Conversation
                 ?? userAppend.Conversation;
@@ -167,6 +286,10 @@ public sealed class ConversationOrchestrationService
                 toolAppend?.Message,
                 assistantAppend?.Message,
                 diagnostics,
+                artifacts,
+                speechArtifact,
+                speechMediaType,
+                speechBytes,
                 agentResponse);
 
             return new ConversationTurnResult(response, HttpOk);
@@ -184,6 +307,8 @@ public sealed class ConversationOrchestrationService
                     toolMode,
                     diagnosticsProvider.GetRuntimeFailure(model, exception),
                     ResolveInferenceStatusCode(exception),
+                    diagnostics,
+                    artifacts,
                     cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -204,6 +329,8 @@ public sealed class ConversationOrchestrationService
                     toolMode,
                     diagnosticsProvider.GetRuntimeFailure(model, runtimeException),
                     HttpServiceUnavailable,
+                    diagnostics,
+                    artifacts,
                     cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -358,7 +485,7 @@ public sealed class ConversationOrchestrationService
             [
                 new ConversationAttachment(
                     inputArtifact.Id,
-                    "audio",
+                    "artifact",
                     NormalizeOptional(audioName) ?? NormalizeOptional(request.AudioName),
                     inputArtifact.MediaType,
                     inputArtifact.Path,
@@ -373,7 +500,14 @@ public sealed class ConversationOrchestrationService
             request.Temperature,
             request.TopP,
             request.HistoryLimit,
-            request.Metadata);
+            request.Metadata,
+            Confirm: request.Speak ?? true,
+            Speak: false,
+            Voice: request.Voice,
+            TtsModel: request.TtsModel,
+            ResponseFormat: request.ResponseFormat,
+            Speed: request.Speed,
+            Language: request.Language);
 
         var turnResult = await RunTurnAsync(conversationId, turnRequest, cancellationToken)
             .ConfigureAwait(false);
@@ -595,6 +729,8 @@ public sealed class ConversationOrchestrationService
         string toolMode,
         RuntimeDiagnostic diagnostic,
         int statusCode,
+        IReadOnlyList<ConversationDiagnosticRecord> previousDiagnostics,
+        IReadOnlyList<ConversationArtifactRecord> artifacts,
         CancellationToken cancellationToken)
     {
         var diagnosticAppend = conversations.AppendDiagnostic(
@@ -617,6 +753,9 @@ public sealed class ConversationOrchestrationService
                 cancellationToken)
             .ConfigureAwait(false);
 
+        var responseDiagnostics = previousDiagnostics
+            .Append(diagnosticAppend.Diagnostic)
+            .ToArray();
         var response = new ConversationTurnResponse(
             "error",
             diagnosticAppend.Conversation,
@@ -624,7 +763,11 @@ public sealed class ConversationOrchestrationService
             userAppend.Message,
             null,
             null,
-            [diagnosticAppend.Diagnostic],
+            responseDiagnostics,
+            artifacts,
+            null,
+            null,
+            null,
             null);
         return new ConversationTurnResult(response, statusCode);
     }
@@ -746,6 +889,426 @@ public sealed class ConversationOrchestrationService
             .Diagnostic;
     }
 
+    private async Task<PreparedAttachmentPlan> PrepareAttachmentsAsync(
+        string conversationId,
+        IReadOnlyList<ConversationAttachment> attachments,
+        CancellationToken cancellationToken)
+    {
+        var normalized = new List<ConversationAttachment>(attachments.Count);
+        var artifacts = new List<ConversationArtifactRecord>();
+        var diagnostics = new List<ConversationDiagnosticRecord>();
+        var tools = new List<AgentChatToolRequest>();
+        _ = conversations.Get(conversationId, 1);
+
+        foreach (var attachment in attachments)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var kind = NormalizeAttachmentType(attachment);
+            switch (kind)
+            {
+                case "image":
+                    PrepareImageAttachment(conversationId, attachment, normalized, artifacts, diagnostics, tools);
+                    break;
+                case "audio":
+                    PrepareAudioAttachment(conversationId, attachment, normalized, artifacts, diagnostics, tools);
+                    break;
+                case "file":
+                    PrepareFileAttachment(conversationId, attachment, normalized, artifacts, diagnostics, tools);
+                    break;
+                case "reference":
+                    normalized.Add(attachment);
+                    break;
+                default:
+                    normalized.Add(attachment);
+                    diagnostics.Add(AppendRuntimeDiagnostic(
+                        conversationId,
+                        new RuntimeDiagnostic(
+                            "warning",
+                            "attachment_type_unsupported",
+                            $"Attachment type '{kind}' is recorded but not orchestrated in this R10 boundary.",
+                            null,
+                            ["Use type image, audio or file for conversation turn orchestration."])));
+                    break;
+            }
+        }
+
+        await Task.CompletedTask.ConfigureAwait(false);
+        return new PreparedAttachmentPlan(normalized, artifacts, diagnostics, tools);
+    }
+
+    private void PrepareImageAttachment(
+        string conversationId,
+        ConversationAttachment attachment,
+        List<ConversationAttachment> normalized,
+        List<ConversationArtifactRecord> artifacts,
+        List<ConversationDiagnosticRecord> diagnostics,
+        List<AgentChatToolRequest> tools)
+    {
+        if (!TryResolveAttachmentBytes(
+                attachment,
+                fallbackMediaType: "image/png",
+                maxBytes: CompatibilityProtocolLimits.MaxImageBytes,
+                out var bytes,
+                out var mediaType,
+                out var diagnostic))
+        {
+            diagnostics.Add(AppendRuntimeDiagnostic(conversationId, diagnostic!));
+            normalized.Add(attachment);
+            return;
+        }
+
+        if (!TryRegisterBinaryArtifact(
+                conversationId,
+                bytes,
+                mediaType ?? "image/png",
+                attachment.Name ?? "image.png",
+                "image",
+                "conversation.attachment.image",
+                "image",
+                out var artifact,
+                out var writeDiagnostic))
+        {
+            diagnostics.Add(AppendRuntimeDiagnostic(conversationId, writeDiagnostic!));
+            normalized.Add(attachment);
+            return;
+        }
+
+        artifact = artifact!;
+        artifacts.Add(artifact);
+        normalized.Add(ToAttachment(attachment, artifact));
+        tools.Add(new AgentChatToolRequest(
+            ShouldUseOcr(attachment)
+                ? "ocr.recognize"
+                : "vision.analyze",
+            ShouldUseOcr(attachment)
+                ? CreateOcrArguments(attachment, artifact, bytes, mediaType)
+                : CreateVisionArguments(attachment, artifact, bytes, mediaType)));
+    }
+
+    private void PrepareAudioAttachment(
+        string conversationId,
+        ConversationAttachment attachment,
+        List<ConversationAttachment> normalized,
+        List<ConversationArtifactRecord> artifacts,
+        List<ConversationDiagnosticRecord> diagnostics,
+        List<AgentChatToolRequest> tools)
+    {
+        if (!TryResolveAttachmentBytes(
+                attachment,
+                fallbackMediaType: "audio/wav",
+                maxBytes: CompatibilityProtocolLimits.MaxAudioBytes,
+                out var bytes,
+                out var mediaType,
+                out var diagnostic))
+        {
+            diagnostics.Add(AppendRuntimeDiagnostic(conversationId, diagnostic!));
+            normalized.Add(attachment);
+            return;
+        }
+
+        if (!TryRegisterBinaryArtifact(
+                conversationId,
+                bytes,
+                mediaType ?? "audio/wav",
+                attachment.Name ?? "audio.wav",
+                "audio",
+                "conversation.attachment.audio",
+                "audio",
+                out var artifact,
+                out var writeDiagnostic))
+        {
+            diagnostics.Add(AppendRuntimeDiagnostic(conversationId, writeDiagnostic!));
+            normalized.Add(attachment);
+            return;
+        }
+
+        artifact = artifact!;
+        artifacts.Add(artifact);
+        normalized.Add(ToAttachment(attachment, artifact));
+        tools.Add(new AgentChatToolRequest(
+            "audio.transcribe",
+            CreateAudioTranscriptionArguments(attachment, bytes, mediaType)));
+    }
+
+    private void PrepareFileAttachment(
+        string conversationId,
+        ConversationAttachment attachment,
+        List<ConversationAttachment> normalized,
+        List<ConversationArtifactRecord> artifacts,
+        List<ConversationDiagnosticRecord> diagnostics,
+        List<AgentChatToolRequest> tools)
+    {
+        var filesRoot = Path.GetFullPath(Path.Combine(paths.DataDirectory, "files"));
+        Directory.CreateDirectory(filesRoot);
+        var path = NormalizeOptional(attachment.Path);
+        var inlineText = NormalizeOptional(attachment.Text) ?? NormalizeOptional(attachment.Content);
+        if (!string.IsNullOrWhiteSpace(inlineText))
+        {
+            var bytes = Encoding.UTF8.GetBytes(inlineText);
+            if (!TryRegisterBinaryArtifact(
+                    conversationId,
+                    bytes,
+                    attachment.MediaType ?? "text/plain",
+                    attachment.Name ?? "attachment.txt",
+                    "file",
+                    "conversation.attachment.file",
+                    "file",
+                    out var artifact,
+                    out var writeDiagnostic))
+            {
+                diagnostics.Add(AppendRuntimeDiagnostic(conversationId, writeDiagnostic!));
+                normalized.Add(attachment);
+                return;
+            }
+
+            artifact = artifact!;
+            artifacts.Add(artifact);
+            normalized.Add(ToAttachment(attachment, artifact));
+            tools.Add(new AgentChatToolRequest(
+                "files.search",
+                CreateFileSearchArguments(path: Path.GetDirectoryName(artifact.Path), query: BuildFileSearchQuery(attachment))));
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            diagnostics.Add(AppendRuntimeDiagnostic(
+                conversationId,
+                new RuntimeDiagnostic(
+                    "warning",
+                    "file_attachment_missing_content",
+                    "File attachments require inline text/content or a path under the Tomur managed files directory.",
+                    null,
+                    [$"Place files under: {filesRoot}"])));
+            normalized.Add(attachment);
+            return;
+        }
+
+        var absolutePath = Path.IsPathRooted(path)
+            ? Path.GetFullPath(path)
+            : Path.GetFullPath(Path.Combine(filesRoot, path));
+        if (!IsWithinRoot(absolutePath, filesRoot))
+        {
+            diagnostics.Add(AppendRuntimeDiagnostic(
+                conversationId,
+                new RuntimeDiagnostic(
+                    "warning",
+                    "file_attachment_outside_data_dir",
+                    "File attachment paths must stay under the Tomur managed files directory.",
+                    null,
+                    [$"Move the file under: {filesRoot}"])));
+            normalized.Add(attachment);
+            return;
+        }
+
+        if (!File.Exists(absolutePath))
+        {
+            diagnostics.Add(AppendRuntimeDiagnostic(
+                conversationId,
+                new RuntimeDiagnostic(
+                    "warning",
+                    "file_attachment_not_found",
+                    $"File attachment was not found: {absolutePath}",
+                    null,
+                    ["Check the file path and retry the conversation turn."])));
+            normalized.Add(attachment);
+            return;
+        }
+
+        var info = new FileInfo(absolutePath);
+        var artifactAppend = conversations.RegisterArtifact(
+            conversationId,
+            new ConversationRegisterArtifactRequest(
+                "file",
+                absolutePath,
+                attachment.MediaType ?? ResolveFileMediaType(info.Extension),
+                "conversation.attachment.file",
+                "available",
+                info.Length,
+                null));
+        artifacts.Add(artifactAppend.Artifact);
+        normalized.Add(ToAttachment(attachment, artifactAppend.Artifact));
+        tools.Add(new AgentChatToolRequest(
+            "files.search",
+            CreateFileSearchArguments(Path.GetDirectoryName(absolutePath), BuildFileSearchQuery(attachment))));
+    }
+
+    private IReadOnlyList<AgentChatToolRequest> PlanTurnTools(
+        ConversationTurnRequest request,
+        string content,
+        IReadOnlyList<ConversationAttachment> attachments)
+    {
+        var planned = new List<AgentChatToolRequest>();
+        if (MentionsImageGeneration(content))
+        {
+            planned.Add(new AgentChatToolRequest(
+                "image.generate",
+                CreateImageGenerationArguments(request, content))
+            {
+                Confirm = request.Confirm
+            });
+        }
+
+        if (MentionsFileSearch(content) &&
+            attachments.All(static attachment => !string.Equals(NormalizeAttachmentType(attachment), "file", StringComparison.OrdinalIgnoreCase)))
+        {
+            planned.Add(new AgentChatToolRequest(
+                "files.search",
+                CreateFileSearchArguments(null, CreateQuery(content))));
+        }
+
+        return planned;
+    }
+
+    private IReadOnlyList<ConversationArtifactRecord> RegisterToolArtifacts(
+        string conversationId,
+        IReadOnlyList<AgentChatToolCall> toolCalls)
+    {
+        var artifacts = new List<ConversationArtifactRecord>();
+        foreach (var toolCall in toolCalls)
+        {
+            if (!TryReadToolArtifact(toolCall.Result, out var artifact))
+            {
+                continue;
+            }
+
+            var artifactAppend = conversations.RegisterArtifact(
+                conversationId,
+                new ConversationRegisterArtifactRequest(
+                    artifact.Type,
+                    artifact.Path,
+                    artifact.MediaType,
+                    $"agent-tool:{toolCall.Tool}",
+                    "available",
+                    artifact.Bytes,
+                    null));
+            artifacts.Add(artifactAppend.Artifact);
+        }
+
+        return artifacts;
+    }
+
+    private IReadOnlyList<ConversationDiagnosticRecord> AppendFailedToolDiagnostics(
+        string conversationId,
+        AgentChatResponse agentResponse)
+    {
+        var diagnostics = new List<ConversationDiagnosticRecord>();
+        foreach (var toolCall in agentResponse.ToolCalls.Where(static tool => IsNonOkStatus(tool.Status)))
+        {
+            var code = TryReadToolDiagnosticCode(toolCall.Result) ??
+                (IsBlockedToolCall(toolCall) ? "tool_call_blocked" : "tool_call_failed");
+            var message = TryReadToolDiagnosticMessage(toolCall.Result) ??
+                $"Tool '{toolCall.Tool}' returned status '{toolCall.Status}'.";
+            diagnostics.Add(conversations.AppendDiagnostic(
+                    conversationId,
+                    new ConversationAppendDiagnosticRequest(
+                        IsBlockedToolCall(toolCall) ? "warning" : "error",
+                        code,
+                        message,
+                        agentResponse.Model,
+                        toolCall.Tool,
+                        toolCall.Diagnostics.Count > 0
+                            ? toolCall.Diagnostics
+                            : ["Inspect the tool result recorded on the conversation tool message."],
+                        null))
+                .Diagnostic);
+        }
+
+        return diagnostics;
+    }
+
+    private SpeechTurnResult TrySynthesizeTurnSpeech(
+        string conversationId,
+        ConversationTurnRequest request,
+        string text,
+        List<ConversationDiagnosticRecord> diagnostics,
+        CancellationToken cancellationToken)
+    {
+        if (!TryResolveModelByCapability(
+                request.TtsModel,
+                "audio-output",
+                "/api/conversations/{conversationId}/turns",
+                "tts",
+                out var ttsModel,
+                out var ttsDiagnostic,
+                out _))
+        {
+            diagnostics.Add(AppendRuntimeDiagnostic(conversationId, ttsDiagnostic!));
+            return new SpeechTurnResult(null, null, null);
+        }
+
+        var responseFormat = NormalizeSpeechResponseFormat(request.ResponseFormat);
+        if (responseFormat is null)
+        {
+            diagnostics.Add(AppendRuntimeDiagnostic(
+                conversationId,
+                new RuntimeDiagnostic(
+                    "warning",
+                    "invalid_request",
+                    "The conversation turn response_format currently supports only 'wav'. Text response was still persisted.",
+                    ttsModel!.Id,
+                    ["Set response_format to wav or omit it."])));
+            return new SpeechTurnResult(null, null, null);
+        }
+
+        try
+        {
+            var speechResult = multimodalExecution.SynthesizeSpeech(
+                ttsModel!,
+                new SpeechSynthesisOptions(
+                    text,
+                    request.Voice,
+                    responseFormat,
+                    Math.Clamp(request.Speed ?? 1.0, 0.25, 4.0),
+                    request.Language),
+                cancellationToken);
+            var artifact = RegisterBinaryArtifact(
+                conversationId,
+                speechResult.Bytes,
+                speechResult.MediaType,
+                "assistant-speech.wav",
+                "audio",
+                "conversation.turn.tts",
+                "assistant-speech");
+            diagnostics.Add(AppendRuntimeDiagnostic(
+                conversationId,
+                new RuntimeDiagnostic(
+                    "ok",
+                    "tts_synthesized",
+                    "Assistant text was synthesized by the local TTS runtime and registered as a conversation artifact.",
+                    ttsModel.Id,
+                    speechResult.Diagnostics.Count == 0
+                        ? [
+                            $"elapsed_ms: {(long)Math.Round(speechResult.Elapsed.TotalMilliseconds)}",
+                            $"sample_rate: {speechResult.SampleRate}"
+                        ]
+                        : speechResult.Diagnostics)));
+            return new SpeechTurnResult(artifact, speechResult.MediaType, speechResult.Bytes.LongLength);
+        }
+        catch (InferenceException exception)
+        {
+            diagnostics.Add(AppendRuntimeDiagnostic(
+                conversationId,
+                diagnosticsProvider.GetRuntimeFailure(ttsModel!.Id, exception)));
+            return new SpeechTurnResult(null, null, null);
+        }
+        catch (Exception exception) when (IsNativeRuntimeException(exception))
+        {
+            var runtimeException = new InferenceException(
+                "native_runtime_unavailable",
+                $"The TTS native runtime could not be used: {exception.Message}",
+                [
+                    "Run tomur native prepare to extract or repair the managed runtime bundle.",
+                    "Use /api/runtime/multimodal to inspect backend readiness."
+                ],
+                exception);
+            diagnostics.Add(AppendRuntimeDiagnostic(
+                conversationId,
+                diagnosticsProvider.GetRuntimeFailure(ttsModel!.Id, runtimeException)));
+            return new SpeechTurnResult(null, null, null);
+        }
+    }
+
     private bool TryResolveModelByCapability(
         string? requestedModel,
         string capability,
@@ -799,7 +1362,7 @@ public sealed class ConversationOrchestrationService
     {
         var directory = Path.Combine(paths.DataDirectory, "files", "conversations", SafePathSegment(conversationId));
         Directory.CreateDirectory(directory);
-        var extension = ResolveAudioExtension(mediaType, name);
+        var extension = ResolveArtifactExtension(mediaType, name);
         var fileName = string.Concat(
             DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmssfff", CultureInfo.InvariantCulture),
             "-",
@@ -810,6 +1373,671 @@ public sealed class ConversationOrchestrationService
         var path = Path.GetFullPath(Path.Combine(directory, fileName));
         File.WriteAllBytes(path, bytes);
         return path;
+    }
+
+    private ConversationArtifactRecord RegisterBinaryArtifact(
+        string conversationId,
+        byte[] bytes,
+        string mediaType,
+        string name,
+        string type,
+        string source,
+        string fileNamePrefix)
+    {
+        var path = WriteConversationArtifactBytes(conversationId, bytes, mediaType, name, fileNamePrefix);
+        return conversations.RegisterArtifact(
+                conversationId,
+                new ConversationRegisterArtifactRequest(
+                    type,
+                    path,
+                    mediaType,
+                    source,
+                    "available",
+                    bytes.LongLength,
+                    null))
+            .Artifact;
+    }
+
+    private bool TryRegisterBinaryArtifact(
+        string conversationId,
+        byte[] bytes,
+        string mediaType,
+        string name,
+        string type,
+        string source,
+        string fileNamePrefix,
+        out ConversationArtifactRecord? artifact,
+        out RuntimeDiagnostic? diagnostic)
+    {
+        artifact = null;
+        diagnostic = null;
+        try
+        {
+            artifact = RegisterBinaryArtifact(
+                conversationId,
+                bytes,
+                mediaType,
+                name,
+                type,
+                source,
+                fileNamePrefix);
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            diagnostic = new RuntimeDiagnostic(
+                "error",
+                "artifact_write_failed",
+                $"Conversation artifact could not be written: {exception.Message}",
+                null,
+                ["Check filesystem permissions and available disk space for the Tomur data directory."]);
+            return false;
+        }
+    }
+
+    private static bool TryResolveAttachmentBytes(
+        ConversationAttachment attachment,
+        string fallbackMediaType,
+        long maxBytes,
+        out byte[] bytes,
+        out string? mediaType,
+        out RuntimeDiagnostic? diagnostic)
+    {
+        bytes = [];
+        mediaType = NormalizeOptional(attachment.MediaType) ?? fallbackMediaType;
+        diagnostic = null;
+
+        var source = NormalizeOptional(attachment.DataUri) ?? NormalizeOptional(attachment.Base64);
+        if (!string.IsNullOrWhiteSpace(source))
+        {
+            if (!TryDecodeInlineBytes(source, mediaType, maxBytes, out bytes, out mediaType, out var error))
+            {
+                diagnostic = new RuntimeDiagnostic(
+                    "warning",
+                    "attachment_decode_failed",
+                    error,
+                    null,
+                    ["Send attachments as base64 or data URI payloads within the supported local size limits."]);
+                return false;
+            }
+
+            return true;
+        }
+
+        var path = NormalizeOptional(attachment.Path);
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            diagnostic = new RuntimeDiagnostic(
+                "warning",
+                "attachment_missing_payload",
+                "Attachment requires a data_uri, base64 payload or local path.",
+                null,
+                ["Provide a local attachment payload or path before running this turn."]);
+            return false;
+        }
+
+        if (Uri.TryCreate(path, UriKind.Absolute, out var uri) &&
+            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+        {
+            diagnostic = new RuntimeDiagnostic(
+                "warning",
+                "remote_attachment_not_fetched",
+                "Remote attachment URLs are not fetched by local conversation orchestration.",
+                null,
+                ["Send a data URI/base64 payload or register a local file under the Tomur data directory."]);
+            return false;
+        }
+
+        try
+        {
+            var absolutePath = Path.GetFullPath(path);
+            var info = new FileInfo(absolutePath);
+            if (!info.Exists)
+            {
+                diagnostic = new RuntimeDiagnostic(
+                    "warning",
+                    "attachment_file_not_found",
+                    $"Attachment file was not found: {absolutePath}",
+                    null,
+                    ["Check the file path and retry the conversation turn."]);
+                return false;
+            }
+
+            if (info.Length <= 0 || info.Length > maxBytes)
+            {
+                diagnostic = new RuntimeDiagnostic(
+                    "warning",
+                    "attachment_size_invalid",
+                    $"Attachment size must be between 1 and {maxBytes} bytes.",
+                    null,
+                    ["Send a smaller local attachment."]);
+                return false;
+            }
+
+            bytes = File.ReadAllBytes(absolutePath);
+            mediaType = NormalizeOptional(attachment.MediaType) ?? ResolveMediaTypeFromPath(absolutePath) ?? fallbackMediaType;
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            diagnostic = new RuntimeDiagnostic(
+                "warning",
+                "attachment_read_failed",
+                $"Attachment file could not be read: {exception.Message}",
+                null,
+                ["Check local file permissions and retry the conversation turn."]);
+            return false;
+        }
+    }
+
+    private static bool TryDecodeInlineBytes(
+        string source,
+        string? fallbackMediaType,
+        long maxBytes,
+        out byte[] bytes,
+        out string? mediaType,
+        out string error)
+    {
+        bytes = [];
+        mediaType = fallbackMediaType;
+        error = string.Empty;
+        var payload = source.Trim();
+        if (payload.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+        {
+            var comma = payload.IndexOf(',', StringComparison.Ordinal);
+            if (comma < 0)
+            {
+                error = "Data URI is missing the payload separator.";
+                return false;
+            }
+
+            var metadata = payload[5..comma];
+            if (!metadata.Contains(";base64", StringComparison.OrdinalIgnoreCase))
+            {
+                error = "Data URI attachments must use base64 encoding.";
+                return false;
+            }
+
+            mediaType = metadata.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .FirstOrDefault(static item => item.Contains('/', StringComparison.Ordinal))
+                ?? fallbackMediaType;
+            payload = payload[(comma + 1)..];
+        }
+
+        try
+        {
+            bytes = Convert.FromBase64String(payload);
+            if (bytes.LongLength <= 0)
+            {
+                error = "Attachment payload is empty.";
+                return false;
+            }
+
+            if (bytes.LongLength > maxBytes)
+            {
+                bytes = [];
+                error = $"Attachment payload is too large. Limit: {maxBytes} bytes.";
+                return false;
+            }
+
+            return true;
+        }
+        catch (FormatException)
+        {
+            error = "Attachment payload is not valid base64.";
+            return false;
+        }
+    }
+
+    private static JsonElement CreateVisionArguments(
+        ConversationAttachment attachment,
+        ConversationArtifactRecord artifact,
+        byte[] bytes,
+        string? mediaType)
+        => JsonSerializer.SerializeToElement(
+            new ConversationVisionToolArguments(
+                NormalizeOptional(attachment.Text) ??
+                    NormalizeOptional(attachment.Content) ??
+                    "Describe the image and answer the user's request.",
+                [
+                    new ConversationImageToolInput(
+                        ToDataUri(mediaType ?? artifact.MediaType ?? "image/png", bytes),
+                        mediaType ?? artifact.MediaType,
+                        TryGetMetadataString(attachment.Metadata, "detail"))
+                ]),
+            AppJsonSerializerContext.Default.ConversationVisionToolArguments);
+
+    private static JsonElement CreateOcrArguments(
+        ConversationAttachment attachment,
+        ConversationArtifactRecord artifact,
+        byte[] bytes,
+        string? mediaType)
+        => JsonSerializer.SerializeToElement(
+            new ConversationOcrToolArguments(
+                new ConversationImageToolInput(
+                    ToDataUri(mediaType ?? artifact.MediaType ?? "image/png", bytes),
+                    mediaType ?? artifact.MediaType,
+                    null),
+                TryGetMetadataString(attachment.Metadata, "language"),
+                NormalizeOptional(attachment.Text) ?? NormalizeOptional(attachment.Content)),
+            AppJsonSerializerContext.Default.ConversationOcrToolArguments);
+
+    private static JsonElement CreateAudioTranscriptionArguments(
+        ConversationAttachment attachment,
+        byte[] bytes,
+        string? mediaType)
+        => JsonSerializer.SerializeToElement(
+            new ConversationAudioTranscriptionToolArguments(
+                ToDataUri(mediaType ?? attachment.MediaType ?? "audio/wav", bytes),
+                mediaType ?? attachment.MediaType,
+                TryGetMetadataString(attachment.Metadata, "language")),
+            AppJsonSerializerContext.Default.ConversationAudioTranscriptionToolArguments);
+
+    private static JsonElement CreateFileSearchArguments(string? path, string query)
+        => JsonSerializer.SerializeToElement(
+            new FileSearchToolArguments(query, path, 5, true, null, null),
+            AppJsonSerializerContext.Default.FileSearchToolArguments);
+
+    private static JsonElement CreateImageGenerationArguments(ConversationTurnRequest request, string content)
+        => JsonSerializer.SerializeToElement(
+            new ConversationImageGenerationToolArguments(
+                CreatePromptFromText(content),
+                TryGetMetadataString(request.Metadata, "size") ?? "1024x1024",
+                request.Model),
+            AppJsonSerializerContext.Default.ConversationImageGenerationToolArguments);
+
+    private static IReadOnlyList<string>? ResolveMessageArtifactIds(
+        IReadOnlyList<AgentChatToolCall> toolCalls,
+        IReadOnlyList<ConversationArtifactRecord> artifacts)
+    {
+        if (artifacts.Count == 0 && !toolCalls.Any(static tool => TryReadToolArtifact(tool.Result, out _)))
+        {
+            return null;
+        }
+
+        return artifacts.Select(static artifact => artifact.Id).ToArray();
+    }
+
+    private static bool TryReadToolArtifact(JsonElement? result, out AgentToolArtifact artifact)
+    {
+        artifact = new AgentToolArtifact(string.Empty, string.Empty, null, null, 0, null);
+        if (result is null || result.Value.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        if (!result.Value.TryGetProperty("artifact", out var artifactElement) ||
+            artifactElement.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        var path = TryGetString(artifactElement, "path");
+        var type = TryGetString(artifactElement, "type");
+        if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(type))
+        {
+            return false;
+        }
+
+        artifact = new AgentToolArtifact(
+            type!,
+            path!,
+            TryGetString(artifactElement, "media_type"),
+            TryGetString(artifactElement, "format"),
+            TryGetLong(artifactElement, "bytes") ?? 0,
+            TryGetInt(artifactElement, "sample_rate"));
+        return true;
+    }
+
+    private static string? TryReadToolDiagnosticCode(JsonElement? result)
+    {
+        if (result is null || result.Value.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        if (result.Value.TryGetProperty("diagnostic", out var diagnostic) &&
+            diagnostic.ValueKind == JsonValueKind.Object)
+        {
+            return TryGetString(diagnostic, "code");
+        }
+
+        return TryGetString(result.Value, "code");
+    }
+
+    private static string? TryReadToolDiagnosticMessage(JsonElement? result)
+    {
+        if (result is null || result.Value.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        if (result.Value.TryGetProperty("diagnostic", out var diagnostic) &&
+            diagnostic.ValueKind == JsonValueKind.Object)
+        {
+            return TryGetString(diagnostic, "message");
+        }
+
+        return TryGetString(result.Value, "message");
+    }
+
+    private static string ToDataUri(string mediaType, byte[] bytes)
+        => $"data:{mediaType};base64,{Convert.ToBase64String(bytes)}";
+
+    private static string BuildAttachmentOnlyContent(IReadOnlyList<ConversationAttachment> attachments)
+        => attachments.Count == 0
+            ? string.Empty
+            : $"Process {attachments.Count} local attachment(s).";
+
+    private static ConversationAttachment ToAttachment(
+        ConversationAttachment source,
+        ConversationArtifactRecord artifact)
+        => source with
+        {
+            Id = artifact.Id,
+            Type = artifact.Type,
+            MediaType = artifact.MediaType ?? source.MediaType,
+            Path = artifact.Path,
+            Bytes = artifact.Bytes,
+            DataUri = null,
+            Base64 = null
+        };
+
+    private static bool ShouldUseOcr(ConversationAttachment attachment)
+    {
+        var text = string.Join(
+            " ",
+            NormalizeOptional(attachment.Text),
+            NormalizeOptional(attachment.Content),
+            TryGetMetadataString(attachment.Metadata, "mode"));
+        return ContainsAny(text, "ocr", "文字", "识别文字", "提取文字", "read text", "extract text");
+    }
+
+    private static bool ShouldSpeak(
+        ConversationTurnRequest request,
+        string? content,
+        IReadOnlyList<AgentChatToolCall> toolCalls)
+    {
+        if (request.Speak is not null)
+        {
+            return request.Speak.Value;
+        }
+
+        if (toolCalls.Any(static call => string.Equals(call.Tool, "audio.speak", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(call.Status, "ok", StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        return IsSpeechRequested(request, content) && request.Confirm == true;
+    }
+
+    private static bool IsSpeechRequested(ConversationTurnRequest request, string? content)
+        => request.Speak == true || (request.Speak is null && MentionsSpeechOutput(content ?? string.Empty));
+
+    private static string ResolveEffectiveToolMode(
+        string? requestedToolMode,
+        IReadOnlyList<AgentChatToolRequest>? explicitTools,
+        IReadOnlyList<AgentChatToolRequest> plannedTools)
+    {
+        if (plannedTools.Any(IsControlledTool))
+        {
+            return "controlled";
+        }
+
+        if (!string.IsNullOrWhiteSpace(requestedToolMode))
+        {
+            return requestedToolMode;
+        }
+
+        if (explicitTools is { Count: > 0 } && explicitTools.Any(IsControlledTool))
+        {
+            return "controlled";
+        }
+
+        return explicitTools is { Count: > 0 } || plannedTools.Count > 0
+            ? "read_only"
+            : "none";
+    }
+
+    private static IReadOnlyList<AgentChatToolRequest>? MergeToolRequests(
+        IReadOnlyList<AgentChatToolRequest>? explicitTools,
+        IReadOnlyList<AgentChatToolRequest> plannedTools,
+        int maxToolRounds)
+    {
+        var merged = new List<AgentChatToolRequest>();
+        if (explicitTools is { Count: > 0 })
+        {
+            merged.AddRange(explicitTools);
+        }
+
+        merged.AddRange(plannedTools);
+        if (merged.Count == 0)
+        {
+            return null;
+        }
+
+        return merged
+            .Where(static tool => !string.IsNullOrWhiteSpace(tool.Tool))
+            .Take(Math.Clamp(maxToolRounds, 1, DefaultMaxToolRounds))
+            .ToArray();
+    }
+
+    private static int? ResolveMaxToolRounds(
+        int? requestedMaxToolRounds,
+        IReadOnlyList<AgentChatToolRequest>? tools)
+    {
+        if (requestedMaxToolRounds is > 0)
+        {
+            return requestedMaxToolRounds;
+        }
+
+        return tools is { Count: > 0 }
+            ? Math.Clamp(tools.Count, 1, DefaultMaxToolRounds)
+            : null;
+    }
+
+    private static bool IsControlledTool(AgentChatToolRequest tool)
+        => tool.Tool is "image.generate" or "vision.analyze" or "ocr.recognize" or "audio.transcribe" or "audio.speak" or "runtime.repair";
+
+    private static bool IsNonOkStatus(string status)
+        => !string.Equals(status, "ok", StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizeAttachmentType(ConversationAttachment attachment)
+    {
+        var explicitType = NormalizeOptional(attachment.Type)?.ToLowerInvariant();
+        if (explicitType is "image" or "audio" or "file")
+        {
+            return explicitType;
+        }
+
+        if (explicitType is "artifact" or "reference")
+        {
+            return "reference";
+        }
+
+        var mediaType = NormalizeOptional(attachment.MediaType)?.ToLowerInvariant();
+        if (mediaType?.StartsWith("image/", StringComparison.Ordinal) == true)
+        {
+            return "image";
+        }
+
+        if (mediaType?.StartsWith("audio/", StringComparison.Ordinal) == true)
+        {
+            return "audio";
+        }
+
+        return "file";
+    }
+
+    private static bool MentionsImageGeneration(string value)
+        => ContainsAny(
+            value,
+            "generate image",
+            "create image",
+            "draw",
+            "make a picture",
+            "生成图片",
+            "生成一张图",
+            "画一张",
+            "出图");
+
+    private static bool MentionsSpeechOutput(string value)
+        => ContainsAny(
+            value,
+            "read aloud",
+            "speak",
+            "tts",
+            "voice reply",
+            "朗读",
+            "读出来",
+            "语音回复",
+            "合成语音");
+
+    private static bool MentionsFileSearch(string value)
+        => ContainsAny(
+            value,
+            "file",
+            "files",
+            "document",
+            "documents",
+            "rag",
+            "search",
+            "lookup",
+            "local knowledge",
+            "文件",
+            "文档",
+            "资料",
+            "检索",
+            "搜索",
+            "问答");
+
+    private static bool ContainsAny(string value, params string[] terms)
+        => !string.IsNullOrWhiteSpace(value) &&
+            terms.Any(term => value.Contains(term, StringComparison.OrdinalIgnoreCase));
+
+    private static string CreatePromptFromText(string value)
+    {
+        var normalized = string.Join(' ', value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return string.IsNullOrWhiteSpace(normalized) ? "Generate an image." : normalized;
+    }
+
+    private static string CreateQuery(string value)
+    {
+        var normalized = string.Join(' ', value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return normalized.Length > 240 ? normalized[..240] : normalized;
+    }
+
+    private static string BuildFileSearchQuery(ConversationAttachment attachment)
+    {
+        var text = NormalizeOptional(attachment.Text) ??
+            NormalizeOptional(attachment.Content) ??
+            NormalizeOptional(attachment.Name) ??
+            "local file attachment";
+        return CreateQuery(text);
+    }
+
+    private static string? TryGetMetadataString(JsonElement? metadata, string propertyName)
+    {
+        if (metadata is null || metadata.Value.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        return TryGetString(metadata.Value, propertyName);
+    }
+
+    private static string? TryGetString(JsonElement element, string propertyName)
+        => element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String
+            ? NormalizeOptional(property.GetString())
+            : null;
+
+    private static int? TryGetInt(JsonElement element, string propertyName)
+        => element.TryGetProperty(propertyName, out var property) &&
+            property.ValueKind == JsonValueKind.Number &&
+            property.TryGetInt32(out var value)
+                ? value
+                : null;
+
+    private static long? TryGetLong(JsonElement element, string propertyName)
+        => element.TryGetProperty(propertyName, out var property) &&
+            property.ValueKind == JsonValueKind.Number &&
+            property.TryGetInt64(out var value)
+                ? value
+                : null;
+
+    private static bool IsWithinRoot(string path, string root)
+    {
+        var normalizedPath = EnsureTrailingSeparator(Path.GetFullPath(path));
+        var normalizedRoot = EnsureTrailingSeparator(Path.GetFullPath(root));
+        return normalizedPath.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string EnsureTrailingSeparator(string path)
+        => path.EndsWith(Path.DirectorySeparatorChar)
+            ? path
+            : path + Path.DirectorySeparatorChar;
+
+    private static string? ResolveMediaTypeFromPath(string path)
+        => Path.GetExtension(path).ToLowerInvariant() switch
+        {
+            ".png" => "image/png",
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".webp" => "image/webp",
+            ".wav" => "audio/wav",
+            ".mp3" => "audio/mpeg",
+            ".mp4" => "audio/mp4",
+            ".webm" => "audio/webm",
+            ".ogg" => "audio/ogg",
+            ".md" or ".markdown" => "text/markdown",
+            ".json" or ".jsonl" => "application/json",
+            ".csv" => "text/csv",
+            ".html" or ".htm" => "text/html",
+            ".xml" => "application/xml",
+            ".txt" or ".log" => "text/plain",
+            _ => null
+        };
+
+    private static string ResolveFileMediaType(string extension)
+        => extension.Trim().ToLowerInvariant() switch
+        {
+            ".md" or ".markdown" => "text/markdown",
+            ".json" or ".jsonl" => "application/json",
+            ".csv" => "text/csv",
+            ".html" or ".htm" => "text/html",
+            ".xml" => "application/xml",
+            _ => "text/plain"
+        };
+
+    private static string ResolveArtifactExtension(string? mediaType, string? name)
+    {
+        var normalizedMediaType = mediaType?.Trim().ToLowerInvariant();
+        var fromMediaType = normalizedMediaType switch
+        {
+            "image/png" => ".png",
+            "image/jpeg" or "image/jpg" => ".jpg",
+            "image/webp" => ".webp",
+            "audio/wav" or "audio/wave" or "audio/x-wav" => ".wav",
+            "audio/mpeg" or "audio/mp3" => ".mp3",
+            "audio/mp4" => ".mp4",
+            "audio/webm" => ".webm",
+            "audio/ogg" => ".ogg",
+            "text/markdown" => ".md",
+            "application/json" => ".json",
+            "text/csv" => ".csv",
+            "text/plain" => ".txt",
+            _ => null
+        };
+
+        if (fromMediaType is not null)
+        {
+            return fromMediaType;
+        }
+
+        var extension = Path.GetExtension(name);
+        return !string.IsNullOrWhiteSpace(extension) && extension.Length <= 10
+            ? extension.ToLowerInvariant()
+            : ".bin";
     }
 
     private static string ResolveVoiceStatus(
@@ -891,30 +2119,6 @@ public sealed class ConversationOrchestrationService
         return chars.Length == 0 ? "artifact" : new string(chars);
     }
 
-    private static string ResolveAudioExtension(string? mediaType, string? name)
-    {
-        var normalizedMediaType = mediaType?.Trim().ToLowerInvariant();
-        var fromMediaType = normalizedMediaType switch
-        {
-            "audio/wav" or "audio/wave" or "audio/x-wav" => ".wav",
-            "audio/mpeg" or "audio/mp3" => ".mp3",
-            "audio/mp4" => ".mp4",
-            "audio/webm" => ".webm",
-            "audio/ogg" => ".ogg",
-            _ => null
-        };
-
-        if (fromMediaType is not null)
-        {
-            return fromMediaType;
-        }
-
-        var extension = Path.GetExtension(name);
-        return !string.IsNullOrWhiteSpace(extension) && extension.Length <= 8
-            ? extension.ToLowerInvariant()
-            : ".wav";
-    }
-
     private static string ResolveToolModeForAudit(
         string? value,
         IReadOnlyList<AgentChatToolRequest>? tools)
@@ -944,6 +2148,17 @@ public sealed class ConversationOrchestrationService
         ConversationRecord? Conversation,
         ConversationArtifactRecord? Artifact,
         ConversationVoiceTurnResult? Error);
+
+    private sealed record PreparedAttachmentPlan(
+        IReadOnlyList<ConversationAttachment> NormalizedAttachments,
+        IReadOnlyList<ConversationArtifactRecord> Artifacts,
+        IReadOnlyList<ConversationDiagnosticRecord> Diagnostics,
+        IReadOnlyList<AgentChatToolRequest> Tools);
+
+    private sealed record SpeechTurnResult(
+        ConversationArtifactRecord? Artifact,
+        string? MediaType,
+        long? Bytes);
 }
 
 public sealed record ConversationTurnResult(

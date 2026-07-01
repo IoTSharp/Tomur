@@ -126,6 +126,7 @@ public static class ApiRouteExtensions
         app.MapPost("/api/conversations/{conversationId}/voice-turns", HandleConversationVoiceTurnAsync);
         app.MapPost("/api/conversations/{conversationId}/messages", HandleConversationAppendMessageAsync);
         app.MapPost("/api/conversations/{conversationId}/artifacts", HandleConversationRegisterArtifactAsync);
+        app.MapGet("/api/conversations/{conversationId}/artifacts/{artifactId}/content", HandleConversationArtifactContentAsync);
         app.MapPost("/api/conversations/{conversationId}/diagnostics", HandleConversationAppendDiagnosticAsync);
 
         app.MapGet("/api/models/catalog", static async (HttpContext context, DataPaths paths, HardwareAccelerationService accelerationService) =>
@@ -234,6 +235,7 @@ public static class ApiRouteExtensions
                     "POST /api/conversations/{conversationId}/voice-turns",
                     "POST /api/conversations/{conversationId}/messages",
                     "POST /api/conversations/{conversationId}/artifacts",
+                    "/api/conversations/{conversationId}/artifacts/{artifactId}/content",
                     "POST /api/conversations/{conversationId}/diagnostics",
                     "/api/models/catalog",
                     "/api/models/installed",
@@ -727,6 +729,66 @@ public static class ApiRouteExtensions
         {
             var response = conversations.RegisterArtifact(conversationId, request);
             await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.ConversationRegisterArtifactResponse);
+        }
+        catch (ConversationStoreException exception)
+        {
+            await WriteConversationErrorAsync(context, exception);
+        }
+    }
+
+    private static async Task HandleConversationArtifactContentAsync(
+        HttpContext context,
+        ConversationStore conversations,
+        DataPaths paths,
+        string conversationId,
+        string artifactId)
+    {
+        try
+        {
+            var artifact = conversations.GetArtifact(conversationId, artifactId);
+            if (string.IsNullOrWhiteSpace(artifact.Path))
+            {
+                await WriteConversationErrorAsync(
+                    context,
+                    new ConversationStoreException(
+                        "not_found",
+                        "artifact_content_not_available",
+                        "The requested artifact does not have local file content.",
+                        ["Inspect the artifact metadata on GET /api/conversations/{conversationId}."]));
+                return;
+            }
+
+            var artifactPath = Path.GetFullPath(artifact.Path);
+            var dataRoot = Path.GetFullPath(paths.DataDirectory);
+            if (!IsPathWithinRoot(artifactPath, dataRoot))
+            {
+                await WriteConversationErrorAsync(
+                    context,
+                    new ConversationStoreException(
+                        "error",
+                        "artifact_path_not_allowed",
+                        "Conversation artifacts can be served only from the Tomur data directory.",
+                        ["Register artifacts under the Tomur data directory before requesting content."]));
+                return;
+            }
+
+            if (!File.Exists(artifactPath))
+            {
+                await WriteConversationErrorAsync(
+                    context,
+                    new ConversationStoreException(
+                        "not_found",
+                        "artifact_file_not_found",
+                        "The artifact metadata exists, but the local file is missing.",
+                        ["Regenerate the artifact or inspect the Tomur data directory."]));
+                return;
+            }
+
+            context.Response.Headers.CacheControl = "no-store";
+            context.Response.ContentType = string.IsNullOrWhiteSpace(artifact.MediaType)
+                ? "application/octet-stream"
+                : artifact.MediaType;
+            await context.Response.SendFileAsync(artifactPath, context.RequestAborted);
         }
         catch (ConversationStoreException exception)
         {
@@ -2361,7 +2423,7 @@ public static class ApiRouteExtensions
             exception.Message,
             null,
             exception.Actions);
-        var statusCode = exception.Code == "conversation_not_found"
+        var statusCode = exception.Code is "conversation_not_found" or "artifact_not_found" or "artifact_content_not_available" or "artifact_file_not_found"
             ? StatusCodes.Status404NotFound
             : StatusCodes.Status400BadRequest;
 
@@ -3511,6 +3573,18 @@ public static class ApiRouteExtensions
 
     private static string? FirstNonEmpty(params string?[] values)
         => values.FirstOrDefault(static value => !string.IsNullOrWhiteSpace(value));
+
+    private static bool IsPathWithinRoot(string path, string root)
+    {
+        var normalizedPath = EnsureTrailingSeparator(Path.GetFullPath(path));
+        var normalizedRoot = EnsureTrailingSeparator(Path.GetFullPath(root));
+        return normalizedPath.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string EnsureTrailingSeparator(string path)
+        => path.EndsWith(Path.DirectorySeparatorChar)
+            ? path
+            : path + Path.DirectorySeparatorChar;
 
     private static bool ContainsImageContent(JsonElement? element)
     {

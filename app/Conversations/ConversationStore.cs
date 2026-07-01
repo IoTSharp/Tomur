@@ -75,6 +75,48 @@ public sealed class ConversationStore
             ListDiagnostics(connection, id, normalizedLimit));
     }
 
+    public ConversationArtifactRecord GetArtifact(string conversationId, string artifactId)
+    {
+        var id = NormalizeId(conversationId);
+        var normalizedArtifactId = NormalizeId(artifactId);
+        using var connection = database.OpenConnection();
+        _ = GetConversation(connection, id);
+
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT
+                id,
+                conversation_id,
+                type,
+                path,
+                media_type,
+                source,
+                status,
+                bytes,
+                created_at,
+                metadata_json
+            FROM conversation_artifacts
+            WHERE conversation_id = $conversation_id
+              AND id = $artifact_id
+            LIMIT 1;
+            """;
+        command.Parameters.AddWithValue("$conversation_id", id);
+        command.Parameters.AddWithValue("$artifact_id", normalizedArtifactId);
+
+        using var reader = command.ExecuteReader();
+        if (reader.Read())
+        {
+            return ReadArtifact(reader);
+        }
+
+        throw new ConversationStoreException(
+            "not_found",
+            "artifact_not_found",
+            "The requested conversation artifact does not exist.",
+            ["List conversation artifacts with GET /api/conversations/{conversationId}."]);
+    }
+
     public IReadOnlyList<ConversationMessageRecord> ListRecentMessages(
         string conversationId,
         int? limit)
@@ -592,21 +634,24 @@ public sealed class ConversationStore
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
-            artifacts.Add(new ConversationArtifactRecord(
-                reader.GetString(0),
-                reader.GetString(1),
-                reader.GetString(2),
-                reader.IsDBNull(3) ? null : reader.GetString(3),
-                reader.IsDBNull(4) ? null : reader.GetString(4),
-                reader.IsDBNull(5) ? null : reader.GetString(5),
-                reader.GetString(6),
-                reader.IsDBNull(7) ? null : reader.GetInt64(7),
-                ParseDate(reader.GetString(8)),
-                ParseJsonElement(reader.IsDBNull(9) ? null : reader.GetString(9))));
+            artifacts.Add(ReadArtifact(reader));
         }
 
         return artifacts;
     }
+
+    private static ConversationArtifactRecord ReadArtifact(SqliteDataReader reader)
+        => new(
+            reader.GetString(0),
+            reader.GetString(1),
+            reader.GetString(2),
+            reader.IsDBNull(3) ? null : reader.GetString(3),
+            reader.IsDBNull(4) ? null : reader.GetString(4),
+            reader.IsDBNull(5) ? null : reader.GetString(5),
+            reader.GetString(6),
+            reader.IsDBNull(7) ? null : reader.GetInt64(7),
+            ParseDate(reader.GetString(8)),
+            ParseJsonElement(reader.IsDBNull(9) ? null : reader.GetString(9)));
 
     private static IReadOnlyList<ConversationDiagnosticRecord> ListDiagnostics(
         SqliteConnection connection,
@@ -780,7 +825,11 @@ public sealed class ConversationStore
                 MediaType = NormalizeOptional(value.MediaType),
                 Path = NormalizeOptional(value.Path),
                 Bytes = value.Bytes is >= 0 ? value.Bytes : null,
-                Metadata = CloneNullable(value.Metadata)
+                Metadata = CloneNullable(value.Metadata),
+                DataUri = NormalizeOptional(value.DataUri),
+                Base64 = NormalizeOptional(value.Base64),
+                Text = NormalizeOptional(value.Text),
+                Content = NormalizeOptional(value.Content)
             })
             .ToArray()
             ?? [];

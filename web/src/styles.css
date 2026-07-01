@@ -273,6 +273,34 @@ button {
   align-items: center;
   gap: 8px;
   min-height: 32px;
+  flex-wrap: wrap;
+}
+
+.attachment-strip .ant-x-attachments {
+  max-width: min(100%, 560px);
+}
+
+.message-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: min(100%, 520px);
+}
+
+.message-audio {
+  width: min(100%, 360px);
+  height: 34px;
+}
+
+.message-meta {
+  max-width: 100%;
+}
+
+.message-meta .ant-tag {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .drawer-stack {
@@ -395,6 +423,10 @@ button {
   .runtime-action-controls {
     justify-content: flex-start;
   }
+
+  .message-footer {
+    max-width: 100%;
+  }
 }
 
 @media (max-width: 640px) {
@@ -420,5 +452,9 @@ button {
 
   .empty-chat .ant-x-welcome {
     padding: 24px 20px;
+  }
+
+  .message-audio {
+    width: 100%;
   }
 }

@@ -83,7 +83,14 @@ public sealed record ConversationTurnRequest(
     [property: JsonPropertyName("temperature")] double? Temperature,
     [property: JsonPropertyName("top_p")] double? TopP,
     [property: JsonPropertyName("history_limit")] int? HistoryLimit,
-    [property: JsonPropertyName("metadata")] JsonElement? Metadata);
+    [property: JsonPropertyName("metadata")] JsonElement? Metadata,
+    [property: JsonPropertyName("confirm")] bool? Confirm = null,
+    [property: JsonPropertyName("speak")] bool? Speak = null,
+    [property: JsonPropertyName("voice")] string? Voice = null,
+    [property: JsonPropertyName("tts_model")] string? TtsModel = null,
+    [property: JsonPropertyName("response_format")] string? ResponseFormat = null,
+    [property: JsonPropertyName("speed")] double? Speed = null,
+    [property: JsonPropertyName("language")] string? Language = null);
 
 public sealed record ConversationTurnResponse(
     [property: JsonPropertyName("status")] string Status,
@@ -93,6 +100,10 @@ public sealed record ConversationTurnResponse(
     [property: JsonPropertyName("tool_message")] ConversationMessageRecord? ToolMessage,
     [property: JsonPropertyName("assistant_message")] ConversationMessageRecord? AssistantMessage,
     [property: JsonPropertyName("diagnostics")] IReadOnlyList<ConversationDiagnosticRecord> Diagnostics,
+    [property: JsonPropertyName("artifacts")] IReadOnlyList<ConversationArtifactRecord> Artifacts,
+    [property: JsonPropertyName("speech_artifact")] ConversationArtifactRecord? SpeechArtifact,
+    [property: JsonPropertyName("speech_media_type")] string? SpeechMediaType,
+    [property: JsonPropertyName("speech_bytes")] long? SpeechBytes,
     [property: JsonPropertyName("agent")] AgentChatResponse? Agent);
 
 public sealed record ConversationVoiceTurnRequest(
@@ -190,7 +201,11 @@ public sealed record ConversationAttachment(
     [property: JsonPropertyName("media_type")] string? MediaType,
     [property: JsonPropertyName("path")] string? Path,
     [property: JsonPropertyName("bytes")] long? Bytes,
-    [property: JsonPropertyName("metadata")] JsonElement? Metadata);
+    [property: JsonPropertyName("metadata")] JsonElement? Metadata,
+    [property: JsonPropertyName("data_uri")] string? DataUri = null,
+    [property: JsonPropertyName("base64")] string? Base64 = null,
+    [property: JsonPropertyName("text")] string? Text = null,
+    [property: JsonPropertyName("content")] string? Content = null);
 
 public sealed record ConversationToolCall(
     [property: JsonPropertyName("tool")] string? Tool,
@@ -199,6 +214,30 @@ public sealed record ConversationToolCall(
     [property: JsonPropertyName("result")] string? Result,
     [property: JsonPropertyName("result_json")] JsonElement? ResultJson,
     [property: JsonPropertyName("diagnostic")] RuntimeDiagnostic? Diagnostic);
+
+public sealed record ConversationVisionToolArguments(
+    [property: JsonPropertyName("prompt")] string Prompt,
+    [property: JsonPropertyName("images")] IReadOnlyList<ConversationImageToolInput> Images);
+
+public sealed record ConversationOcrToolArguments(
+    [property: JsonPropertyName("image")] ConversationImageToolInput Image,
+    [property: JsonPropertyName("language")] string? Language,
+    [property: JsonPropertyName("prompt")] string? Prompt);
+
+public sealed record ConversationImageToolInput(
+    [property: JsonPropertyName("data_uri")] string DataUri,
+    [property: JsonPropertyName("media_type")] string? MediaType,
+    [property: JsonPropertyName("detail")] string? Detail);
+
+public sealed record ConversationAudioTranscriptionToolArguments(
+    [property: JsonPropertyName("audio_data_uri")] string AudioDataUri,
+    [property: JsonPropertyName("media_type")] string? MediaType,
+    [property: JsonPropertyName("language")] string? Language);
+
+public sealed record ConversationImageGenerationToolArguments(
+    [property: JsonPropertyName("prompt")] string Prompt,
+    [property: JsonPropertyName("size")] string? Size,
+    [property: JsonPropertyName("model")] string? Model);
 
 public sealed class ConversationStoreException : Exception
 {

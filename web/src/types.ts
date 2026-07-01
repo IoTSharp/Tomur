@@ -1,17 +1,181 @@
-export type Role = "system" | "user" | "assistant";
+export type Role = "system" | "user" | "assistant" | "tool";
 
 export interface ChatMessage {
   id: string;
   role: Role;
   content: string;
   status?: "local" | "loading" | "success" | "error";
+  attachments?: ConversationAttachment[];
+  artifacts?: ConversationArtifactRecord[];
+  diagnostics?: ConversationDiagnosticRecord[];
+  audioUrl?: string;
+  audioMediaType?: string | null;
+  transcript?: string | null;
 }
 
 export interface Conversation {
   id: string;
+  backendId?: string;
   title: string;
   updatedAt: number;
   messages: ChatMessage[];
+}
+
+export interface ConversationCreateRequest {
+  title?: string;
+  model?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ConversationCreateResponse {
+  status: string;
+  conversation: ConversationRecord;
+}
+
+export interface ConversationAppendMessageRequest {
+  role?: string;
+  content?: string;
+  modality?: string;
+  status?: string;
+  model?: string;
+  attachments?: ConversationAttachment[];
+  artifact_ids?: string[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface ConversationAppendMessageResponse {
+  status: string;
+  conversation: ConversationRecord;
+  message: ConversationMessageRecord;
+}
+
+export interface ConversationTurnRequest {
+  content?: string;
+  modality?: string;
+  model?: string;
+  attachments?: ConversationAttachment[];
+  tool_mode?: string;
+  max_tool_rounds?: number;
+  instructions?: string;
+  max_tokens?: number;
+  temperature?: number;
+  top_p?: number;
+  history_limit?: number;
+  metadata?: Record<string, unknown>;
+  confirm?: boolean;
+  speak?: boolean;
+  voice?: string;
+  tts_model?: string;
+  response_format?: string;
+  speed?: number;
+  language?: string;
+}
+
+export interface ConversationTurnResponse {
+  status: string;
+  conversation: ConversationRecord;
+  messages: ConversationMessageRecord[];
+  user_message: ConversationMessageRecord;
+  tool_message?: ConversationMessageRecord | null;
+  assistant_message?: ConversationMessageRecord | null;
+  diagnostics: ConversationDiagnosticRecord[];
+  artifacts: ConversationArtifactRecord[];
+  speech_artifact?: ConversationArtifactRecord | null;
+  speech_media_type?: string | null;
+  speech_bytes?: number | null;
+}
+
+export interface ConversationVoiceTurnResponse {
+  status: string;
+  conversation: ConversationRecord;
+  transcript?: string | null;
+  input_artifact?: ConversationArtifactRecord | null;
+  user_message?: ConversationMessageRecord | null;
+  tool_message?: ConversationMessageRecord | null;
+  assistant_message?: ConversationMessageRecord | null;
+  speech_artifact?: ConversationArtifactRecord | null;
+  diagnostics: ConversationDiagnosticRecord[];
+  turn?: ConversationTurnResponse | null;
+  speech_media_type?: string | null;
+  speech_bytes?: number | null;
+}
+
+export interface ConversationRecord {
+  id: string;
+  title: string;
+  status: string;
+  model?: string | null;
+  created_at: string;
+  updated_at: string;
+  last_message_at?: string | null;
+  message_count: number;
+  artifact_count: number;
+  diagnostic_count: number;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface ConversationMessageRecord {
+  id: string;
+  conversation_id: string;
+  role: string;
+  content: string;
+  modality: string;
+  status: string;
+  model?: string | null;
+  created_at: string;
+  attachments: ConversationAttachment[];
+  tool_calls: ConversationToolCall[];
+  artifact_ids: string[];
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface ConversationAttachment {
+  id?: string | null;
+  type?: string | null;
+  name?: string | null;
+  media_type?: string | null;
+  path?: string | null;
+  bytes?: number | null;
+  metadata?: Record<string, unknown> | null;
+  data_uri?: string | null;
+  base64?: string | null;
+  text?: string | null;
+  content?: string | null;
+}
+
+export interface ConversationToolCall {
+  tool?: string | null;
+  status?: string | null;
+  artifact_id?: string | null;
+  result?: string | null;
+  result_json?: Record<string, unknown> | null;
+  diagnostic?: RuntimeDiagnostic | null;
+}
+
+export interface ConversationArtifactRecord {
+  id: string;
+  conversation_id: string;
+  type: string;
+  path?: string | null;
+  media_type?: string | null;
+  source?: string | null;
+  status: string;
+  bytes?: number | null;
+  created_at: string;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface ConversationDiagnosticRecord {
+  id: string;
+  conversation_id: string;
+  status: string;
+  code: string;
+  message: string;
+  model?: string | null;
+  backend?: string | null;
+  created_at: string;
+  actions: string[];
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface OpenAiModelListResponse {

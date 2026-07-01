@@ -23,7 +23,6 @@ import {
 import {
   Copy,
   Download,
-  FileText,
   FolderOpen,
   HardDrive,
   Layers3,
@@ -36,6 +35,7 @@ import {
   Settings,
   Square,
   Trash2,
+  Volume2,
   Wrench
 } from "lucide-react";
 import {
@@ -50,6 +50,9 @@ import {
 import XMarkdown from "@ant-design/x-markdown";
 import type { BubbleItemType, PromptsItemType } from "@ant-design/x";
 import {
+  appendConversationMessage,
+  createConversation,
+  getConversationArtifactContentUrl,
   getInstalledModels,
   getModelCatalog,
   getModels,
@@ -58,11 +61,20 @@ import {
   getVersion,
   prepareNativeRuntime,
   sendChatCompletion,
+  sendConversationTurn,
+  sendConversationVoiceTurn,
   unloadRuntimeSession
 } from "./api";
 import type {
   ChatMessage,
   Conversation,
+  ConversationArtifactRecord,
+  ConversationAttachment,
+  ConversationDiagnosticRecord,
+  ConversationMessageRecord,
+  ConversationRecord,
+  ConversationTurnResponse,
+  ConversationVoiceTurnResponse,
   DiagnosticItem,
   InstalledModelAsset,
   InstalledModelsResponse,
@@ -141,7 +153,14 @@ function App() {
   const [runtimeAction, setRuntimeAction] = useState<"prepare" | "unload" | null>(null);
   const [prepareResult, setPrepareResult] = useState<NativeBundlePrepareResult>();
   const [sending, setSending] = useState(false);
+  const [pendingAttachments, setPendingAttachments] = useState<ConversationAttachment[]>([]);
+  const [uploadingAttachment, setUploadingAttachment] = useState(false);
+  const [speechEnabled, setSpeechEnabled] = useState(false);
+  const [recording, setRecording] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordingStreamRef = useRef<MediaStream | null>(null);
+  const recordingChunksRef = useRef<Blob[]>([]);
 
   const activeConversation = useMemo(
     () =>
@@ -177,6 +196,18 @@ function App() {
       ),
     [runtimeStatus]
   );
+
+  const inputPlaceholder = useMemo(() => {
+    if (!chatReady) {
+      return "请先准备本地 Chat 模型";
+    }
+
+    if (pendingAttachments.length > 0) {
+      return "输入附件说明，Enter 发送";
+    }
+
+    return "输入消息，Enter 发送";
+  }, [chatReady, pendingAttachments.length]);
 
   const copyText = useCallback(
     async (text: string, successMessage = "已复制命令") => {
@@ -319,12 +350,116 @@ function App() {
     [activeConversationId, conversations]
   );
 
-  const submitMessage = useCallback(
-    async (content: string) => {
-      const trimmed = content.trim();
+  const ensureBackendConversation = useCallback(
+    async (conversation: Conversation, model: string, signal?: AbortSignal) => {
+      if (conversation.backendId) {
+        return conversation.backendId;
+      }
+
+      const response = await createConversation(
+        {
+          title: conversation.title,
+          model
+        },
+        signal
+      );
+
+      updateConversation(conversation.id, (current) => ({
+        ...current,
+        backendId: response.conversation.id,
+        title: response.conversation.title || current.title,
+        updatedAt: parseApiTime(response.conversation.updated_at)
+      }));
+
+      try {
+        await syncPlainMessagesToBackend(response.conversation.id, conversation.messages, signal);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          throw error;
+        }
+
+        message.warning("本地会话历史同步失败，当前回合会继续发送。");
+      }
+
+      return response.conversation.id;
+    },
+    [message, updateConversation]
+  );
+
+  const applyTurnResponse = useCallback(
+    (
+      conversationId: string,
+      userMessageId: string,
+      assistantMessageId: string,
+      response: ConversationTurnResponse
+    ) => {
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        backendId: response.conversation.id,
+        title: resolveConversationTitle(conversation, response.conversation),
+        updatedAt: parseApiTime(response.conversation.updated_at),
+        messages: replaceTurnMessages(
+          conversation.messages,
+          userMessageId,
+          assistantMessageId,
+          buildTurnMessages(response, assistantMessageId)
+        )
+      }));
+    },
+    [updateConversation]
+  );
+
+  const applyVoiceTurnResponse = useCallback(
+    (
+      conversationId: string,
+      userMessageId: string,
+      assistantMessageId: string,
+      response: ConversationVoiceTurnResponse
+    ) => {
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        backendId: response.conversation.id,
+        title: resolveConversationTitle(conversation, response.conversation, response.transcript),
+        updatedAt: parseApiTime(response.conversation.updated_at),
+        messages: replaceTurnMessages(
+          conversation.messages,
+          userMessageId,
+          assistantMessageId,
+          buildVoiceTurnMessages(response, userMessageId, assistantMessageId)
+        )
+      }));
+    },
+    [updateConversation]
+  );
+
+  const addPendingAttachment = useCallback(
+    async (file: File) => {
+      if (sending || recording) {
+        return;
+      }
+
+      setUploadingAttachment(true);
+      try {
+        const attachment = await createLocalAttachment(file);
+        setPendingAttachments((current) => [...current, attachment]);
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : "附件读取失败");
+      } finally {
+        setUploadingAttachment(false);
+      }
+    },
+    [message, recording, sending]
+  );
+
+  const removePendingAttachment = useCallback((id: string) => {
+    setPendingAttachments((current) => current.filter((item) => item.id !== id));
+  }, []);
+
+  const submitVoiceBlob = useCallback(
+    async (recordedBlob: Blob) => {
       const model = selectedModelLabel;
 
-      if (!trimmed || sending) {
+      if (sending) {
         return;
       }
 
@@ -338,8 +473,8 @@ function App() {
       const userMessage: ChatMessage = {
         id: crypto.randomUUID(),
         role: "user",
-        content: trimmed,
-        status: "local"
+        content: "正在转写语音...",
+        status: "loading"
       };
       const assistantMessage: ChatMessage = {
         id: crypto.randomUUID(),
@@ -348,10 +483,9 @@ function App() {
         status: "loading"
       };
 
-      setInput("");
       updateConversation(conversationId, (conversation) => ({
         ...conversation,
-        title: conversation.messages.length === 0 ? createTitle(trimmed) : conversation.title,
+        title: conversation.messages.length === 0 ? "语音会话" : conversation.title,
         updatedAt: Date.now(),
         messages: [...conversation.messages, userMessage, assistantMessage]
       }));
@@ -361,6 +495,206 @@ function App() {
       setSending(true);
 
       try {
+        const wavBlob = await convertRecordingToPcmWav(recordedBlob);
+        const backendConversationId = await ensureBackendConversation(
+          activeConversation,
+          model,
+          controller.signal
+        );
+        const response = await sendConversationVoiceTurn(
+          backendConversationId,
+          wavBlob,
+          {
+            fileName: `voice-${Date.now()}.wav`,
+            model,
+            speak: true,
+            responseFormat: "wav"
+          },
+          controller.signal
+        );
+        applyVoiceTurnResponse(conversationId, userMessage.id, assistantMessage.id, response);
+      } catch (error) {
+        const errorText =
+          error instanceof DOMException && error.name === "AbortError"
+            ? "已停止语音回合。"
+            : error instanceof Error
+              ? error.message
+              : "Tomur 语音回合请求失败";
+
+        updateConversation(conversationId, (conversation) => ({
+          ...conversation,
+          messages: replaceTurnMessages(conversation.messages, userMessage.id, assistantMessage.id, [
+            { ...userMessage, content: "语音输入", status: "error" },
+            { ...assistantMessage, content: errorText, status: "error" }
+          ])
+        }));
+      } finally {
+        setSending(false);
+        abortRef.current = null;
+      }
+    },
+    [
+      activeConversation,
+      applyVoiceTurnResponse,
+      ensureBackendConversation,
+      message,
+      openSettings,
+      selectedModelLabel,
+      sending,
+      updateConversation
+    ]
+  );
+
+  const startVoiceRecording = useCallback(async () => {
+    if (recording || sending) {
+      return;
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      message.error("当前浏览器不支持录音");
+      return;
+    }
+
+    if (!selectedModelLabel) {
+      openSettings("models");
+      message.warning("Tomur 当前没有可见 Chat 模型");
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true
+        }
+      });
+      const recorder = new MediaRecorder(stream);
+      recordingChunksRef.current = [];
+      recordingStreamRef.current = stream;
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          recordingChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        const chunks = recordingChunksRef.current;
+        const mimeType = recorder.mimeType || "audio/webm";
+        cleanupRecording(mediaRecorderRef, recordingStreamRef, recordingChunksRef);
+        setRecording(false);
+        if (chunks.length > 0) {
+          void submitVoiceBlob(new Blob(chunks, { type: mimeType }));
+        }
+      };
+
+      recorder.onerror = () => {
+        cleanupRecording(mediaRecorderRef, recordingStreamRef, recordingChunksRef);
+        setRecording(false);
+        message.error("录音失败");
+      };
+
+      recorder.start();
+      setRecording(true);
+    } catch (error) {
+      cleanupRecording(mediaRecorderRef, recordingStreamRef, recordingChunksRef);
+      setRecording(false);
+      message.error(error instanceof Error ? error.message : "无法访问麦克风");
+    }
+  }, [message, openSettings, recording, selectedModelLabel, sending, submitVoiceBlob]);
+
+  const stopVoiceRecording = useCallback(() => {
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== "inactive") {
+      recorder.stop();
+      return;
+    }
+
+    cleanupRecording(mediaRecorderRef, recordingStreamRef, recordingChunksRef);
+    setRecording(false);
+  }, []);
+
+  useEffect(
+    () => () => {
+      abortRef.current?.abort();
+      cleanupRecording(mediaRecorderRef, recordingStreamRef, recordingChunksRef);
+    },
+    []
+  );
+
+  const submitMessage = useCallback(
+    async (content: string) => {
+      const trimmed = content.trim();
+      const model = selectedModelLabel;
+      const attachments = pendingAttachments;
+      const useConversationTurn = attachments.length > 0 || speechEnabled;
+
+      if ((!trimmed && attachments.length === 0) || sending) {
+        return;
+      }
+
+      if (!model) {
+        openSettings("models");
+        message.warning("Tomur 当前没有可见 Chat 模型");
+        return;
+      }
+
+      const conversationId = activeConversation.id;
+      const userMessage: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: "user",
+        content: formatUserContent(trimmed, attachments),
+        status: "local",
+        attachments
+      };
+      const assistantMessage: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: "",
+        status: "loading"
+      };
+
+      setInput("");
+      setPendingAttachments([]);
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        title: conversation.messages.length === 0
+          ? createTitle(trimmed || summarizeAttachments(attachments))
+          : conversation.title,
+        updatedAt: Date.now(),
+        messages: [...conversation.messages, userMessage, assistantMessage]
+      }));
+
+      const controller = new AbortController();
+      abortRef.current = controller;
+      setSending(true);
+
+      try {
+        if (useConversationTurn) {
+          const backendConversationId = await ensureBackendConversation(
+            activeConversation,
+            model,
+            controller.signal
+          );
+          const response = await sendConversationTurn(
+            backendConversationId,
+            {
+              content: trimmed || undefined,
+              modality: attachments.length > 0 ? "multimodal" : "text",
+              model,
+              attachments,
+              max_tool_rounds: 4,
+              speak: speechEnabled,
+              confirm: speechEnabled,
+              response_format: "wav"
+            },
+            controller.signal
+          );
+          applyTurnResponse(conversationId, userMessage.id, assistantMessage.id, response);
+          return;
+        }
+
         const sentMessages = [...activeConversation.messages, userMessage];
         let accumulated = "";
 
@@ -390,7 +724,25 @@ function App() {
               : item
           )
         }));
+
+        if (activeConversation.backendId) {
+          try {
+            await appendPlainTurnToBackend(
+              activeConversation.backendId,
+              model,
+              userMessage.content,
+              text || accumulated,
+              controller.signal
+            );
+          } catch {
+            message.warning("本地会话历史同步失败，当前回复已保留在前端。");
+          }
+        }
       } catch (error) {
+        if (attachments.length > 0) {
+          setPendingAttachments((current) => [...attachments, ...current]);
+        }
+
         const errorText =
           error instanceof DOMException && error.name === "AbortError"
             ? "已停止生成。"
@@ -414,10 +766,15 @@ function App() {
     [
       activeConversation.id,
       activeConversation.messages,
+      activeConversation,
+      applyTurnResponse,
+      ensureBackendConversation,
       message,
       openSettings,
+      pendingAttachments,
       selectedModelLabel,
       sending,
+      speechEnabled,
       updateConversation
     ]
   );
@@ -433,31 +790,28 @@ function App() {
     abortRef.current?.abort();
   }, []);
 
-  const bubbleItems: BubbleItemType[] = activeConversation.messages.map((item) => ({
-    key: item.id,
-    role: item.role === "assistant" ? "ai" : "user",
-    content: item.content,
-    status: item.status,
-    loading: item.status === "loading" && !item.content,
-    footer:
-      item.role === "assistant"
+  const bubbleItems: BubbleItemType[] = activeConversation.messages.map((item) => {
+    const assistantSide = item.role === "assistant" || item.role === "tool";
+    return {
+      key: item.id,
+      role: assistantSide ? "ai" : "user",
+      content: item.content,
+      status: item.status,
+      loading: item.status === "loading" && !item.content,
+      footer:
+        assistantSide
         ? () => (
-            <Actions
-              items={[
-                {
-                  key: "copy",
-                  icon: <Copy size={14} />,
-                  label: "复制",
-                  onItemClick: () => {
-                    void navigator.clipboard.writeText(item.content);
-                    message.success("已复制");
-                  }
-                }
-              ]}
+            <MessageFooter
+              message={item}
+              onCopy={() => {
+                void navigator.clipboard.writeText(item.content);
+                message.success("已复制");
+              }}
             />
           )
         : undefined
-  }));
+    };
+  });
 
   const conversationItems = conversations.map((conversation) => ({
     key: conversation.id,
@@ -658,30 +1012,63 @@ function App() {
         <footer className="composer">
           <div className="attachment-strip">
             <Attachments
-              disabled
-              items={[]}
+              disabled={sending || recording || uploadingAttachment}
+              items={pendingAttachments.map(toAttachmentItem)}
+              overflow="wrap"
+              beforeUpload={(file) => {
+                void addPendingAttachment(file);
+                return false;
+              }}
+              onRemove={(file) => {
+                removePendingAttachment(String(file.uid));
+                return true;
+              }}
               placeholder={{
                 title: "附件入口",
-                description: "图片、文件和音频入口保留在 Chat 输入区；未接通前显示诊断，不伪装为可用能力。"
+                description: "选择图片、音频或文本文件后随下一轮会话发送。"
               }}
             >
-              <Button icon={<Paperclip size={16} />} disabled>
+              <Button
+                icon={<Paperclip size={16} />}
+                loading={uploadingAttachment}
+                disabled={sending || recording}
+              >
                 附件
               </Button>
             </Attachments>
-            <Tooltip title="按钮式录音入口会在语音回合服务接通后启用">
-              <Button icon={<Mic size={16} />} disabled />
+            <Tooltip title={recording ? "停止录音并发送" : "录音语音回合"}>
+              <Button
+                type={recording ? "primary" : "default"}
+                danger={recording}
+                icon={recording ? <Square size={16} /> : <Mic size={16} />}
+                disabled={sending || uploadingAttachment}
+                onClick={recording ? stopVoiceRecording : () => void startVoiceRecording()}
+              />
             </Tooltip>
-            <Tooltip title="文件问答入口会在本地文件索引接通后启用">
-              <Button icon={<FileText size={16} />} disabled />
+            <Tooltip title={speechEnabled ? "本轮请求 TTS 朗读" : "本轮只返回文字"}>
+              <Button
+                type={speechEnabled ? "primary" : "default"}
+                icon={<Volume2 size={16} />}
+                disabled={sending || recording}
+                onClick={() => setSpeechEnabled((current) => !current)}
+              />
             </Tooltip>
+            {pendingAttachments.length > 0 && (
+              <Button
+                type="primary"
+                disabled={sending || recording || uploadingAttachment}
+                onClick={() => void submitMessage(input)}
+              >
+                发送附件
+              </Button>
+            )}
           </div>
 
           <Sender
             value={input}
             loading={sending}
-            disabled={!chatReady}
-            placeholder={chatReady ? "输入消息，Enter 发送" : "请先准备本地 Chat 模型"}
+            disabled={!chatReady || recording}
+            placeholder={recording ? "正在录音" : inputPlaceholder}
             submitType="enter"
             onChange={(value) => setInput(value)}
             onSubmit={(value) => void submitMessage(value)}
@@ -697,7 +1084,7 @@ function App() {
               <Flex justify="space-between" align="center" wrap gap={8}>
                 <Typography.Text type="secondary">
                   {chatReady
-                    ? `使用 ${selectedModelLabel} 通过 Tomur 本地 OpenAI 兼容接口会话。`
+                    ? buildComposerStatus(selectedModelLabel, pendingAttachments.length, speechEnabled, recording)
                     : "模型缺失时不会伪造回复。"}
                 </Typography.Text>
                 <Space size={4}>
@@ -1569,6 +1956,550 @@ function renderBundleAssetSummary(asset: ModelCatalogBundleAsset) {
     .join(" / ");
 
   return `${details} - ${asset.description}`;
+}
+
+function MessageFooter({
+  message,
+  onCopy
+}: {
+  message: ChatMessage;
+  onCopy: () => void;
+}) {
+  const diagnostics = message.diagnostics ?? [];
+  const artifacts = message.artifacts ?? [];
+
+  return (
+    <div className="message-footer">
+      {message.audioUrl && (
+        <audio className="message-audio" controls src={message.audioUrl} aria-label="助手语音回复" />
+      )}
+      {(diagnostics.length > 0 || artifacts.length > 0) && (
+        <Space size={6} wrap className="message-meta">
+          {diagnostics.slice(0, 3).map((diagnostic) => (
+            <Tooltip key={diagnostic.id} title={diagnostic.message}>
+              <Tag color={tagColor(diagnostic.status)}>{diagnostic.code}</Tag>
+            </Tooltip>
+          ))}
+          {artifacts.slice(0, 3).map((artifact) => (
+            <Tooltip key={artifact.id} title={artifact.path ?? artifact.source ?? artifact.id}>
+              <Tag color={tagColor(artifact.status)}>{artifact.type}</Tag>
+            </Tooltip>
+          ))}
+        </Space>
+      )}
+      <Actions
+        items={[
+          {
+            key: "copy",
+            icon: <Copy size={14} />,
+            label: "复制",
+            onItemClick: onCopy
+          }
+        ]}
+      />
+    </div>
+  );
+}
+
+function buildTurnMessages(
+  response: ConversationTurnResponse,
+  assistantFallbackId: string
+): ChatMessage[] {
+  const artifactMap = createArtifactMap(response.artifacts);
+  const messages = [
+    mapConversationMessage(response.user_message, response.diagnostics, artifactMap),
+    response.tool_message
+      ? mapConversationMessage(response.tool_message, response.diagnostics, artifactMap)
+      : null,
+    response.assistant_message
+      ? mapConversationMessage(
+          response.assistant_message,
+          response.diagnostics,
+          artifactMap,
+          response.speech_artifact,
+          response.speech_media_type
+        )
+      : null
+  ].filter((item): item is ChatMessage => item !== null);
+
+  if (messages.some((item) => item.role === "assistant")) {
+    return messages;
+  }
+
+  return [
+    ...messages,
+    {
+      id: assistantFallbackId,
+      role: "assistant",
+      content: summarizeDiagnostics(response.diagnostics) || "本轮没有生成助手回复。",
+      status: response.status === "ok" ? "success" : "error",
+      diagnostics: response.diagnostics,
+      artifacts: response.artifacts,
+      audioUrl: response.speech_artifact
+        ? getConversationArtifactContentUrl(response.speech_artifact.conversation_id, response.speech_artifact.id)
+        : undefined,
+      audioMediaType: response.speech_media_type
+    }
+  ];
+}
+
+function buildVoiceTurnMessages(
+  response: ConversationVoiceTurnResponse,
+  userFallbackId: string,
+  assistantFallbackId: string
+): ChatMessage[] {
+  const artifacts = [
+    ...(response.turn?.artifacts ?? []),
+    response.input_artifact,
+    response.speech_artifact
+  ].filter((item): item is ConversationArtifactRecord => Boolean(item));
+  const artifactMap = createArtifactMap(artifacts);
+  const userMessage = response.user_message
+    ? mapConversationMessage(response.user_message, response.diagnostics, artifactMap)
+    : {
+        id: userFallbackId,
+        role: "user" as const,
+        content: response.transcript ? `语音输入：${response.transcript}` : "语音输入",
+        status: response.status === "error" ? "error" : "success",
+        transcript: response.transcript,
+        artifacts: response.input_artifact ? [response.input_artifact] : [],
+        diagnostics: response.diagnostics
+      };
+  const toolMessage = response.tool_message
+    ? mapConversationMessage(response.tool_message, response.diagnostics, artifactMap)
+    : null;
+  const assistantMessage = response.assistant_message
+    ? mapConversationMessage(
+        response.assistant_message,
+        response.diagnostics,
+        artifactMap,
+        response.speech_artifact,
+        response.speech_media_type
+      )
+    : {
+        id: assistantFallbackId,
+        role: "assistant" as const,
+        content: summarizeDiagnostics(response.diagnostics) || "语音回合没有生成助手回复。",
+        status: response.status === "ok" ? "success" : "error",
+        diagnostics: response.diagnostics,
+        artifacts: response.speech_artifact ? [response.speech_artifact] : [],
+        audioUrl: response.speech_artifact
+          ? getConversationArtifactContentUrl(response.speech_artifact.conversation_id, response.speech_artifact.id)
+          : undefined,
+        audioMediaType: response.speech_media_type
+      };
+
+  return [userMessage, toolMessage, assistantMessage].filter(
+    (item): item is ChatMessage => item !== null
+  );
+}
+
+function mapConversationMessage(
+  record: ConversationMessageRecord,
+  diagnostics: ConversationDiagnosticRecord[],
+  artifactsById: Map<string, ConversationArtifactRecord>,
+  speechArtifact?: ConversationArtifactRecord | null,
+  speechMediaType?: string | null
+): ChatMessage {
+  const role = normalizeRole(record.role);
+  const artifacts = [
+    ...record.artifact_ids
+      .map((id) => artifactsById.get(id))
+      .filter((item): item is ConversationArtifactRecord => Boolean(item)),
+    speechArtifact ?? null
+  ].filter((item): item is ConversationArtifactRecord => Boolean(item));
+
+  return {
+    id: record.id,
+    role,
+    content: role === "user" && record.modality === "audio"
+      ? `语音输入：${record.content}`
+      : record.content,
+    status: record.status === "ok" ? "success" : record.status === "partial" ? "success" : "error",
+    attachments: record.attachments,
+    artifacts,
+    diagnostics: diagnostics.length > 0 ? diagnostics : undefined,
+    audioUrl: speechArtifact
+      ? getConversationArtifactContentUrl(speechArtifact.conversation_id, speechArtifact.id)
+      : undefined,
+    audioMediaType: speechMediaType,
+    transcript: record.modality === "audio" ? record.content : undefined
+  };
+}
+
+function replaceTurnMessages(
+  messages: ChatMessage[],
+  userMessageId: string,
+  assistantMessageId: string,
+  replacements: ChatMessage[]
+): ChatMessage[] {
+  const result: ChatMessage[] = [];
+  let replaced = false;
+  for (const message of messages) {
+    if (message.id === userMessageId) {
+      result.push(...replacements);
+      replaced = true;
+      continue;
+    }
+
+    if (message.id === assistantMessageId) {
+      continue;
+    }
+
+    result.push(message);
+  }
+
+  return replaced ? result : [...messages, ...replacements];
+}
+
+function createArtifactMap(artifacts: ConversationArtifactRecord[]) {
+  return new Map(artifacts.map((artifact) => [artifact.id, artifact]));
+}
+
+function normalizeRole(role: string): ChatMessage["role"] {
+  if (role === "user" || role === "assistant" || role === "system" || role === "tool") {
+    return role;
+  }
+
+  return "assistant";
+}
+
+function summarizeDiagnostics(diagnostics: ConversationDiagnosticRecord[]) {
+  const diagnostic = diagnostics.find((item) => item.status === "error") ?? diagnostics.at(0);
+  return diagnostic?.message ?? "";
+}
+
+function resolveConversationTitle(
+  conversation: Conversation,
+  record: ConversationRecord,
+  fallback?: string | null
+) {
+  if (conversation.title === "新会话" || conversation.title === "语音会话") {
+    return createTitle(fallback || record.title || conversation.title);
+  }
+
+  return record.title || conversation.title;
+}
+
+function parseApiTime(value?: string | null) {
+  if (!value) {
+    return Date.now();
+  }
+
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? Date.now() : parsed;
+}
+
+async function syncPlainMessagesToBackend(
+  conversationId: string,
+  messages: ChatMessage[],
+  signal?: AbortSignal
+) {
+  for (const message of messages) {
+    if (
+      message.status === "loading" ||
+      message.attachments?.length ||
+      message.artifacts?.length ||
+      message.role === "tool"
+    ) {
+      continue;
+    }
+
+    const content = message.content.trim();
+    if (!content) {
+      continue;
+    }
+
+    await appendConversationMessage(
+      conversationId,
+      {
+        role: message.role,
+        content,
+        modality: "text",
+        status: message.status === "error" ? "error" : "ok"
+      },
+      signal
+    );
+  }
+}
+
+async function appendPlainTurnToBackend(
+  conversationId: string,
+  model: string,
+  userContent: string,
+  assistantContent: string,
+  signal?: AbortSignal
+) {
+  await appendConversationMessage(
+    conversationId,
+    {
+      role: "user",
+      content: userContent,
+      modality: "text",
+      status: "ok",
+      model
+    },
+    signal
+  );
+  await appendConversationMessage(
+    conversationId,
+    {
+      role: "assistant",
+      content: assistantContent,
+      modality: "text",
+      status: "ok",
+      model
+    },
+    signal
+  );
+}
+
+async function createLocalAttachment(file: File): Promise<ConversationAttachment> {
+  const mediaType = file.type || resolveMediaTypeFromFileName(file.name);
+  if (mediaType.startsWith("image/") || mediaType.startsWith("audio/")) {
+    return {
+      id: crypto.randomUUID(),
+      type: mediaType.startsWith("image/") ? "image" : "audio",
+      name: file.name,
+      media_type: mediaType,
+      bytes: file.size,
+      data_uri: await readFileAsDataUri(file)
+    };
+  }
+
+  if (isTextAttachment(file, mediaType)) {
+    return {
+      id: crypto.randomUUID(),
+      type: "file",
+      name: file.name,
+      media_type: mediaType || "text/plain",
+      bytes: file.size,
+      text: await file.text()
+    };
+  }
+
+  throw new Error("当前前端只支持图片、音频和文本文件附件");
+}
+
+function toAttachmentItem(attachment: ConversationAttachment) {
+  const mediaType = attachment.media_type ?? "";
+  const cardType = mediaType.startsWith("image/")
+    ? "image"
+    : mediaType.startsWith("audio/")
+      ? "audio"
+      : "file";
+
+  return {
+    uid: attachment.id ?? attachment.name ?? crypto.randomUUID(),
+    name: attachment.name ?? "attachment",
+    status: "done" as const,
+    size: attachment.bytes ?? undefined,
+    byte: attachment.bytes ?? undefined,
+    type: attachment.media_type ?? undefined,
+    cardType,
+    description: attachment.type ?? undefined
+  };
+}
+
+function isTextAttachment(file: File, mediaType: string) {
+  const extension = file.name.split(".").pop()?.toLowerCase();
+  return (
+    mediaType.startsWith("text/") ||
+    ["md", "markdown", "json", "csv", "tsv", "txt", "log", "xml", "yaml", "yml"].includes(extension ?? "")
+  );
+}
+
+function readFileAsDataUri(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("附件读取失败"));
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+        return;
+      }
+
+      reject(new Error("附件读取结果无效"));
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function formatUserContent(content: string, attachments: ConversationAttachment[]) {
+  if (attachments.length === 0) {
+    return content;
+  }
+
+  const summary = summarizeAttachments(attachments);
+  return content ? `${content}\n\n${summary}` : summary;
+}
+
+function summarizeAttachments(attachments: ConversationAttachment[]) {
+  if (attachments.length === 0) {
+    return "";
+  }
+
+  return `附件：${attachments.map((item) => item.name ?? item.type ?? "attachment").join("、")}`;
+}
+
+function buildComposerStatus(
+  selectedModel: string | undefined,
+  attachmentCount: number,
+  speechEnabled: boolean,
+  recording: boolean
+) {
+  if (recording) {
+    return "正在录音，停止后会发送语音回合。";
+  }
+
+  const parts = [`使用 ${selectedModel} 会话`];
+  if (attachmentCount > 0) {
+    parts.push(`${attachmentCount} 个附件`);
+  }
+  if (speechEnabled) {
+    parts.push("请求朗读");
+  }
+
+  return `${parts.join(" · ")}。`;
+}
+
+function resolveMediaTypeFromFileName(name: string) {
+  const extension = name.split(".").pop()?.toLowerCase();
+  switch (extension) {
+    case "png":
+      return "image/png";
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "webp":
+      return "image/webp";
+    case "gif":
+      return "image/gif";
+    case "wav":
+      return "audio/wav";
+    case "mp3":
+      return "audio/mpeg";
+    case "ogg":
+      return "audio/ogg";
+    case "webm":
+      return "audio/webm";
+    case "json":
+      return "application/json";
+    case "csv":
+      return "text/csv";
+    case "md":
+    case "markdown":
+    case "txt":
+    case "log":
+      return "text/plain";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+function cleanupRecording(
+  recorderRef: { current: MediaRecorder | null },
+  streamRef: { current: MediaStream | null },
+  chunksRef: { current: Blob[] }
+) {
+  streamRef.current?.getTracks().forEach((track) => track.stop());
+  streamRef.current = null;
+  recorderRef.current = null;
+  chunksRef.current = [];
+}
+
+async function convertRecordingToPcmWav(blob: Blob): Promise<Blob> {
+  const arrayBuffer = await blob.arrayBuffer();
+  const AudioContextClass = getAudioContextConstructor();
+  if (!AudioContextClass) {
+    throw new Error("当前浏览器不支持音频转码");
+  }
+
+  const context = new AudioContextClass();
+  try {
+    const decoded = await context.decodeAudioData(arrayBuffer.slice(0));
+    const mono = mixToMono(decoded);
+    const resampled = resampleLinear(mono, decoded.sampleRate, 16_000);
+    const wav = encodePcm16Wav(resampled, 16_000);
+    return new Blob([wav], { type: "audio/wav" });
+  } finally {
+    await context.close();
+  }
+}
+
+function getAudioContextConstructor(): typeof AudioContext | undefined {
+  return window.AudioContext ?? (
+    window as Window & {
+      webkitAudioContext?: typeof AudioContext;
+    }
+  ).webkitAudioContext;
+}
+
+function mixToMono(buffer: AudioBuffer) {
+  const output = new Float32Array(buffer.length);
+  for (let channel = 0; channel < buffer.numberOfChannels; channel += 1) {
+    const data = buffer.getChannelData(channel);
+    for (let index = 0; index < data.length; index += 1) {
+      output[index] += data[index] / buffer.numberOfChannels;
+    }
+  }
+
+  return output;
+}
+
+function resampleLinear(input: Float32Array, sourceRate: number, targetRate: number) {
+  if (sourceRate === targetRate) {
+    return input;
+  }
+
+  const ratio = sourceRate / targetRate;
+  const outputLength = Math.max(1, Math.round(input.length / ratio));
+  const output = new Float32Array(outputLength);
+  for (let index = 0; index < outputLength; index += 1) {
+    const sourceIndex = index * ratio;
+    const left = Math.floor(sourceIndex);
+    const right = Math.min(left + 1, input.length - 1);
+    const fraction = sourceIndex - left;
+    output[index] = input[left] * (1 - fraction) + input[right] * fraction;
+  }
+
+  return output;
+}
+
+function encodePcm16Wav(samples: Float32Array, sampleRate: number) {
+  const bytesPerSample = 2;
+  const dataLength = samples.length * bytesPerSample;
+  const buffer = new ArrayBuffer(44 + dataLength);
+  const view = new DataView(buffer);
+
+  writeAscii(view, 0, "RIFF");
+  view.setUint32(4, 36 + dataLength, true);
+  writeAscii(view, 8, "WAVE");
+  writeAscii(view, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * bytesPerSample, true);
+  view.setUint16(32, bytesPerSample, true);
+  view.setUint16(34, 16, true);
+  writeAscii(view, 36, "data");
+  view.setUint32(40, dataLength, true);
+
+  let offset = 44;
+  for (const sample of samples) {
+    const clamped = Math.max(-1, Math.min(1, sample));
+    view.setInt16(offset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
+    offset += bytesPerSample;
+  }
+
+  return buffer;
+}
+
+function writeAscii(view: DataView, offset: number, value: string) {
+  for (let index = 0; index < value.length; index += 1) {
+    view.setUint8(offset + index, value.charCodeAt(index));
+  }
 }
 
 function formatBytes(value?: number | null) {

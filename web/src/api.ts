@@ -1,6 +1,13 @@
 import { XStream } from "@ant-design/x-sdk";
 import type {
   ChatMessage,
+  ConversationAppendMessageRequest,
+  ConversationAppendMessageResponse,
+  ConversationCreateRequest,
+  ConversationCreateResponse,
+  ConversationTurnRequest,
+  ConversationTurnResponse,
+  ConversationVoiceTurnResponse,
   InstalledModelsResponse,
   ModelCatalogResponse,
   MultimodalRuntimeStatus,
@@ -68,6 +75,90 @@ export async function unloadRuntimeSession(signal?: AbortSignal): Promise<Runtim
   return postJson<RuntimeStatusResponse>("/api/runtime/session/unload", undefined, signal);
 }
 
+export async function createConversation(
+  request: ConversationCreateRequest,
+  signal?: AbortSignal
+): Promise<ConversationCreateResponse> {
+  return postJson<ConversationCreateResponse>("/api/conversations", request, signal);
+}
+
+export async function sendConversationTurn(
+  conversationId: string,
+  request: ConversationTurnRequest,
+  signal?: AbortSignal
+): Promise<ConversationTurnResponse> {
+  const response = await fetch(`${conversationUrl(conversationId)}/turns`, {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(request),
+    signal
+  });
+
+  return readConversationResponse<ConversationTurnResponse>(response);
+}
+
+export async function appendConversationMessage(
+  conversationId: string,
+  request: ConversationAppendMessageRequest,
+  signal?: AbortSignal
+): Promise<ConversationAppendMessageResponse> {
+  return postJson<ConversationAppendMessageResponse>(
+    `${conversationUrl(conversationId)}/messages`,
+    request,
+    signal
+  );
+}
+
+export async function sendConversationVoiceTurn(
+  conversationId: string,
+  file: Blob,
+  options: {
+    fileName: string;
+    model?: string;
+    speak?: boolean;
+    language?: string;
+    voice?: string;
+    responseFormat?: string;
+    speed?: number;
+  },
+  signal?: AbortSignal
+): Promise<ConversationVoiceTurnResponse> {
+  const form = new FormData();
+  form.append("file", file, options.fileName);
+  form.append("audio_name", options.fileName);
+  form.append("audio_media_type", file.type || "audio/wav");
+  if (options.model) {
+    form.append("model", options.model);
+  }
+  if (options.speak !== undefined) {
+    form.append("speak", String(options.speak));
+  }
+  if (options.language) {
+    form.append("language", options.language);
+  }
+  if (options.voice) {
+    form.append("voice", options.voice);
+  }
+  if (options.responseFormat) {
+    form.append("response_format", options.responseFormat);
+  }
+  if (options.speed !== undefined) {
+    form.append("speed", String(options.speed));
+  }
+
+  const response = await fetch(`${conversationUrl(conversationId)}/voice-turns`, {
+    method: "POST",
+    body: form,
+    signal
+  });
+
+  return readConversationResponse<ConversationVoiceTurnResponse>(response);
+}
+
+export function getConversationArtifactContentUrl(conversationId: string, artifactId: string): string {
+  return `${conversationUrl(conversationId)}/artifacts/${encodeURIComponent(artifactId)}/content`;
+}
+
 export async function sendChatCompletion(
   model: string,
   messages: ChatMessage[],
@@ -81,7 +172,11 @@ export async function sendChatCompletion(
       model,
       stream: true,
       messages: messages
-        .filter((message) => message.content.trim().length > 0 && message.status !== "loading")
+        .filter((message) =>
+          message.role !== "tool" &&
+          message.content.trim().length > 0 &&
+          message.status !== "loading"
+        )
         .map((message) => ({
           role: message.role,
           content: message.content.trim()
@@ -169,9 +264,40 @@ async function postJson<T>(url: string, body?: unknown, signal?: AbortSignal): P
   return (await response.json()) as T;
 }
 
+async function readConversationResponse<T>(response: Response): Promise<T> {
+  if (response.ok) {
+    return (await response.json()) as T;
+  }
+
+  const errorResponse = response.clone();
+  try {
+    const data = (await response.json()) as {
+      conversation?: unknown;
+      diagnostics?: unknown;
+      transcript?: unknown;
+      user_message?: unknown;
+    };
+    if (
+      Array.isArray(data.diagnostics) &&
+      (data.conversation || data.transcript !== undefined || data.user_message)
+    ) {
+      return data as T;
+    }
+  } catch {
+    // Fall through to the common API error parser.
+  }
+
+  throw await createApiError(errorResponse);
+}
+
+function conversationUrl(conversationId: string): string {
+  return `/api/conversations/${encodeURIComponent(conversationId)}`;
+}
+
 async function createApiError(response: Response): Promise<Error> {
   try {
     const data = (await response.json()) as Partial<OpenAiErrorResponse> & {
+      code?: string;
       message?: string;
       diagnostics?: Array<{ message?: string }>;
     };
@@ -181,6 +307,10 @@ async function createApiError(response: Response): Promise<Error> {
 
     if (data.message) {
       return new Error(data.message);
+    }
+
+    if (data.code) {
+      return new Error(data.code);
     }
 
     const diagnosticMessage = data.diagnostics?.find((item) => item.message)?.message;
