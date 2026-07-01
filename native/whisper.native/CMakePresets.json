@@ -60,6 +60,16 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug"
       }
+    },
+    {
+      "name": "windows-x64-cuda13",
+      "displayName": "Windows x64 (CUDA 13 Release)",
+      "inherits": "windows-x64",
+      "cacheVariables": {
+        "GGML_CUDA": "ON",
+        "WHISPER_NATIVE_BACKEND": "cuda13",
+        "CMAKE_CUDA_ARCHITECTURES": "89"
+      }
     }
   ],
   "buildPresets": [
@@ -79,6 +89,11 @@
     {
       "name": "debug",
       "configurePreset": "debug"
+    },
+    {
+      "name": "windows-x64-cuda13",
+      "configurePreset": "windows-x64-cuda13",
+      "configuration": "Release"
     }
   ]
 }

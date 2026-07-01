@@ -8,6 +8,8 @@ public sealed record NativeComponentProbeResult(
     [property: JsonPropertyName("status")] string Status,
     [property: JsonPropertyName("backend")] string Backend,
     [property: JsonPropertyName("runtime_path")] string RuntimePath,
+    [property: JsonPropertyName("selected_variant")] string? SelectedVariant,
+    [property: JsonPropertyName("available_variants")] IReadOnlyList<string> AvailableVariants,
     [property: JsonPropertyName("publisher")] bool Publisher,
     [property: JsonPropertyName("capabilities")] IReadOnlyList<string> Capabilities,
     [property: JsonPropertyName("source")] NativeBundleSource Source,

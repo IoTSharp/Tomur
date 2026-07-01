@@ -124,6 +124,7 @@ namespace Tomur.Serialization;
 [JsonSerializable(typeof(NativeBundleComponent))]
 [JsonSerializable(typeof(NativeBundleSource))]
 [JsonSerializable(typeof(NativeBundleLibrary))]
+[JsonSerializable(typeof(NativeBundleVariant))]
 [JsonSerializable(typeof(NativeBundleProbeResult))]
 [JsonSerializable(typeof(NativeComponentProbeResult))]
 [JsonSerializable(typeof(NativeLibraryProbeResult))]

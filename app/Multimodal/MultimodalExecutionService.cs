@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using Tomur.Config;
+using Tomur.Hardware;
 using Tomur.Inference;
 using Tomur.Models;
 using Tomur.Native;
@@ -17,19 +18,25 @@ public sealed class MultimodalExecutionService
     private readonly DataPaths paths;
     private readonly LlamaImportResolver importResolver;
     private readonly INativeLibraryResolver libraryResolver;
+    private readonly HardwareAccelerationService? accelerationService;
+    private readonly NativeRuntimePreference runtimePreference;
 
     public MultimodalExecutionService(
         MultimodalRuntimeService runtimeService,
         RuntimeDiagnosticsProvider diagnosticsProvider,
         DataPaths paths,
         LlamaImportResolver importResolver,
-        INativeLibraryResolver libraryResolver)
+        INativeLibraryResolver libraryResolver,
+        HardwareAccelerationService? accelerationService = null,
+        NativeRuntimePreference? runtimePreference = null)
     {
         this.runtimeService = runtimeService;
         this.diagnosticsProvider = diagnosticsProvider;
         this.paths = paths;
         this.importResolver = importResolver;
         this.libraryResolver = libraryResolver;
+        this.accelerationService = accelerationService;
+        this.runtimePreference = runtimePreference ?? new NativeRuntimePreference();
     }
 
     public MultimodalBackendStatus GetBackendStatus(string backendId)
@@ -115,6 +122,7 @@ public sealed class MultimodalExecutionService
         try
         {
             importResolver.Register();
+            var acceleration = ResolveAcceleration(model);
             using var memory = new VlmInteropMemory(model.AbsolutePath, mmprojPath, prompt, images, options.StopSequences);
             var request = new VlmRequest
             {
@@ -126,7 +134,7 @@ public sealed class MultimodalExecutionService
                 ContextSize = Math.Clamp(options.ContextSize, 1024, 131072),
                 BatchSize = 512,
                 Threads = Environment.ProcessorCount,
-                GpuLayers = 0,
+                GpuLayers = acceleration.EffectiveGpuLayers,
                 MaxOutputTokens = Math.Clamp(options.MaxOutputTokens, 1, 4096),
                 Temperature = options.Temperature,
                 TopP = options.TopP,
@@ -138,13 +146,16 @@ public sealed class MultimodalExecutionService
                 Seed = options.Seed,
                 StopSequences = memory.StopSequences,
                 StopSequenceCount = (nuint)memory.StopSequenceCount,
-                UseGpu = false,
-                FlashAttention = false,
+                UseGpu = acceleration.EffectiveGpuLayers > 0,
+                FlashAttention = acceleration.EffectiveGpuLayers > 0,
                 Warmup = false
             };
 
             using var resultHandle = new VlmResultHandle(MultimodalNativeMethods.LlamaVlmGenerate(ref request));
-            return ReadVlmResult(resultHandle);
+            return AddAccelerationDiagnostics(
+                ReadVlmResult(resultHandle),
+                acceleration,
+                nativeRuntime: null);
         }
         catch (Exception exception) when (exception is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
         {
@@ -167,6 +178,9 @@ public sealed class MultimodalExecutionService
         try
         {
             importResolver.Register();
+            var acceleration = ResolveAcceleration(model);
+            var nativeRuntime = ResolveNativeRuntime("ocr", "tomur-ocr", acceleration);
+            using var variantScope = runtimePreference.UsePreferredVariant(nativeRuntime.EffectiveVariant);
             var imageHandle = GCHandle.Alloc(image.Bytes, GCHandleType.Pinned);
             try
             {
@@ -180,16 +194,19 @@ public sealed class MultimodalExecutionService
                     contextSize: Math.Clamp(options.ContextSize, 1024, 131072),
                     batchSize: 512,
                     threads: Environment.ProcessorCount,
-                    gpuLayers: 0,
+                    gpuLayers: nativeRuntime.GpuLayers,
                     maxOutputTokens: Math.Clamp(options.MaxOutputTokens, 16, 4096),
                     temperature: options.Temperature,
                     topP: options.TopP,
                     seed: options.Seed,
-                    useGpu: false,
-                    flashAttention: false,
+                    useGpu: nativeRuntime.UseGpu,
+                    flashAttention: nativeRuntime.UseGpu,
                     warmup: false));
 
-                return ReadOcrResult(resultHandle);
+                return AddAccelerationDiagnostics(
+                    ReadOcrResult(resultHandle),
+                    acceleration,
+                    nativeRuntime);
             }
             finally
             {
@@ -214,11 +231,13 @@ public sealed class MultimodalExecutionService
 
         var started = DateTimeOffset.UtcNow;
         var bundle = ResolveStableDiffusionBundle(model);
-        var nativeResolution = libraryResolver.Resolve("stable-diffusion", "stable-diffusion");
+        var acceleration = ResolveAcceleration(model);
+        var nativeRuntime = ResolveNativeRuntime("stable-diffusion", "stable-diffusion", acceleration);
+        using var variantScope = runtimePreference.UsePreferredVariant(nativeRuntime.EffectiveVariant);
         try
         {
             importResolver.Register();
-            using var memory = new StableDiffusionInteropMemory(bundle, options);
+            using var memory = new StableDiffusionInteropMemory(bundle, options, ResolveStableDiffusionRuntimeBackend(nativeRuntime));
             var contextParameters = new StableDiffusionContextParameters
             {
                 ModelPath = nint.Zero,
@@ -229,12 +248,12 @@ public sealed class MultimodalExecutionService
                 LlmPath = memory.LlmPath,
                 VaePath = memory.VaePath,
                 Threads = Environment.ProcessorCount,
-                OffloadParamsToCpu = ToNativeBool(true),
+                OffloadParamsToCpu = ToNativeBool(!nativeRuntime.UseGpu),
                 EnableMmap = ToNativeBool(false),
                 KeepClipOnCpu = ToNativeBool(false),
                 KeepVaeOnCpu = ToNativeBool(false),
-                FlashAttention = ToNativeBool(false),
-                DiffusionFlashAttention = ToNativeBool(true),
+                FlashAttention = ToNativeBool(nativeRuntime.UseGpu),
+                DiffusionFlashAttention = ToNativeBool(nativeRuntime.UseGpu),
                 VaeDecodeOnly = ToNativeBool(true),
                 FreeParamsImmediately = ToNativeBool(true),
                 Backend = memory.Backend,
@@ -297,11 +316,17 @@ public sealed class MultimodalExecutionService
                     $"cfg-scale: {options.CfgScale:0.##}",
                     $"sample-method: {NormalizeSamplingToken(options.SampleMethod)}",
                     $"scheduler: {NormalizeSamplingToken(options.Scheduler)}",
-                    "backend: te=cpu,vae=cpu",
-                    "params-backend: *=cpu",
-                    "diffusion-flash-attention: true",
-                    $"native-library: {nativeResolution.Path}",
-                    $"native-component-path: {nativeResolution.ComponentRuntimePath}",
+                    $"backend: {memory.BackendLabel}",
+                    $"params-backend: {memory.ParamsBackendLabel}",
+                    $"diffusion-flash-attention: {nativeRuntime.UseGpu}",
+                    $"acceleration: {acceleration.Status}",
+                    $"accelerator: {acceleration.SelectedAcceleratorKey ?? "cpu"}",
+                    $"gpu-layers: {nativeRuntime.GpuLayers}",
+                    $"use-gpu: {nativeRuntime.UseGpu}",
+                    $"native-library: {nativeRuntime.Resolution.Path}",
+                    $"native-component-path: {nativeRuntime.Resolution.ComponentRuntimePath}",
+                    $"native-variant-requested: {nativeRuntime.RequestedVariant}",
+                    $"native-variant: {nativeRuntime.EffectiveVariant}",
                     "format: png"
                 };
                 if (options.DistilledGuidance is { } distilledGuidance)
@@ -355,9 +380,13 @@ public sealed class MultimodalExecutionService
         try
         {
             importResolver.Register();
+            var acceleration = ResolveAcceleration(model);
+            var nativeRuntime = ResolveNativeRuntime("whisper", "whisper", acceleration);
+            using var variantScope = runtimePreference.UsePreferredVariant(nativeRuntime.EffectiveVariant);
             var contextParameters = MultimodalNativeMethods.WhisperContextDefaultParameters();
-            contextParameters.UseGpu = false;
-            contextParameters.FlashAttention = false;
+            contextParameters.UseGpu = nativeRuntime.UseGpu;
+            contextParameters.FlashAttention = nativeRuntime.UseGpu;
+            contextParameters.GpuDevice = nativeRuntime.GpuDeviceIndex;
 
             using var contextHandle = new WhisperContextHandle(
                 MultimodalNativeMethods.WhisperInitFromFileWithParams(model.AbsolutePath, contextParameters));
@@ -417,7 +446,16 @@ public sealed class MultimodalExecutionService
                 "audio-format: wav/pcm16",
                 "sample-rate: 16000",
                 $"samples: {samples.Length}",
-                $"segments: {segmentCount}"
+                $"segments: {segmentCount}",
+                $"acceleration: {acceleration.Status}",
+                $"accelerator: {acceleration.SelectedAcceleratorKey ?? "cpu"}",
+                $"gpu-device: {nativeRuntime.GpuDeviceIndex}",
+                $"gpu-layers: {nativeRuntime.GpuLayers}",
+                $"use-gpu: {contextParameters.UseGpu}",
+                $"native-library: {nativeRuntime.Resolution.Path}",
+                $"native-component-path: {nativeRuntime.Resolution.ComponentRuntimePath}",
+                $"native-variant-requested: {nativeRuntime.RequestedVariant}",
+                $"native-variant: {nativeRuntime.EffectiveVariant}"
             };
             if (!string.IsNullOrWhiteSpace(normalizedLanguage))
             {
@@ -450,6 +488,9 @@ public sealed class MultimodalExecutionService
         try
         {
             importResolver.Register();
+            var acceleration = ResolveAcceleration(model);
+            var nativeRuntime = ResolveNativeRuntime("tts", "tomur-tts", acceleration);
+            using var variantScope = runtimePreference.UsePreferredVariant(nativeRuntime.EffectiveVariant);
             using var memory = new TtsInteropMemory(model.AbsolutePath, voiceModelPath, options);
             var request = new TtsRequest
             {
@@ -459,7 +500,7 @@ public sealed class MultimodalExecutionService
                 SpeakerPromptUtf8 = memory.SpeakerPrompt,
                 SampleRate = 24000,
                 Threads = Environment.ProcessorCount,
-                GpuLayers = 0
+                GpuLayers = nativeRuntime.GpuLayers
             };
 
             using var resultHandle = new TtsResultHandle(MultimodalNativeMethods.TtsSynthesizeToPcm(in request));
@@ -503,13 +544,14 @@ public sealed class MultimodalExecutionService
             Marshal.Copy(result.Pcm, pcmBytes, 0, pcmBytes.Length);
             var sampleRate = result.SampleRate <= 0 ? 24000 : result.SampleRate;
             var wavBytes = EncodePcm16Wav(pcmBytes, sampleRate, channels: 1);
+            var outputDiagnostics = AddAccelerationDiagnostics(diagnostics, acceleration, nativeRuntime);
             return new NativeAudioResult(
                 wavBytes,
                 "wav",
                 "audio/wav",
                 sampleRate,
                 DateTimeOffset.UtcNow - started,
-                diagnostics);
+                outputDiagnostics);
         }
         catch (Exception exception) when (exception is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
         {
@@ -647,6 +689,96 @@ public sealed class MultimodalExecutionService
             ],
             exception);
     }
+
+    private AccelerationPlan ResolveAcceleration(LocalModelDescriptor model)
+        => accelerationService?.ResolvePlan(model)
+            ?? new AccelerationPlan(
+                "cpu",
+                "cpu",
+                "cpu",
+                0,
+                0,
+                0,
+                null,
+                null,
+                [],
+                [],
+                ["Acceleration service is not available in this execution context; CPU runtime variant is used."]);
+
+    private NativeRuntimeSelection ResolveNativeRuntime(
+        string componentId,
+        string libraryName,
+        AccelerationPlan acceleration)
+    {
+        var requestedVariant = ResolveNativeVariant(acceleration);
+        var resolution = libraryResolver.Resolve(componentId, libraryName, requestedVariant);
+        var effectiveVariant = string.IsNullOrWhiteSpace(resolution.Variant)
+            ? requestedVariant
+            : resolution.Variant;
+        var useGpu = IsCudaAcceleration(acceleration) &&
+            string.Equals(effectiveVariant, requestedVariant, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(effectiveVariant, "cuda13", StringComparison.OrdinalIgnoreCase) &&
+            resolution.Exists &&
+            !string.Equals(resolution.ChecksumStatus, "mismatch", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(resolution.ComponentStatus, "error", StringComparison.OrdinalIgnoreCase);
+
+        return new NativeRuntimeSelection(
+            requestedVariant,
+            effectiveVariant,
+            resolution,
+            useGpu ? acceleration.EffectiveGpuLayers : 0,
+            useGpu,
+            useGpu ? ResolveGpuDeviceIndex(acceleration) : 0);
+    }
+
+    private static NativeOperationResult AddAccelerationDiagnostics(
+        NativeOperationResult result,
+        AccelerationPlan acceleration,
+        NativeRuntimeSelection? nativeRuntime)
+        => result with
+        {
+            Diagnostics = AddAccelerationDiagnostics(result.Diagnostics, acceleration, nativeRuntime)
+        };
+
+    private static IReadOnlyList<string> AddAccelerationDiagnostics(
+        IReadOnlyList<string> diagnostics,
+        AccelerationPlan acceleration,
+        NativeRuntimeSelection? nativeRuntime)
+    {
+        var output = new List<string>(diagnostics);
+        output.Add($"acceleration: {acceleration.Status}");
+        output.Add($"accelerator: {acceleration.SelectedAcceleratorKey ?? "cpu"}");
+
+        if (nativeRuntime is not null)
+        {
+            output.Add($"gpu-device: {nativeRuntime.GpuDeviceIndex}");
+            output.Add($"gpu-layers: {nativeRuntime.GpuLayers}");
+            output.Add($"use-gpu: {nativeRuntime.UseGpu}");
+            output.Add($"native-library: {nativeRuntime.Resolution.Path}");
+            output.Add($"native-component-path: {nativeRuntime.Resolution.ComponentRuntimePath}");
+            output.Add($"native-variant-requested: {nativeRuntime.RequestedVariant}");
+            output.Add($"native-variant: {nativeRuntime.EffectiveVariant}");
+        }
+
+        return output;
+    }
+
+    private static string ResolveNativeVariant(AccelerationPlan acceleration)
+        => IsCudaAcceleration(acceleration) ? "cuda13" : "cpu";
+
+    private static int ResolveGpuDeviceIndex(AccelerationPlan acceleration)
+        => IsCudaAcceleration(acceleration) && acceleration.SelectedAccelerator is { } accelerator
+            ? accelerator.DeviceIndex
+            : 0;
+
+    private static string ResolveStableDiffusionRuntimeBackend(NativeRuntimeSelection nativeRuntime)
+        => nativeRuntime.UseGpu
+            ? $"cuda{nativeRuntime.GpuDeviceIndex}"
+            : "cpu";
+
+    private static bool IsCudaAcceleration(AccelerationPlan acceleration)
+        => acceleration.EffectiveGpuLayers > 0 &&
+            string.Equals(acceleration.EffectiveBackend, "cuda", StringComparison.OrdinalIgnoreCase);
 
     private static void EnsureImages(IReadOnlyList<ImageInputBytes> images)
     {
@@ -954,6 +1086,14 @@ public sealed class MultimodalExecutionService
         string VaePath,
         string LlmPath);
 
+    private sealed record NativeRuntimeSelection(
+        string RequestedVariant,
+        string EffectiveVariant,
+        NativeLibraryResolution Resolution,
+        int GpuLayers,
+        bool UseGpu,
+        int GpuDeviceIndex);
+
     private sealed class VlmInteropMemory : IDisposable
     {
         private readonly List<GCHandle> pinnedImages = [];
@@ -1053,8 +1193,16 @@ public sealed class MultimodalExecutionService
         private readonly List<nint> utf8Strings = [];
         private bool disposed;
 
-        public StableDiffusionInteropMemory(StableDiffusionBundle bundle, ImageGenerationOptions options)
+        public StableDiffusionInteropMemory(
+            StableDiffusionBundle bundle,
+            ImageGenerationOptions options,
+            string runtimeBackend)
         {
+            var backend = string.IsNullOrWhiteSpace(runtimeBackend) ? "cpu" : runtimeBackend.Trim();
+            var paramsBackend = string.Equals(backend, "cpu", StringComparison.OrdinalIgnoreCase)
+                ? "cpu"
+                : backend;
+
             DiffusionModelPath = AllocateUtf8(bundle.DiffusionModelPath);
             VaePath = AllocateUtf8(bundle.VaePath);
             LlmPath = AllocateUtf8(bundle.LlmPath);
@@ -1064,8 +1212,10 @@ public sealed class MultimodalExecutionService
                 : AllocateUtf8(options.NegativePrompt);
             SampleMethod = MarshalSamplingToken(options.SampleMethod);
             Scheduler = MarshalSamplingToken(options.Scheduler);
-            Backend = AllocateUtf8("te=cpu,vae=cpu");
-            ParamsBackend = AllocateUtf8("*=cpu");
+            BackendLabel = backend;
+            ParamsBackendLabel = paramsBackend;
+            Backend = AllocateUtf8(backend);
+            ParamsBackend = AllocateUtf8(paramsBackend);
         }
 
         public nint DiffusionModelPath { get; }
@@ -1077,6 +1227,8 @@ public sealed class MultimodalExecutionService
         public nint Scheduler { get; }
         public nint Backend { get; }
         public nint ParamsBackend { get; }
+        public string BackendLabel { get; }
+        public string ParamsBackendLabel { get; }
 
         public void Dispose()
         {

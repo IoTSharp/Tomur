@@ -28,6 +28,15 @@ public sealed class NativeLibraryLoader(INativeLibraryResolver resolver) : INati
                 resolution.Message);
         }
 
+        if (string.Equals(resolution.ComponentStatus, "error", StringComparison.OrdinalIgnoreCase))
+        {
+            return new NativeLibraryLoadResult(
+                resolution,
+                false,
+                null,
+                "Native component is not ready; inspect the bundle probe for missing required libraries or shared dependencies.");
+        }
+
         if (resolution.ChecksumStatus == "mismatch")
         {
             return new NativeLibraryLoadResult(
@@ -103,12 +112,16 @@ public sealed class NativeLibraryLoader(INativeLibraryResolver resolver) : INati
             if (OperatingSystem.IsWindows())
             {
                 _ = AddDllDirectory(fullPath);
+                _ = SetDllDirectory(fullPath);
             }
         }
     }
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern nint AddDllDirectory(string newDirectory);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool SetDllDirectory(string lpPathName);
 
     [DllImport("kernel32.dll", EntryPoint = "LoadLibraryExW", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern nint LoadLibraryEx(string libraryFileName, nint fileHandle, uint flags);

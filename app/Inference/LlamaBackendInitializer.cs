@@ -61,6 +61,13 @@ public sealed class LlamaBackendInitializer
 
         try
         {
+            TryLoadBackendIfPresent("ggml-cuda", resolution.RuntimeRoot);
+            TryLoadBackendIfPresent("ggml-vulkan", resolution.RuntimeRoot);
+            TryLoadBackendIfPresent("ggml-openvino", resolution.RuntimeRoot);
+            TryLoadBackendIfPresent("ggml-sycl", resolution.RuntimeRoot);
+            TryLoadBackendIfPresent("ggml-opencl", resolution.RuntimeRoot);
+            TryLoadBackendIfPresent("ggml-cann", resolution.RuntimeRoot);
+            TryLoadCpuBackend(resolution.RuntimeRoot);
             LlamaNativeMethods.GgmlBackendLoadAllFromPath(resolution.RuntimeRoot);
         }
         catch (EntryPointNotFoundException)
@@ -68,6 +75,40 @@ public sealed class LlamaBackendInitializer
         }
         catch (DllNotFoundException)
         {
+        }
+    }
+
+    private static void TryLoadBackendIfPresent(string libraryName, string runtimeRoot)
+    {
+        var path = NativeBundlePaths.ResolveLibraryPath(libraryName, runtimeRoot);
+        if (!File.Exists(path) || new FileInfo(path).Length == 0)
+        {
+            return;
+        }
+
+        _ = LlamaNativeMethods.GgmlBackendLoad(path);
+    }
+
+    private static void TryLoadCpuBackend(string runtimeRoot)
+    {
+        var preferredNames = new[]
+        {
+            "ggml-cpu-alderlake",
+            "ggml-cpu-haswell",
+            "ggml-cpu-x64",
+            "ggml-cpu"
+        };
+
+        foreach (var name in preferredNames)
+        {
+            var path = NativeBundlePaths.ResolveLibraryPath(name, runtimeRoot);
+            if (!File.Exists(path) || new FileInfo(path).Length == 0)
+            {
+                continue;
+            }
+
+            _ = LlamaNativeMethods.GgmlBackendLoad(path);
+            return;
         }
     }
 }

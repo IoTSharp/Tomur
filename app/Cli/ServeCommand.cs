@@ -134,6 +134,7 @@ internal static class ServeCommand
             new NativeLibraryResolver(provider.GetRequiredService<INativeBundleProbe>()));
         builder.Services.AddSingleton<INativeLibraryLoader>(provider =>
             new NativeLibraryLoader(provider.GetRequiredService<INativeLibraryResolver>()));
+        builder.Services.AddSingleton<NativeRuntimePreference>();
         builder.Services.AddSingleton<LlamaImportResolver>();
         builder.Services.AddSingleton<LlamaBackendInitializer>();
         builder.Services.AddSingleton<HardwareAccelerationService>();

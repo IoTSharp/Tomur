@@ -148,9 +148,10 @@ SD_API bool tomur_sd_generate_png(sd_ctx_t* sd_ctx,
                  generation_params->negative_prompt == NULL ? 0 : std::string_view(generation_params->negative_prompt).size());
     std::fflush(stderr);
 
-    sd_image_t* images = generate_image(sd_ctx, &native_params);
-    if (images == NULL) {
-        std::fprintf(stderr, "tomur_sd_bridge: generate_image returned null\n");
+    sd_image_t* images = NULL;
+    int num_images = 0;
+    if (!generate_image(sd_ctx, &native_params, &images, &num_images) || images == NULL || num_images <= 0) {
+        std::fprintf(stderr, "tomur_sd_bridge: generate_image failed images=%p count=%d\n", images, num_images);
         std::fflush(stderr);
         return false;
     }
@@ -176,7 +177,7 @@ SD_API bool tomur_sd_generate_png(sd_ctx_t* sd_ctx,
         }
     }
 
-    free_sd_images(images, native_params.batch_count);
+    free_sd_images(images, num_images);
     std::fprintf(stderr,
                  "tomur_sd_bridge: generate_png %s encoded_length=%d\n",
                  success ? "ok" : "failed",

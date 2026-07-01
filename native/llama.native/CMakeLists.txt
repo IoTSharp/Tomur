@@ -106,6 +106,8 @@ function(tomur_llama_install_if_target target_name)
     if(WIN32)
         install(TARGETS ${target_name}
             RUNTIME DESTINATION ${LLAMA_NATIVE_DESTINATION}
+            LIBRARY DESTINATION ${LLAMA_NATIVE_DESTINATION}
+            ARCHIVE DESTINATION ${LLAMA_NATIVE_DESTINATION}
         )
     else()
         install(TARGETS ${target_name}

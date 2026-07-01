@@ -85,6 +85,16 @@
       }
     },
     {
+      "name": "windows-x64-cuda13",
+      "displayName": "Windows x64 (CUDA 13 Release)",
+      "inherits": ["windows-x64", "gpu-base"],
+      "cacheVariables": {
+        "GGML_CUDA": "ON",
+        "GGML_CUDA_GRAPHS": "ON",
+        "CMAKE_CUDA_ARCHITECTURES": "89"
+      }
+    },
+    {
       "name": "windows-x64-vulkan",
       "displayName": "Windows x64 (Vulkan Release)",
       "inherits": ["windows-x64", "gpu-base"],
@@ -141,6 +151,11 @@
     {
       "name": "windows-x64-cuda",
       "configurePreset": "windows-x64-cuda",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-x64-cuda13",
+      "configurePreset": "windows-x64-cuda13",
       "configuration": "Release"
     },
     {

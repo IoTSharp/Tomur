@@ -104,9 +104,84 @@ public sealed class NativeBundleProbe : INativeBundleProbe
         string sourceRuntimeRoot,
         string runtimeRoot)
     {
-        var sourceComponentRoot = NativeBundlePaths.ResolveComponentRoot(sourceRuntimeRoot, component);
-        var componentRoot = NativeBundlePaths.ResolveComponentRoot(runtimeRoot, component);
-        var libraries = component.Libraries
+        var variants = ResolveVariants(component);
+        var probedVariants = variants
+            .Select(variant => ProbeVariant(component, variant, sourceRuntimeRoot, runtimeRoot))
+            .OrderByDescending(static variant => variant.Variant.Priority)
+            .ToArray();
+        var selected = probedVariants.FirstOrDefault(static variant => variant.Status == "ok")
+            ?? probedVariants.FirstOrDefault(static variant => variant.Status == "warning")
+            ?? probedVariants.First();
+        var libraries = selected.Libraries;
+        var requiredUnverified = libraries.Any(static library =>
+            library.Required && library.Exists && library.ChecksumStatus == "unverified");
+        var optionalIssue = libraries.Any(static library =>
+            !library.Required && library.Exists && library.ChecksumStatus is "mismatch" or "unverified");
+        var status = selected.Status == "ok" && (requiredUnverified || optionalIssue)
+            ? "warning"
+            : selected.Status;
+        var message = status switch
+        {
+            "ok" => selected.Variant.Id == "default"
+                ? "Required native libraries are present; optional accelerator libraries may be absent."
+                : $"Required native libraries are present for variant '{selected.Variant.Id}'.",
+            "warning" => selected.Variant.Id == "default"
+                ? "Required native libraries are present, but some present optional libraries are unverified or damaged."
+                : $"Required native libraries are present for variant '{selected.Variant.Id}', but some libraries are unverified or damaged.",
+            _ => selected.Variant.Id == "default"
+                ? "A required native library is missing or failed checksum verification."
+                : $"A required native library is missing or damaged for preferred variant '{selected.Variant.Id}'."
+        };
+
+        return new NativeComponentProbeResult(
+            component.Id,
+            component.DisplayName,
+            status,
+            selected.Variant.Backend,
+            selected.ComponentRoot,
+            selected.Variant.Id,
+            probedVariants
+                .Where(static variant => variant.Status is "ok" or "warning")
+                .Select(static variant => variant.Variant.Id)
+                .ToArray(),
+            component.Publisher,
+            component.Capabilities,
+            component.Source,
+            component.WrapperPath,
+            component.SharedDependencies,
+            libraries,
+            message);
+    }
+
+    private static IReadOnlyList<NativeBundleVariant> ResolveVariants(NativeBundleComponent component)
+    {
+        if (component.Variants is { Count: > 0 } variants)
+        {
+            return variants;
+        }
+
+        return
+        [
+            new NativeBundleVariant(
+                "default",
+                component.DisplayName,
+                component.Backend,
+                component.RuntimePath,
+                0,
+                [],
+                component.Libraries)
+        ];
+    }
+
+    private static ProbedVariant ProbeVariant(
+        NativeBundleComponent component,
+        NativeBundleVariant variant,
+        string sourceRuntimeRoot,
+        string runtimeRoot)
+    {
+        var sourceComponentRoot = NativeBundlePaths.ResolveComponentRoot(sourceRuntimeRoot, variant.RuntimePath);
+        var componentRoot = NativeBundlePaths.ResolveComponentRoot(runtimeRoot, variant.RuntimePath);
+        var libraries = (variant.Libraries ?? component.Libraries)
             .Select(library => ProbeLibrary(library, sourceComponentRoot, componentRoot))
             .ToArray();
         var requiredProblem = libraries.Any(static library =>
@@ -115,27 +190,24 @@ public sealed class NativeBundleProbe : INativeBundleProbe
             library.Required && library.Exists && library.ChecksumStatus == "unverified");
         var optionalIssue = libraries.Any(static library =>
             !library.Required && library.Exists && library.ChecksumStatus is "mismatch" or "unverified");
-        var status = requiredProblem ? "error" : requiredUnverified || optionalIssue ? "warning" : "ok";
-        var message = status switch
-        {
-            "ok" => "Required native libraries are present; optional accelerator libraries may be absent.",
-            "warning" => "Required native libraries are present, but some present optional libraries are unverified or damaged.",
-            _ => "A required native library is missing or failed checksum verification."
-        };
 
-        return new NativeComponentProbeResult(
-            component.Id,
-            component.DisplayName,
-            status,
-            component.Backend,
-            componentRoot,
-            component.Publisher,
-            component.Capabilities,
-            component.Source,
-            component.WrapperPath,
-            component.SharedDependencies,
-            libraries,
-            message);
+        var requiredBackendProblem = variant.RequiredBackends.Any(requiredBackend =>
+            !RuntimeBackendCatalogProbe(runtimeRoot, requiredBackend));
+        var requiredSharedDependencyProblem = component.SharedDependencies.Any(sharedDependency =>
+            !RuntimeBackendCatalogProbe(runtimeRoot, sharedDependency));
+        var status = requiredProblem || requiredBackendProblem || requiredSharedDependencyProblem
+            ? "error"
+            : requiredUnverified || optionalIssue
+                ? "warning"
+                : "ok";
+
+        return new ProbedVariant(variant, componentRoot, libraries, status);
+    }
+
+    private static bool RuntimeBackendCatalogProbe(string runtimeRoot, string libraryName)
+    {
+        var path = NativeBundlePaths.ResolveLibraryPath(libraryName, runtimeRoot);
+        return File.Exists(path) && new FileInfo(path).Length > 0;
     }
 
     private static NativeLibraryProbeResult ProbeLibrary(
@@ -204,4 +276,10 @@ public sealed class NativeBundleProbe : INativeBundleProbe
 
         return "ok";
     }
+
+    private sealed record ProbedVariant(
+        NativeBundleVariant Variant,
+        string ComponentRoot,
+        IReadOnlyList<NativeLibraryProbeResult> Libraries,
+        string Status);
 }

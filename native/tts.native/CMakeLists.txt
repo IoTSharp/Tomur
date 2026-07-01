@@ -40,6 +40,7 @@ include(GNUInstallDirs)
 list(PREPEND CMAKE_PREFIX_PATH "${CMAKE_CURRENT_SOURCE_DIR}/..")
 
 find_package(llama CONFIG REQUIRED)
+find_package(ggml CONFIG REQUIRED)
 find_package(Threads REQUIRED)
 
 add_library(tomur-tts SHARED tts_bridge.cpp)
@@ -48,6 +49,11 @@ target_include_directories(tomur-tts PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../llama.cpp/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/../llama.cpp/vendor")
 target_link_libraries(tomur-tts PRIVATE llama Threads::Threads)
+if(TTS_NATIVE_BACKEND MATCHES "cuda")
+    if(TARGET ggml::ggml-cuda)
+        target_link_libraries(tomur-tts PRIVATE ggml::ggml-cuda)
+    endif()
+endif()
 set_target_properties(tomur-tts PROPERTIES
     OUTPUT_NAME "tomur-tts"
     POSITION_INDEPENDENT_CODE ON)

@@ -6,6 +6,9 @@ namespace Tomur.Cli;
 internal static class ProcessRunner
 {
     public static int Run(string fileName, params string[] arguments)
+        => RunInDirectory(null, fileName, arguments);
+
+    public static int RunInDirectory(string? workingDirectory, string fileName, params string[] arguments)
     {
         try
         {
@@ -14,7 +17,10 @@ internal static class ProcessRunner
             {
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
-                RedirectStandardError = true
+                RedirectStandardError = true,
+                WorkingDirectory = string.IsNullOrWhiteSpace(workingDirectory)
+                    ? string.Empty
+                    : workingDirectory
             };
 
             foreach (var argument in arguments)
@@ -23,9 +29,11 @@ internal static class ProcessRunner
             }
 
             process.Start();
-            var stdout = process.StandardOutput.ReadToEnd();
-            var stderr = process.StandardError.ReadToEnd();
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+            var stderrTask = process.StandardError.ReadToEndAsync();
             process.WaitForExit();
+            var stdout = stdoutTask.GetAwaiter().GetResult();
+            var stderr = stderrTask.GetAwaiter().GetResult();
 
             if (!string.IsNullOrWhiteSpace(stdout))
             {

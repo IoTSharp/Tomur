@@ -17,6 +17,10 @@ internal static partial class LlamaNativeMethods
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial void GgmlBackendLoadAllFromPath(string directoryPath);
 
+    [LibraryImport(GgmlLibraryName, EntryPoint = "ggml_backend_load", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial nint GgmlBackendLoad(string path);
+
     [LibraryImport(GgmlLibraryName, EntryPoint = "ggml_backend_dev_count")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial nuint BackendDeviceCount();

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "bundle_id": "tomur.native.r3",
-  "version": "0.3.0-r3",
+  "bundle_id": "tomur.native.r8.cuda13",
+  "version": "0.8.0-cuda13",
   "runtime_root": "runtimes/{rid}/native",
   "components": [
     {
@@ -23,7 +23,19 @@
         { "name": "ggml", "required": true },
         { "name": "ggml-base", "required": true },
         { "name": "ggml-cpu", "required": true },
+        { "name": "ggml-cpu-alderlake", "required": false },
+        { "name": "ggml-cpu-cannonlake", "required": false },
+        { "name": "ggml-cpu-cascadelake", "required": false },
+        { "name": "ggml-cpu-haswell", "required": false },
+        { "name": "ggml-cpu-icelake", "required": false },
+        { "name": "ggml-cpu-sandybridge", "required": false },
+        { "name": "ggml-cpu-skylakex", "required": false },
+        { "name": "ggml-cpu-sse42", "required": false },
+        { "name": "ggml-cpu-x64", "required": false },
         { "name": "ggml-cuda", "required": false },
+        { "name": "cublas64_13", "required": false },
+        { "name": "cublasLt64_13", "required": false },
+        { "name": "cudart64_13", "required": false },
         { "name": "ggml-cann", "required": false },
         { "name": "ggml-metal", "required": false },
         { "name": "ggml-vulkan", "required": false },
@@ -46,8 +58,32 @@
         "license": "MIT"
       },
       "wrapper_path": "native/whisper.native",
-      "backend": "cpu",
+      "backend": "auto",
       "runtime_path": "whisper/cpu",
+      "variants": [
+        {
+          "id": "cuda13",
+          "display_name": "Whisper CUDA 13",
+          "backend": "cuda",
+          "runtime_path": "whisper/cuda13",
+          "priority": 100,
+          "required_backends": [ "ggml-cuda" ],
+          "libraries": [
+            { "name": "whisper", "required": true }
+          ]
+        },
+        {
+          "id": "cpu",
+          "display_name": "Whisper CPU",
+          "backend": "cpu",
+          "runtime_path": "whisper/cpu",
+          "priority": 10,
+          "required_backends": [],
+          "libraries": [
+            { "name": "whisper", "required": true }
+          ]
+        }
+      ],
       "publisher": false,
       "libraries": [
         { "name": "whisper", "required": true }
@@ -65,8 +101,32 @@
         "license": "MIT"
       },
       "wrapper_path": "native/stable-diffusion.native",
-      "backend": "cpu",
+      "backend": "auto",
       "runtime_path": "stable-diffusion/cpu",
+      "variants": [
+        {
+          "id": "cuda13",
+          "display_name": "stable-diffusion.cpp CUDA 13",
+          "backend": "cuda",
+          "runtime_path": "stable-diffusion/cuda13",
+          "priority": 100,
+          "required_backends": [ "ggml-cuda" ],
+          "libraries": [
+            { "name": "stable-diffusion", "required": true }
+          ]
+        },
+        {
+          "id": "cpu",
+          "display_name": "stable-diffusion.cpp CPU",
+          "backend": "cpu",
+          "runtime_path": "stable-diffusion/cpu",
+          "priority": 10,
+          "required_backends": [],
+          "libraries": [
+            { "name": "stable-diffusion", "required": true }
+          ]
+        }
+      ],
       "publisher": false,
       "libraries": [
         { "name": "stable-diffusion", "required": true }
@@ -84,8 +144,34 @@
         "license": "Apache-2.0"
       },
       "wrapper_path": "native/ocr.native",
-      "backend": "cpu",
+      "backend": "auto",
       "runtime_path": "ocr/cpu",
+      "variants": [
+        {
+          "id": "cuda13",
+          "display_name": "PaddleOCR-VL CUDA 13",
+          "backend": "cuda",
+          "runtime_path": "ocr/cuda13",
+          "priority": 100,
+          "required_backends": [ "ggml-cuda" ],
+          "libraries": [
+            { "name": "tomur-ocr", "required": true },
+            { "name": "tomur-mtmd", "required": true }
+          ]
+        },
+        {
+          "id": "cpu",
+          "display_name": "PaddleOCR-VL CPU",
+          "backend": "cpu",
+          "runtime_path": "ocr/cpu",
+          "priority": 10,
+          "required_backends": [],
+          "libraries": [
+            { "name": "tomur-ocr", "required": true },
+            { "name": "tomur-mtmd", "required": true }
+          ]
+        }
+      ],
       "publisher": false,
       "libraries": [
         { "name": "tomur-ocr", "required": true },
@@ -104,8 +190,32 @@
         "license": "MIT"
       },
       "wrapper_path": "native/tts.native",
-      "backend": "cpu",
+      "backend": "auto",
       "runtime_path": "tts/cpu",
+      "variants": [
+        {
+          "id": "cuda13",
+          "display_name": "llama.cpp GGUF TTS CUDA 13",
+          "backend": "cuda",
+          "runtime_path": "tts/cuda13",
+          "priority": 100,
+          "required_backends": [ "ggml-cuda" ],
+          "libraries": [
+            { "name": "tomur-tts", "required": true }
+          ]
+        },
+        {
+          "id": "cpu",
+          "display_name": "llama.cpp GGUF TTS CPU",
+          "backend": "cpu",
+          "runtime_path": "tts/cpu",
+          "priority": 10,
+          "required_backends": [],
+          "libraries": [
+            { "name": "tomur-tts", "required": true }
+          ]
+        }
+      ],
       "publisher": false,
       "libraries": [
         { "name": "tomur-tts", "required": true }

@@ -6,7 +6,7 @@ internal static class RuntimeBackendCatalog
 {
     private static readonly BackendDefinition[] Backends =
     [
-        new("cuda", "CUDA", "ggml-cuda", "NVIDIA CUDA runtime backend."),
+        new("cuda", "CUDA / CUDA 13", "ggml-cuda", "NVIDIA CUDA runtime backend, including CUDA 13 builds."),
         new("cann", "CANN / NPU", "ggml-cann", "Huawei Ascend CANN NPU runtime backend."),
         new("metal", "Metal", "ggml-metal", "Apple Metal runtime backend."),
         new("vulkan", "Vulkan", "ggml-vulkan", "Vulkan GPU runtime backend."),

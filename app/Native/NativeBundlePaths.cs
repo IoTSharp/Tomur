@@ -66,10 +66,13 @@ internal static class NativeBundlePaths
     }
 
     public static string ResolveComponentRoot(string runtimeRoot, NativeBundleComponent component)
+        => ResolveComponentRoot(runtimeRoot, component.RuntimePath);
+
+    public static string ResolveComponentRoot(string runtimeRoot, string runtimePath)
     {
-        return component.RuntimePath == "."
+        return runtimePath == "."
             ? runtimeRoot
-            : Path.GetFullPath(Path.Combine(runtimeRoot, component.RuntimePath.Replace('/', Path.DirectorySeparatorChar)));
+            : Path.GetFullPath(Path.Combine(runtimeRoot, runtimePath.Replace('/', Path.DirectorySeparatorChar)));
     }
 
     public static string ResolveLibraryPath(string libraryName, string directory)

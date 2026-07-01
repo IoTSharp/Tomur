@@ -41,6 +41,7 @@ set(LLAMA_CPP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../llama.cpp" CACHE PATH "llama.c
 list(PREPEND CMAKE_PREFIX_PATH "${CMAKE_CURRENT_SOURCE_DIR}/..")
 
 find_package(llama CONFIG REQUIRED)
+find_package(ggml CONFIG REQUIRED)
 find_package(Threads REQUIRED)
 
 set(MTMD_DIR "${LLAMA_CPP_DIR}/tools/mtmd")
@@ -68,6 +69,11 @@ target_include_directories(tomur_mtmd
         "${LLAMA_CPP_DIR}/vendor")
 target_link_libraries(tomur_mtmd PUBLIC llama)
 target_link_libraries(tomur_mtmd PRIVATE Threads::Threads)
+if(OCR_NATIVE_BACKEND MATCHES "cuda")
+    if(TARGET ggml::ggml-cuda)
+        target_link_libraries(tomur_mtmd PRIVATE ggml::ggml-cuda)
+    endif()
+endif()
 set_target_properties(tomur_mtmd PROPERTIES POSITION_INDEPENDENT_CODE ON)
 set_target_properties(tomur_mtmd PROPERTIES
     OUTPUT_NAME "tomur-mtmd")
@@ -84,6 +90,11 @@ target_include_directories(tomur-ocr
         "${LLAMA_CPP_DIR}/include"
         "${LLAMA_CPP_DIR}/ggml/include")
 target_link_libraries(tomur-ocr PRIVATE tomur_mtmd llama ${CMAKE_DL_LIBS})
+if(OCR_NATIVE_BACKEND MATCHES "cuda")
+    if(TARGET ggml::ggml-cuda)
+        target_link_libraries(tomur-ocr PRIVATE ggml::ggml-cuda)
+    endif()
+endif()
 set_target_properties(tomur-ocr PROPERTIES
     OUTPUT_NAME "tomur-ocr"
     POSITION_INDEPENDENT_CODE ON)

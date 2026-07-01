@@ -10,10 +10,12 @@ public sealed class LlamaImportResolver
     private static bool registered;
 
     private readonly INativeLibraryResolver resolver;
+    private readonly NativeRuntimePreference runtimePreference;
 
-    public LlamaImportResolver(INativeLibraryResolver resolver)
+    public LlamaImportResolver(INativeLibraryResolver resolver, NativeRuntimePreference? runtimePreference = null)
     {
         this.resolver = resolver;
+        this.runtimePreference = runtimePreference ?? new NativeRuntimePreference();
     }
 
     public void Register()
@@ -39,8 +41,10 @@ public sealed class LlamaImportResolver
             return IntPtr.Zero;
         }
 
-        var resolution = resolver.Resolve(componentId, normalized);
-        if (!resolution.Exists || resolution.ChecksumStatus == "mismatch")
+        var resolution = resolver.Resolve(componentId, normalized, ResolvePreferredVariant(componentId));
+        if (!resolution.Exists ||
+            resolution.ChecksumStatus == "mismatch" ||
+            string.Equals(resolution.ComponentStatus, "error", StringComparison.OrdinalIgnoreCase))
         {
             return IntPtr.Zero;
         }
@@ -86,4 +90,9 @@ public sealed class LlamaImportResolver
             _ => null
         };
     }
+
+    private string? ResolvePreferredVariant(string componentId)
+        => componentId is "whisper" or "ocr" or "tts" or "stable-diffusion"
+            ? runtimePreference.PreferredVariant
+            : null;
 }

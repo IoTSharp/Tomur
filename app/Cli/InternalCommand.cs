@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Tomur.Config;
+using Tomur.Hardware;
 using Tomur.Inference;
 using Tomur.Multimodal;
 using Tomur.Native;
@@ -72,12 +73,22 @@ internal static class InternalCommand
 
             var nativeProbe = new NativeBundleProbe(paths);
             var resolver = new NativeLibraryResolver(nativeProbe);
+            var runtimePreference = new NativeRuntimePreference();
+            var importResolver = new LlamaImportResolver(resolver, runtimePreference);
+            var backendInitializer = new LlamaBackendInitializer(importResolver, resolver);
+            var accelerationService = new HardwareAccelerationService(backendInitializer, nativeProbe);
             var execution = new MultimodalExecutionService(
                 new MultimodalRuntimeService(nativeProbe, modelCatalog),
-                new RuntimeDiagnosticsProvider(new ConfigurationStore(paths), paths, nativeProbe),
+                new RuntimeDiagnosticsProvider(
+                    new ConfigurationStore(paths),
+                    paths,
+                    nativeProbe,
+                    accelerationService: accelerationService),
                 paths,
-                new LlamaImportResolver(resolver),
-                resolver);
+                importResolver,
+                resolver,
+                accelerationService,
+                runtimePreference);
 
             var result = execution.GenerateImage(model, request.Options, CancellationToken.None);
             WriteResponse(responsePath, new ImageGenerationWorkerResponse(
