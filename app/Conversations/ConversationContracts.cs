@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Tomur.Agents;
 using Tomur.Runtime;
 
 namespace Tomur.Conversations;
@@ -68,6 +69,68 @@ public sealed record ConversationAppendDiagnosticResponse(
     [property: JsonPropertyName("status")] string Status,
     [property: JsonPropertyName("conversation")] ConversationRecord Conversation,
     [property: JsonPropertyName("diagnostic")] ConversationDiagnosticRecord Diagnostic);
+
+public sealed record ConversationTurnRequest(
+    [property: JsonPropertyName("content")] string? Content,
+    [property: JsonPropertyName("modality")] string? Modality,
+    [property: JsonPropertyName("model")] string? Model,
+    [property: JsonPropertyName("attachments")] IReadOnlyList<ConversationAttachment>? Attachments,
+    [property: JsonPropertyName("tool_mode")] string? ToolMode,
+    [property: JsonPropertyName("tools")] IReadOnlyList<AgentChatToolRequest>? Tools,
+    [property: JsonPropertyName("max_tool_rounds")] int? MaxToolRounds,
+    [property: JsonPropertyName("instructions")] string? Instructions,
+    [property: JsonPropertyName("max_tokens")] int? MaxTokens,
+    [property: JsonPropertyName("temperature")] double? Temperature,
+    [property: JsonPropertyName("top_p")] double? TopP,
+    [property: JsonPropertyName("history_limit")] int? HistoryLimit,
+    [property: JsonPropertyName("metadata")] JsonElement? Metadata);
+
+public sealed record ConversationTurnResponse(
+    [property: JsonPropertyName("status")] string Status,
+    [property: JsonPropertyName("conversation")] ConversationRecord Conversation,
+    [property: JsonPropertyName("messages")] IReadOnlyList<ConversationMessageRecord> Messages,
+    [property: JsonPropertyName("user_message")] ConversationMessageRecord UserMessage,
+    [property: JsonPropertyName("tool_message")] ConversationMessageRecord? ToolMessage,
+    [property: JsonPropertyName("assistant_message")] ConversationMessageRecord? AssistantMessage,
+    [property: JsonPropertyName("diagnostics")] IReadOnlyList<ConversationDiagnosticRecord> Diagnostics,
+    [property: JsonPropertyName("agent")] AgentChatResponse? Agent);
+
+public sealed record ConversationVoiceTurnRequest(
+    [property: JsonPropertyName("audio_base64")] string? AudioBase64,
+    [property: JsonPropertyName("audio_data_uri")] string? AudioDataUri,
+    [property: JsonPropertyName("audio_media_type")] string? AudioMediaType,
+    [property: JsonPropertyName("audio_name")] string? AudioName,
+    [property: JsonPropertyName("language")] string? Language,
+    [property: JsonPropertyName("asr_model")] string? AsrModel,
+    [property: JsonPropertyName("model")] string? Model,
+    [property: JsonPropertyName("tts_model")] string? TtsModel,
+    [property: JsonPropertyName("speak")] bool? Speak,
+    [property: JsonPropertyName("voice")] string? Voice,
+    [property: JsonPropertyName("response_format")] string? ResponseFormat,
+    [property: JsonPropertyName("speed")] double? Speed,
+    [property: JsonPropertyName("tool_mode")] string? ToolMode,
+    [property: JsonPropertyName("tools")] IReadOnlyList<AgentChatToolRequest>? Tools,
+    [property: JsonPropertyName("max_tool_rounds")] int? MaxToolRounds,
+    [property: JsonPropertyName("instructions")] string? Instructions,
+    [property: JsonPropertyName("max_tokens")] int? MaxTokens,
+    [property: JsonPropertyName("temperature")] double? Temperature,
+    [property: JsonPropertyName("top_p")] double? TopP,
+    [property: JsonPropertyName("history_limit")] int? HistoryLimit,
+    [property: JsonPropertyName("metadata")] JsonElement? Metadata);
+
+public sealed record ConversationVoiceTurnResponse(
+    [property: JsonPropertyName("status")] string Status,
+    [property: JsonPropertyName("conversation")] ConversationRecord Conversation,
+    [property: JsonPropertyName("transcript")] string? Transcript,
+    [property: JsonPropertyName("input_artifact")] ConversationArtifactRecord? InputArtifact,
+    [property: JsonPropertyName("user_message")] ConversationMessageRecord? UserMessage,
+    [property: JsonPropertyName("tool_message")] ConversationMessageRecord? ToolMessage,
+    [property: JsonPropertyName("assistant_message")] ConversationMessageRecord? AssistantMessage,
+    [property: JsonPropertyName("speech_artifact")] ConversationArtifactRecord? SpeechArtifact,
+    [property: JsonPropertyName("diagnostics")] IReadOnlyList<ConversationDiagnosticRecord> Diagnostics,
+    [property: JsonPropertyName("turn")] ConversationTurnResponse? Turn,
+    [property: JsonPropertyName("speech_media_type")] string? SpeechMediaType,
+    [property: JsonPropertyName("speech_bytes")] long? SpeechBytes);
 
 public sealed record ConversationRecord(
     [property: JsonPropertyName("id")] string Id,

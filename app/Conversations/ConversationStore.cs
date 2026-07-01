@@ -75,6 +75,17 @@ public sealed class ConversationStore
             ListDiagnostics(connection, id, normalizedLimit));
     }
 
+    public IReadOnlyList<ConversationMessageRecord> ListRecentMessages(
+        string conversationId,
+        int? limit)
+    {
+        var id = NormalizeId(conversationId);
+        using var connection = database.OpenConnection();
+        _ = GetConversation(connection, id);
+        var normalizedLimit = NormalizeLimit(limit, DefaultDetailLimit, MaxDetailLimit);
+        return ListRecentMessages(connection, id, normalizedLimit);
+    }
+
     public ConversationRecord Create(ConversationCreateRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -474,23 +485,81 @@ public sealed class ConversationStore
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
-            messages.Add(new ConversationMessageRecord(
-                reader.GetString(0),
-                reader.GetString(1),
-                reader.GetString(2),
-                reader.GetString(3),
-                reader.GetString(4),
-                reader.GetString(5),
-                reader.IsDBNull(6) ? null : reader.GetString(6),
-                ParseDate(reader.GetString(7)),
-                DeserializeArray(reader.IsDBNull(8) ? null : reader.GetString(8), AppJsonSerializerContext.Default.ConversationAttachmentArray),
-                DeserializeArray(reader.IsDBNull(9) ? null : reader.GetString(9), AppJsonSerializerContext.Default.ConversationToolCallArray),
-                DeserializeArray(reader.IsDBNull(10) ? null : reader.GetString(10), AppJsonSerializerContext.Default.StringArray),
-                ParseJsonElement(reader.IsDBNull(11) ? null : reader.GetString(11))));
+            messages.Add(ReadMessage(reader));
         }
 
         return messages;
     }
+
+    private static IReadOnlyList<ConversationMessageRecord> ListRecentMessages(
+        SqliteConnection connection,
+        string conversationId,
+        int limit)
+    {
+        var messages = new List<ConversationMessageRecord>();
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT
+                id,
+                conversation_id,
+                role,
+                content,
+                modality,
+                status,
+                model,
+                created_at,
+                attachments_json,
+                tool_calls_json,
+                artifact_ids_json,
+                metadata_json
+            FROM (
+                SELECT
+                    id,
+                    conversation_id,
+                    role,
+                    content,
+                    modality,
+                    status,
+                    model,
+                    created_at,
+                    attachments_json,
+                    tool_calls_json,
+                    artifact_ids_json,
+                    metadata_json
+                FROM conversation_messages
+                WHERE conversation_id = $conversation_id
+                ORDER BY created_at DESC
+                LIMIT $limit
+            ) AS recent
+            ORDER BY created_at ASC;
+            """;
+        command.Parameters.AddWithValue("$conversation_id", conversationId);
+        command.Parameters.AddWithValue("$limit", limit);
+
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            messages.Add(ReadMessage(reader));
+        }
+
+        return messages;
+    }
+
+    private static ConversationMessageRecord ReadMessage(SqliteDataReader reader)
+        => new(
+            reader.GetString(0),
+            reader.GetString(1),
+            reader.GetString(2),
+            reader.GetString(3),
+            reader.GetString(4),
+            reader.GetString(5),
+            reader.IsDBNull(6) ? null : reader.GetString(6),
+            ParseDate(reader.GetString(7)),
+            DeserializeArray(reader.IsDBNull(8) ? null : reader.GetString(8), AppJsonSerializerContext.Default.ConversationAttachmentArray),
+            DeserializeArray(reader.IsDBNull(9) ? null : reader.GetString(9), AppJsonSerializerContext.Default.ConversationToolCallArray),
+            DeserializeArray(reader.IsDBNull(10) ? null : reader.GetString(10), AppJsonSerializerContext.Default.StringArray),
+            ParseJsonElement(reader.IsDBNull(11) ? null : reader.GetString(11)));
 
     private static IReadOnlyList<ConversationArtifactRecord> ListArtifacts(
         SqliteConnection connection,

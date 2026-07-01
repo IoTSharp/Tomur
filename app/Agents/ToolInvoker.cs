@@ -8,15 +8,18 @@ public sealed class ToolInvoker
     private readonly AgentRuntimeService agentRuntime;
     private readonly ToolFactory toolFactory;
     private readonly AgentEventLog eventLog;
+    private readonly AgentTelemetry telemetry;
 
     public ToolInvoker(
         AgentRuntimeService agentRuntime,
         ToolFactory toolFactory,
-        AgentEventLog eventLog)
+        AgentEventLog eventLog,
+        AgentTelemetry telemetry)
     {
         this.agentRuntime = agentRuntime;
         this.toolFactory = toolFactory;
         this.eventLog = eventLog;
+        this.telemetry = telemetry;
     }
 
     public async Task<AgentToolInvokeResponse> InvokeAsync(
@@ -58,6 +61,7 @@ public sealed class ToolInvoker
                 ["Use GET /api/agents/tools to inspect the current local tool map."]);
         }
 
+        using var activity = telemetry.StartToolInvocation(toolName, invocationKind, auditMode);
         var safeTool = toolFactory.CreateSafeReadOnlyTools().FirstOrDefault(tool =>
             string.Equals(tool.Name, toolName, StringComparison.OrdinalIgnoreCase));
         if (safeTool is ILocalAgentTool invokable)
@@ -83,6 +87,7 @@ public sealed class ToolInvoker
                     descriptor.SideEffect,
                     false,
                     descriptor.Actions));
+            telemetry.CompleteToolInvocation(activity, response);
             await eventLog.WriteToolInvocationAsync(response, invocationKind, cancellationToken).ConfigureAwait(false);
             return response;
         }
@@ -115,6 +120,7 @@ public sealed class ToolInvoker
                 descriptor.SideEffect,
                 descriptor.RequiresConfirmation,
                 blocked.Actions));
+        telemetry.CompleteToolInvocation(activity, blockedResponse);
         await eventLog.WriteToolInvocationAsync(blockedResponse, invocationKind, cancellationToken).ConfigureAwait(false);
         return blockedResponse;
     }

@@ -19,6 +19,7 @@ public sealed class AgentRuntimeService
     private readonly MultimodalRuntimeService multimodalRuntime;
     private readonly LocalChatClient chatClient;
     private readonly AgentEventLog eventLog;
+    private readonly AgentTelemetry telemetry;
     private readonly IServiceProvider services;
 
     public AgentRuntimeService(
@@ -26,12 +27,14 @@ public sealed class AgentRuntimeService
         MultimodalRuntimeService multimodalRuntime,
         LocalChatClient chatClient,
         AgentEventLog eventLog,
+        AgentTelemetry telemetry,
         IServiceProvider services)
     {
         this.modelCatalog = modelCatalog;
         this.multimodalRuntime = multimodalRuntime;
         this.chatClient = chatClient;
         this.eventLog = eventLog;
+        this.telemetry = telemetry;
         this.services = services;
     }
 
@@ -62,6 +65,7 @@ public sealed class AgentRuntimeService
                     "GET /api/agents/tools exposes the Tomur tool map.",
                     "GET /api/agents/tool-bindings exposes the current AITool binding set.",
                     "GET /api/agents/events exposes recent local Agent Framework event summaries.",
+                    "GET /api/agents/telemetry exposes the local ActivitySource span and attribute draft for future OpenTelemetry wiring.",
                     "POST /api/agents/tools/invoke can invoke runtime.diagnose and tools.inspect as read-only tools.",
                     "POST /api/agents/workflows/read-only runs a bounded Tomur read-only tool plan and can ask an Agent Framework workflow-hosted ChatClientAgent to summarize the results.",
                     "Use /api/agents/runtime to inspect the local tool map.",
@@ -106,6 +110,7 @@ public sealed class AgentRuntimeService
         var maxToolRounds = NormalizeMaxToolRounds(request.MaxToolRounds);
         var started = DateTimeOffset.UtcNow;
         var toolCalls = new List<AgentChatToolCall>();
+        using var activity = telemetry.StartChat(request, AgentRuntime);
 
         if (requestedToolMode is "read_only" or "auto_read_only")
         {
@@ -153,6 +158,7 @@ public sealed class AgentRuntimeService
             response.Text ?? string.Empty,
             (long)Math.Round((DateTimeOffset.UtcNow - started).TotalMilliseconds),
             BuildChatDiagnostics(requestedToolMode, toolCalls));
+        telemetry.CompleteChat(activity, agentResponse);
         await eventLog.WriteChatAsync(agentResponse, cancellationToken).ConfigureAwait(false);
         return agentResponse;
     }
@@ -168,6 +174,7 @@ public sealed class AgentRuntimeService
         var started = DateTimeOffset.UtcNow;
         var messages = BuildMessagesForWorkflow(request);
         var maxToolRounds = NormalizeMaxToolRounds(request.MaxToolRounds);
+        using var activity = telemetry.StartWorkflow(request, WorkflowRuntime);
         var toolRequests = request.Tools is { Count: > 0 }
             ? NormalizeRequestedTools(request.Tools, maxToolRounds)
             : ResolveAutoReadOnlyTools(null, messages, maxToolRounds);
@@ -220,6 +227,7 @@ public sealed class AgentRuntimeService
             text,
             (long)Math.Round((DateTimeOffset.UtcNow - started).TotalMilliseconds),
             BuildWorkflowDiagnostics(steps, shouldRespond));
+        telemetry.CompleteWorkflow(activity, workflowResponse);
         await eventLog.WriteWorkflowAsync(workflowResponse, cancellationToken).ConfigureAwait(false);
         return workflowResponse;
     }

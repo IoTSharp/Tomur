@@ -132,6 +132,7 @@ internal static class ServeCommand
         builder.Services.AddSingleton(state.ConfigurationStore);
         builder.Services.AddSingleton<LocalDatabaseInitializer>();
         builder.Services.AddSingleton<ConversationStore>();
+        builder.Services.AddSingleton<ConversationOrchestrationService>();
         builder.Services.AddSingleton<INativeBundleProbe>(state.NativeBundleProbe);
         builder.Services.AddSingleton<INativeBundlePreparer, NativeBundlePreparer>();
         builder.Services.AddSingleton<INativeLibraryResolver>(provider =>
@@ -151,6 +152,7 @@ internal static class ServeCommand
         builder.Services.AddSingleton<MultimodalExecutionService>();
         builder.Services.AddSingleton<IsolatedImageGenerationService>();
         builder.Services.AddSingleton<AgentEventLog>();
+        builder.Services.AddSingleton<AgentTelemetry>();
         builder.Services.AddSingleton<AgentRuntimeService>();
         builder.Services.AddSingleton<ToolFactory>();
         builder.Services.AddSingleton<ToolInvoker>();

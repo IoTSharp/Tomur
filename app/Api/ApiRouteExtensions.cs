@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Runtime.InteropServices;
+using System.Globalization;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -93,6 +94,15 @@ public static class ApiRouteExtensions
             await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.AgentEventLogRecentResponse);
         });
 
+        app.MapGet("/api/agents/telemetry", static async (
+            HttpContext context,
+            AgentTelemetry telemetry,
+            AgentEventLog eventLog) =>
+        {
+            var response = telemetry.GetStatus(eventLog.LogPath);
+            await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.AgentTelemetryStatus);
+        });
+
         app.MapPost("/api/agents/chat", HandleAgentChatAsync);
         app.MapPost("/api/agents/workflows/read-only", HandleAgentReadOnlyWorkflowAsync);
         app.MapPost("/api/agents/tools/invoke", HandleAgentToolInvokeAsync);
@@ -112,6 +122,8 @@ public static class ApiRouteExtensions
 
         app.MapPost("/api/conversations", HandleConversationCreateAsync);
         app.MapGet("/api/conversations/{conversationId}", HandleConversationGetAsync);
+        app.MapPost("/api/conversations/{conversationId}/turns", HandleConversationTurnAsync);
+        app.MapPost("/api/conversations/{conversationId}/voice-turns", HandleConversationVoiceTurnAsync);
         app.MapPost("/api/conversations/{conversationId}/messages", HandleConversationAppendMessageAsync);
         app.MapPost("/api/conversations/{conversationId}/artifacts", HandleConversationRegisterArtifactAsync);
         app.MapPost("/api/conversations/{conversationId}/diagnostics", HandleConversationAppendDiagnosticAsync);
@@ -211,12 +223,15 @@ public static class ApiRouteExtensions
                     "/api/agents/tools",
                     "/api/agents/tool-bindings",
                     "/api/agents/events",
+                    "/api/agents/telemetry",
                     "POST /api/agents/chat",
                     "POST /api/agents/workflows/read-only",
                     "POST /api/agents/tools/invoke",
                     "/api/conversations",
                     "POST /api/conversations",
                     "/api/conversations/{conversationId}",
+                    "POST /api/conversations/{conversationId}/turns",
+                    "POST /api/conversations/{conversationId}/voice-turns",
                     "POST /api/conversations/{conversationId}/messages",
                     "POST /api/conversations/{conversationId}/artifacts",
                     "POST /api/conversations/{conversationId}/diagnostics",
@@ -267,7 +282,8 @@ public static class ApiRouteExtensions
         RuntimeDiagnosticsProvider diagnosticsProvider,
         AgentRuntimeService agentRuntime,
         ToolInvoker toolInvoker,
-        AgentEventLog eventLog)
+        AgentEventLog eventLog,
+        AgentTelemetry telemetry)
     {
         var request = await ReadAgentRequestAsync(
             context,
@@ -293,6 +309,13 @@ public static class ApiRouteExtensions
                 request.Model,
                 diagnostic,
                 context.RequestAborted);
+            telemetry.RecordError(
+                "agent_chat",
+                request.ToolMode,
+                null,
+                "Microsoft.Agents.AI.ChatClientAgent",
+                request.Model,
+                diagnostic);
             await WriteAgentErrorAsync(
                 context,
                 "agent_chat",
@@ -314,6 +337,13 @@ public static class ApiRouteExtensions
                 request.Model,
                 diagnostic,
                 context.RequestAborted);
+            telemetry.RecordError(
+                "agent_chat",
+                request.ToolMode,
+                null,
+                "Microsoft.Agents.AI.ChatClientAgent",
+                request.Model,
+                diagnostic);
             await WriteAgentErrorAsync(
                 context,
                 "agent_chat",
@@ -336,6 +366,13 @@ public static class ApiRouteExtensions
                 request.Model,
                 diagnostic,
                 context.RequestAborted);
+            telemetry.RecordError(
+                "agent_chat",
+                request.ToolMode,
+                null,
+                "Microsoft.Agents.AI.ChatClientAgent",
+                request.Model,
+                diagnostic);
             await WriteAgentErrorAsync(
                 context,
                 "agent_chat",
@@ -353,7 +390,8 @@ public static class ApiRouteExtensions
         RuntimeDiagnosticsProvider diagnosticsProvider,
         AgentRuntimeService agentRuntime,
         ToolInvoker toolInvoker,
-        AgentEventLog eventLog)
+        AgentEventLog eventLog,
+        AgentTelemetry telemetry)
     {
         var request = await ReadAgentRequestAsync(
             context,
@@ -382,6 +420,13 @@ public static class ApiRouteExtensions
                 request.Model,
                 diagnostic,
                 context.RequestAborted);
+            telemetry.RecordError(
+                "read_only_workflow",
+                "workflow",
+                null,
+                "Microsoft.Agents.AI.Workflows",
+                request.Model,
+                diagnostic);
             await WriteAgentErrorAsync(
                 context,
                 "read_only_workflow",
@@ -403,6 +448,13 @@ public static class ApiRouteExtensions
                 request.Model,
                 diagnostic,
                 context.RequestAborted);
+            telemetry.RecordError(
+                "read_only_workflow",
+                "workflow",
+                null,
+                "Microsoft.Agents.AI.Workflows",
+                request.Model,
+                diagnostic);
             await WriteAgentErrorAsync(
                 context,
                 "read_only_workflow",
@@ -425,6 +477,13 @@ public static class ApiRouteExtensions
                 request.Model,
                 diagnostic,
                 context.RequestAborted);
+            telemetry.RecordError(
+                "read_only_workflow",
+                "workflow",
+                null,
+                "Microsoft.Agents.AI.Workflows",
+                request.Model,
+                diagnostic);
             await WriteAgentErrorAsync(
                 context,
                 "read_only_workflow",
@@ -440,7 +499,8 @@ public static class ApiRouteExtensions
     private static async Task HandleAgentToolInvokeAsync(
         HttpContext context,
         ToolInvoker toolInvoker,
-        AgentEventLog eventLog)
+        AgentEventLog eventLog,
+        AgentTelemetry telemetry)
     {
         var request = await ReadAgentRequestAsync(
             context,
@@ -478,6 +538,13 @@ public static class ApiRouteExtensions
                 null,
                 diagnostic,
                 context.RequestAborted);
+            telemetry.RecordError(
+                "tool_invocation",
+                "manual",
+                request.Tool,
+                "Microsoft.Extensions.AI.AITool",
+                null,
+                diagnostic);
             await WriteAgentErrorAsync(
                 context,
                 "tool_invocation",
@@ -558,6 +625,81 @@ public static class ApiRouteExtensions
         {
             var response = conversations.AppendMessage(conversationId, request);
             await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.ConversationAppendMessageResponse);
+        }
+        catch (ConversationStoreException exception)
+        {
+            await WriteConversationErrorAsync(context, exception);
+        }
+    }
+
+    private static async Task HandleConversationTurnAsync(
+        HttpContext context,
+        ConversationOrchestrationService orchestration,
+        string conversationId)
+    {
+        var request = await ReadConversationRequestAsync(
+            context,
+            AppJsonSerializerContext.Default.ConversationTurnRequest);
+        if (request is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var result = await orchestration.RunTurnAsync(
+                conversationId,
+                request,
+                context.RequestAborted);
+            await JsonHttpResponse.WriteAsync(
+                context,
+                result.Response,
+                AppJsonSerializerContext.Default.ConversationTurnResponse,
+                result.StatusCode);
+        }
+        catch (ConversationStoreException exception)
+        {
+            await WriteConversationErrorAsync(context, exception);
+        }
+    }
+
+    private static async Task HandleConversationVoiceTurnAsync(
+        HttpContext context,
+        ConversationOrchestrationService orchestration,
+        string conversationId)
+    {
+        var parsed = await ReadConversationVoiceTurnAsync(context);
+        if (parsed is null)
+        {
+            return;
+        }
+
+        if (parsed.AudioBytes.LongLength > CompatibilityProtocolLimits.MaxAudioBytes)
+        {
+            await WriteConversationErrorAsync(
+                context,
+                new ConversationStoreException(
+                    "error",
+                    "invalid_request",
+                    $"The audio input is too large. Limit: {CompatibilityProtocolLimits.MaxAudioBytes} bytes.",
+                    ["Send a shorter PCM16 WAV recording."]));
+            return;
+        }
+
+        try
+        {
+            var result = await orchestration.RunVoiceTurnAsync(
+                conversationId,
+                parsed.Request,
+                parsed.AudioBytes,
+                parsed.MediaType,
+                parsed.FileName,
+                context.RequestAborted);
+            await JsonHttpResponse.WriteAsync(
+                context,
+                result.Response,
+                AppJsonSerializerContext.Default.ConversationVoiceTurnResponse,
+                result.StatusCode);
         }
         catch (ConversationStoreException exception)
         {
@@ -1781,6 +1923,105 @@ public static class ApiRouteExtensions
         }
     }
 
+    private static async Task<ParsedVoiceTurnRequest?> ReadConversationVoiceTurnAsync(HttpContext context)
+    {
+        if (context.Request.HasFormContentType)
+        {
+            return await ReadConversationVoiceTurnFormAsync(context);
+        }
+
+        var request = await ReadConversationRequestAsync(
+            context,
+            AppJsonSerializerContext.Default.ConversationVoiceTurnRequest);
+        if (request is null)
+        {
+            return null;
+        }
+
+        if (!TryCreateAudioInput(
+                request.AudioDataUri,
+                request.AudioBase64,
+                request.AudioMediaType,
+                request.AudioName,
+                out var audioBytes,
+                out var mediaType,
+                out var error))
+        {
+            await WriteConversationErrorAsync(
+                context,
+                new ConversationStoreException(
+                    "error",
+                    "invalid_request",
+                    error,
+                    ["Send audio_data_uri or audio_base64. PCM16 WAV is required by the current ASR adapter."]));
+            return null;
+        }
+
+        return new ParsedVoiceTurnRequest(request, audioBytes, mediaType, request.AudioName);
+    }
+
+    private static async Task<ParsedVoiceTurnRequest?> ReadConversationVoiceTurnFormAsync(HttpContext context)
+    {
+        var form = await context.Request.ReadFormAsync(context.RequestAborted);
+        var file = form.Files.GetFile("file") ?? form.Files.FirstOrDefault();
+        if (file is null || file.Length == 0)
+        {
+            await WriteConversationErrorAsync(
+                context,
+                new ConversationStoreException(
+                    "error",
+                    "invalid_request",
+                    "The file field is required and must contain audio bytes.",
+                    ["Send multipart/form-data with a non-empty file field."]));
+            return null;
+        }
+
+        if (file.Length > CompatibilityProtocolLimits.MaxAudioBytes)
+        {
+            await WriteConversationErrorAsync(
+                context,
+                new ConversationStoreException(
+                    "error",
+                    "invalid_request",
+                    $"The audio file is too large. Limit: {CompatibilityProtocolLimits.MaxAudioBytes} bytes.",
+                    ["Send a shorter PCM16 WAV recording."]));
+            return null;
+        }
+
+        await using var stream = file.OpenReadStream();
+        using var memory = new MemoryStream((int)Math.Min(file.Length, int.MaxValue));
+        await stream.CopyToAsync(memory, context.RequestAborted);
+
+        var request = new ConversationVoiceTurnRequest(
+            null,
+            null,
+            FirstNonEmpty(ReadFormString(form, "audio_media_type"), file.ContentType),
+            FirstNonEmpty(ReadFormString(form, "audio_name"), file.FileName),
+            ReadFormString(form, "language"),
+            ReadFormString(form, "asr_model"),
+            ReadFormString(form, "model"),
+            ReadFormString(form, "tts_model"),
+            ReadFormBool(form, "speak"),
+            ReadFormString(form, "voice"),
+            ReadFormString(form, "response_format"),
+            ReadFormDouble(form, "speed"),
+            ReadFormString(form, "tool_mode"),
+            null,
+            ReadFormInt(form, "max_tool_rounds"),
+            ReadFormString(form, "instructions"),
+            ReadFormInt(form, "max_tokens"),
+            ReadFormDouble(form, "temperature"),
+            ReadFormDouble(form, "top_p"),
+            ReadFormInt(form, "history_limit"),
+            null);
+
+        return new ParsedVoiceTurnRequest(
+            request,
+            memory.ToArray(),
+            request.AudioMediaType,
+            request.AudioName);
+    }
+
     private static async Task<T?> ReadOllamaRequestAsync<T>(
         HttpContext context,
         System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> jsonTypeInfo)
@@ -2937,6 +3178,158 @@ public static class ApiRouteExtensions
         return false;
     }
 
+    private static bool TryCreateAudioInput(
+        string? dataUri,
+        string? base64,
+        string? mediaType,
+        string? name,
+        out byte[] audioBytes,
+        out string? resolvedMediaType,
+        out string error)
+    {
+        audioBytes = [];
+        resolvedMediaType = string.IsNullOrWhiteSpace(mediaType) ? ResolveMediaTypeFromName(name) : mediaType.Trim();
+        error = string.Empty;
+
+        var source = FirstNonEmpty(dataUri, base64);
+        if (string.IsNullOrWhiteSpace(source))
+        {
+            error = "Voice turns require audio_data_uri or audio_base64.";
+            return false;
+        }
+
+        if (TryDecodeAudioDataUri(source, resolvedMediaType, out audioBytes, out var dataUriMediaType, out error))
+        {
+            resolvedMediaType = dataUriMediaType ?? resolvedMediaType ?? "audio/wav";
+            return true;
+        }
+
+        if (source.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!TryDecodeAudioBase64(source, out audioBytes, out error))
+        {
+            return false;
+        }
+
+        resolvedMediaType ??= "audio/wav";
+        return true;
+    }
+
+    private static bool TryDecodeAudioDataUri(
+        string source,
+        string? fallbackMediaType,
+        out byte[] audioBytes,
+        out string? mediaType,
+        out string error)
+    {
+        audioBytes = [];
+        mediaType = fallbackMediaType;
+        error = string.Empty;
+        if (!source.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var comma = source.IndexOf(',', StringComparison.Ordinal);
+        if (comma < 0)
+        {
+            error = "Audio data URI is missing the payload separator.";
+            return false;
+        }
+
+        var metadata = source[5..comma];
+        if (!metadata.Contains(";base64", StringComparison.OrdinalIgnoreCase))
+        {
+            error = "Audio data URI must use base64 encoding.";
+            return false;
+        }
+
+        mediaType = metadata.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .FirstOrDefault(static item => item.Contains('/', StringComparison.Ordinal))
+            ?? fallbackMediaType;
+        return TryDecodeAudioBase64(source[(comma + 1)..], out audioBytes, out error);
+    }
+
+    private static bool TryDecodeAudioBase64(
+        string source,
+        out byte[] audioBytes,
+        out string error)
+    {
+        try
+        {
+            audioBytes = Convert.FromBase64String(source.Trim());
+            if (audioBytes.Length == 0)
+            {
+                error = "Audio payload is empty.";
+                return false;
+            }
+
+            if (audioBytes.LongLength > CompatibilityProtocolLimits.MaxAudioBytes)
+            {
+                audioBytes = [];
+                error = $"Audio payload is too large. Limit: {CompatibilityProtocolLimits.MaxAudioBytes} bytes.";
+                return false;
+            }
+
+            error = string.Empty;
+            return true;
+        }
+        catch (FormatException)
+        {
+            audioBytes = [];
+            error = "Audio payload is not valid base64.";
+            return false;
+        }
+    }
+
+    private static string? ResolveMediaTypeFromName(string? name)
+    {
+        return Path.GetExtension(name)?.ToLowerInvariant() switch
+        {
+            ".wav" => "audio/wav",
+            ".mp3" => "audio/mpeg",
+            ".mp4" => "audio/mp4",
+            ".webm" => "audio/webm",
+            ".ogg" => "audio/ogg",
+            _ => null
+        };
+    }
+
+    private static string? ReadFormString(IFormCollection form, string key)
+    {
+        var value = form[key].FirstOrDefault();
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private static int? ReadFormInt(IFormCollection form, string key)
+        => int.TryParse(ReadFormString(form, key), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value)
+            ? value
+            : null;
+
+    private static double? ReadFormDouble(IFormCollection form, string key)
+        => double.TryParse(ReadFormString(form, key), NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
+            ? value
+            : null;
+
+    private static bool? ReadFormBool(IFormCollection form, string key)
+    {
+        var value = ReadFormString(form, key);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        if (bool.TryParse(value, out var parsed))
+        {
+            return parsed;
+        }
+
+        return value is "1" or "yes" or "on";
+    }
+
     private static bool TryDecodeDataUri(
         string source,
         string? fallbackMediaType,
@@ -3183,4 +3576,10 @@ public static class ApiRouteExtensions
         var hash = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(input));
         return Convert.ToHexString(hash).ToLowerInvariant();
     }
+
+    private sealed record ParsedVoiceTurnRequest(
+        ConversationVoiceTurnRequest Request,
+        byte[] AudioBytes,
+        string? MediaType,
+        string? FileName);
 }
