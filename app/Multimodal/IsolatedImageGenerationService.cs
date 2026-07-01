@@ -265,7 +265,7 @@ public sealed class IsolatedImageGenerationService
     private static WorkerInvocation ResolveExecutableInvocation()
     {
         var processPath = Environment.ProcessPath;
-        var assemblyPath = Assembly.GetExecutingAssembly().Location;
+        var assemblyPath = ResolveAssemblyPath();
         var processName = string.IsNullOrWhiteSpace(processPath)
             ? string.Empty
             : Path.GetFileNameWithoutExtension(processPath);
@@ -294,6 +294,18 @@ public sealed class IsolatedImageGenerationService
             "image_generation_worker_failed",
             "The current Tomur executable path could not be resolved.",
             ["Start Tomur from a normal executable host before using image generation."]);
+    }
+
+    private static string ResolveAssemblyPath()
+    {
+        var assemblyName = Assembly.GetExecutingAssembly().GetName().Name;
+        if (string.IsNullOrWhiteSpace(assemblyName))
+        {
+            return string.Empty;
+        }
+
+        var path = Path.Combine(AppContext.BaseDirectory, assemblyName + ".dll");
+        return File.Exists(path) ? path : string.Empty;
     }
 
     private static void TryKill(Process process)

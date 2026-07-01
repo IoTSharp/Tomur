@@ -6,12 +6,6 @@ namespace Tomur.Config;
 public sealed class ConfigurationStore
 {
     private readonly DataPaths paths;
-    private static readonly JsonSerializerOptions WriteOptions = new()
-    {
-        TypeInfoResolver = AppJsonSerializerContext.Default,
-        WriteIndented = true
-    };
-
     public ConfigurationStore(DataPaths paths)
     {
         this.paths = paths;
@@ -181,7 +175,9 @@ public sealed class ConfigurationStore
     {
         Directory.CreateDirectory(paths.ConfigDirectory);
 
-        var json = JsonSerializer.Serialize(configuration, WriteOptions);
+        var json = JsonSerializer.Serialize(
+            configuration,
+            AppJsonSerializerContext.Default.LocalConfiguration);
 
         File.WriteAllText(paths.ConfigPath, json);
     }

@@ -2,9 +2,11 @@ using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Text.Json;
 using Tomur.Inference;
 using Tomur.Multimodal;
 using Tomur.Runtime;
+using Tomur.Serialization;
 
 namespace Tomur.Agents;
 
@@ -13,7 +15,7 @@ public sealed class AgentRuntimeService
     private const string AgentName = "tomur-local-agent";
     private const string AgentRuntime = "Microsoft.Agents.AI.ChatClientAgent";
     private const string WorkflowRuntime = "Tomur read-only tool plan with optional Microsoft.Agents.AI.Workflows summary";
-    private const string ChatRespondInputSchema = """{"type":"object","properties":{"message":{"type":"string"},"messages":{"type":"array","items":{"type":"object","properties":{"role":{"type":"string"},"content":{"type":"string"}}}},"tool_results":{"type":"array","items":{"type":"object","properties":{"tool":{"type":"string"},"content":{"type":"string"},"result":{"type":"object"}}}},"tool_mode":{"type":"string","enum":["none","read_only","auto_read_only"]},"tools":{"type":"array","items":{"type":"object","required":["tool"],"properties":{"tool":{"type":"string","enum":["runtime.diagnose","tools.inspect"]},"arguments":{"type":"object"}}}},"max_tool_rounds":{"type":"integer"},"model":{"type":"string"},"instructions":{"type":"string"},"max_tokens":{"type":"integer"}}}""";
+    private const string ChatRespondInputSchema = """{"type":"object","properties":{"message":{"type":"string"},"messages":{"type":"array","items":{"type":"object","properties":{"role":{"type":"string"},"content":{"type":"string"}}}},"tool_results":{"type":"array","items":{"type":"object","properties":{"tool":{"type":"string"},"content":{"type":"string"},"result":{"type":"object"}}}},"tool_mode":{"type":"string","enum":["none","read_only","auto_read_only","controlled","auto_controlled"]},"tools":{"type":"array","items":{"type":"object","required":["tool"],"properties":{"tool":{"type":"string","enum":["runtime.diagnose","tools.inspect","files.search","runtime.repair","vision.analyze","ocr.recognize","audio.transcribe","image.generate","audio.speak"]},"arguments":{"type":"object"},"confirm":{"type":"boolean"}}}},"max_tool_rounds":{"type":"integer"},"model":{"type":"string"},"instructions":{"type":"string"},"max_tokens":{"type":"integer"}}}""";
 
     private readonly LocalModelCatalog modelCatalog;
     private readonly MultimodalRuntimeService multimodalRuntime;
@@ -59,14 +61,16 @@ public sealed class AgentRuntimeService
             new AgentFrameworkStatus(
                 "wired",
                 "Microsoft.Agents.AI.ChatClientAgent / Microsoft.Agents.AI.Workflows",
-                "Agent Framework packages and Tomur-local AI boundaries are present. Plain local ChatClientAgent execution is wired, and read-only Tomur diagnostics are exposed as Microsoft.Extensions.AI.AITool objects with controlled manual, chat-context and bounded read-only workflow paths. Automatic multimodal tool-calling remains an R9 follow-up; image generation and TTS stay available through their dedicated OpenAI-compatible endpoints when backend readiness allows.",
+                "Agent Framework packages and Tomur-local AI boundaries are present. Plain local ChatClientAgent execution is wired, read-only Tomur diagnostics are exposed as Microsoft.Extensions.AI.AITool objects, and R8 multimodal adapters are available through an explicit controlled tool path. Model-selected arbitrary tool execution remains disabled; artifact-generating tools require explicit confirmation.",
                 [
                     "POST /api/agents/chat runs the local ChatClientAgent text path.",
                     "GET /api/agents/tools exposes the Tomur tool map.",
                     "GET /api/agents/tool-bindings exposes the current AITool binding set.",
                     "GET /api/agents/events exposes recent local Agent Framework event summaries.",
                     "GET /api/agents/telemetry exposes the local ActivitySource span and attribute draft for future OpenTelemetry wiring.",
-                    "POST /api/agents/tools/invoke can invoke runtime.diagnose and tools.inspect as read-only tools.",
+                    "POST /api/agents/tools/invoke can invoke runtime.diagnose and tools.inspect as read-only tools, or explicit controlled R8 tools when mode=controlled.",
+                    "POST /api/agents/tools/invoke can invoke files.search as a read-only SQLite/local files tool.",
+                    "POST /api/agents/tools/invoke can invoke runtime.repair only with mode=controlled and confirm=true.",
                     "POST /api/agents/workflows/read-only runs a bounded Tomur read-only tool plan and can ask an Agent Framework workflow-hosted ChatClientAgent to summarize the results.",
                     "Use /api/agents/runtime to inspect the local tool map.",
                     "Use /api/runtime/multimodal to inspect backend readiness.",
@@ -84,7 +88,7 @@ public sealed class AgentRuntimeService
                 "Community keeps Agent Framework optional and local-first.",
                 "Tool schemas are represented by source-generated JSON contracts before full workflow persistence is added.",
                 "R9 does not make side-effect multimodal tools callable automatically by default.",
-                "Repair or download actions still require explicit user confirmation in later R10/R11 flows."
+                "Runtime repair actions require explicit user confirmation and stay outside automatic read-only planning."
             ]);
     }
 
@@ -112,17 +116,17 @@ public sealed class AgentRuntimeService
         var toolCalls = new List<AgentChatToolCall>();
         using var activity = telemetry.StartChat(request, AgentRuntime);
 
-        if (requestedToolMode is "read_only" or "auto_read_only")
+        if (requestedToolMode is "read_only" or "auto_read_only" or "controlled" or "auto_controlled")
         {
-            var requestedTools = requestedToolMode == "auto_read_only"
-                ? ResolveAutoReadOnlyTools(request.Tools, messages, maxToolRounds)
+            var requestedTools = requestedToolMode is "auto_read_only" or "auto_controlled"
+                ? ResolveAutoTools(request.Tools, messages, maxToolRounds)
                 : NormalizeRequestedTools(request.Tools, maxToolRounds);
             foreach (var toolRequest in requestedTools)
             {
                 var invokeResponse = await toolInvoker.InvokeAsync(
-                        new AgentToolInvokeRequest(toolRequest.Tool, toolRequest.Arguments),
-                        requestedToolMode == "auto_read_only" ? "auto-read-only" : "chat-context-read-only",
-                        requestedToolMode == "auto_read_only" ? "auto" : "chat-context",
+                        CreateToolInvokeRequest(toolRequest, requestedToolMode),
+                        ResolveAuditMode(requestedToolMode),
+                        ResolveInvocationKind(requestedToolMode),
                         cancellationToken)
                     .ConfigureAwait(false);
                 toolCalls.Add(ToChatToolCall(invokeResponse));
@@ -148,7 +152,7 @@ public sealed class AgentRuntimeService
             .ConfigureAwait(false);
 
         var agentResponse = new AgentChatResponse(
-            toolCalls.Any(static tool => tool.Status == "blocked") ? "partial" : "ok",
+            toolCalls.Any(static tool => IsNonOkToolStatus(tool.Status)) ? "partial" : "ok",
             AgentName,
             AgentRuntime,
             modelId,
@@ -177,7 +181,7 @@ public sealed class AgentRuntimeService
         using var activity = telemetry.StartWorkflow(request, WorkflowRuntime);
         var toolRequests = request.Tools is { Count: > 0 }
             ? NormalizeRequestedTools(request.Tools, maxToolRounds)
-            : ResolveAutoReadOnlyTools(null, messages, maxToolRounds);
+            : ResolveAutoTools(null, messages, maxToolRounds);
 
         if (toolRequests.Count == 0)
         {
@@ -218,7 +222,7 @@ public sealed class AgentRuntimeService
         }
 
         var workflowResponse = new AgentReadOnlyWorkflowResponse(
-            steps.Any(static step => step.Status == "blocked") ? "partial" : "ok",
+            steps.Any(static step => IsNonOkToolStatus(step.Status)) ? "partial" : "ok",
             "read-only-tools",
             WorkflowRuntime,
             model,
@@ -299,6 +303,14 @@ public sealed class AgentRuntimeService
                 : "tool-scope: controlled read-only Tomur AITool context");
             diagnostics.Add($"tool-rounds: {toolCalls.Count}");
         }
+        else if (toolMode is "controlled" or "auto_controlled")
+        {
+            diagnostics.Add(toolMode == "auto_controlled"
+                ? "tool-scope: automatic bounded Tomur context plus explicit controlled R8 tool requests"
+                : "tool-scope: explicit controlled R8 tool context");
+            diagnostics.Add("tool-boundary: artifact-generating tools require confirm=true");
+            diagnostics.Add($"tool-rounds: {toolCalls.Count}");
+        }
 
         return diagnostics;
     }
@@ -321,9 +333,9 @@ public sealed class AgentRuntimeService
                 : "response: tool results only"
         };
 
-        if (steps.Any(static step => step.Status == "blocked"))
+        if (steps.Any(static step => IsNonOkToolStatus(step.Status)))
         {
-            diagnostics.Add("status: one or more requested tools were blocked by the R9 safety boundary");
+            diagnostics.Add("status: one or more requested tools were blocked or returned a diagnostic error");
         }
 
         return diagnostics;
@@ -497,7 +509,7 @@ public sealed class AgentRuntimeService
             return "none";
         }
 
-        if (normalized is "read" or "read_only" or "manual_read_only" or "controlled" or "context")
+        if (normalized is "read" or "read_only" or "manual_read_only" or "context")
         {
             return "read_only";
         }
@@ -507,14 +519,33 @@ public sealed class AgentRuntimeService
             return "auto_read_only";
         }
 
+        if (normalized is "controlled" or "manual_controlled" or "tool" or "tools")
+        {
+            if (!hasToolRequests)
+            {
+                throw new InferenceException(
+                    "invalid_request",
+                    "tool_mode controlled requires explicit tools[].",
+                    ["Provide tools[] with controlled R8 tool arguments, or use tool_mode auto_controlled for bounded Tomur planning."]);
+            }
+
+            return "controlled";
+        }
+
+        if (normalized is "auto_controlled" or "controlled_auto" or "automatic_controlled")
+        {
+            return "auto_controlled";
+        }
+
         throw new InferenceException(
             "invalid_request",
             $"Unsupported tool_mode '{request.ToolMode}'.",
             [
-                "Use tool_mode none for plain text.",
-                "Use tool_mode read_only with tools[] to invoke runtime.diagnose or tools.inspect before the agent answers.",
+            "Use tool_mode none for plain text.",
+                "Use tool_mode read_only with tools[] to invoke runtime.diagnose, tools.inspect or files.search before the agent answers.",
                 "Use tool_mode auto_read_only to let Tomur select bounded read-only tools from the current request.",
-                "Model-selected multimodal tool-calling is not enabled in this R9 boundary."
+                "Use tool_mode controlled with explicit tools[] to invoke connected R8 tools or runtime.repair; artifact generation and repair actions require confirm=true.",
+                "Model-selected arbitrary tool-calling is not enabled in this R9 boundary."
             ]);
     }
 
@@ -551,7 +582,7 @@ public sealed class AgentRuntimeService
         return normalized;
     }
 
-    private static IReadOnlyList<AgentChatToolRequest> ResolveAutoReadOnlyTools(
+    private static IReadOnlyList<AgentChatToolRequest> ResolveAutoTools(
         IReadOnlyList<AgentChatToolRequest>? requestedTools,
         IReadOnlyList<ChatMessage> messages,
         int maxToolRounds)
@@ -574,6 +605,15 @@ public sealed class AgentRuntimeService
             planned.Add(new AgentChatToolRequest(ToolMapFunction.ToolName, null));
         }
 
+        if (MentionsFileSearch(text))
+        {
+            planned.Add(new AgentChatToolRequest(
+                FileSearchFunction.ToolName,
+                JsonSerializer.SerializeToElement(
+                    new FileSearchToolArguments(CreateFileSearchQuery(text), null, 5, true, null, null),
+                    AppJsonSerializerContext.Default.FileSearchToolArguments)));
+        }
+
         if (planned.Count == 0 && MentionsLocalStatus(text))
         {
             planned.Add(new AgentChatToolRequest(RuntimeDiagnoseFunction.ToolName, null));
@@ -584,6 +624,33 @@ public sealed class AgentRuntimeService
             ? planned.Take(maxToolRounds).ToArray()
             : planned;
     }
+
+    private static AgentToolInvokeRequest CreateToolInvokeRequest(
+        AgentChatToolRequest toolRequest,
+        string requestedToolMode)
+        => new(toolRequest.Tool, toolRequest.Arguments)
+        {
+            Mode = requestedToolMode is "controlled" or "auto_controlled" ? "controlled" : "read_only",
+            Confirm = toolRequest.Confirm
+        };
+
+    private static string ResolveAuditMode(string requestedToolMode)
+        => requestedToolMode switch
+        {
+            "auto_read_only" => "auto-read-only",
+            "controlled" => "chat-controlled",
+            "auto_controlled" => "auto-controlled",
+            _ => "chat-context-read-only"
+        };
+
+    private static string ResolveInvocationKind(string requestedToolMode)
+        => requestedToolMode switch
+        {
+            "auto_read_only" => "auto",
+            "controlled" => "controlled",
+            "auto_controlled" => "auto-controlled",
+            _ => "chat-context"
+        };
 
     private static bool MentionsRuntimeDiagnostics(string value)
         => ContainsAny(
@@ -599,6 +666,24 @@ public sealed class AgentRuntimeService
             "诊断",
             "健康",
             "状态");
+
+    private static bool MentionsFileSearch(string value)
+        => ContainsAny(
+            value,
+            "file",
+            "files",
+            "document",
+            "documents",
+            "rag",
+            "search",
+            "lookup",
+            "local knowledge",
+            "文件",
+            "文档",
+            "资料",
+            "检索",
+            "搜索",
+            "问答");
 
     private static bool MentionsToolMap(string value)
         => ContainsAny(
@@ -626,6 +711,22 @@ public sealed class AgentRuntimeService
     private static bool ContainsAny(string value, params string[] terms)
         => !string.IsNullOrWhiteSpace(value) &&
             terms.Any(term => value.Contains(term, StringComparison.OrdinalIgnoreCase));
+
+    private static string CreateFileSearchQuery(string value)
+    {
+        var normalized = string.Join(
+            ' ',
+            value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        if (normalized.Length > 240)
+        {
+            normalized = normalized[..240];
+        }
+
+        return normalized;
+    }
+
+    private static bool IsNonOkToolStatus(string status)
+        => !string.Equals(status, "ok", StringComparison.OrdinalIgnoreCase);
 
     private static string NormalizeToolResultContent(AgentChatToolResult toolResult)
     {
@@ -719,17 +820,17 @@ public sealed class AgentRuntimeService
         yield return new AgentToolDescriptor(
             "files.search",
             "Local Files",
-            "planned",
+            "ready",
             "SQLite/local files",
             null,
-            null,
-            """{"type":"object","required":["query"],"properties":{"query":{"type":"string"},"top_k":{"type":"integer"}}}""",
+            "/api/agents/tools/invoke",
+            """{"type":"object","required":["query"],"properties":{"query":{"type":"string"},"root":{"type":"string"},"top_k":{"type":"integer","minimum":1,"maximum":20},"refresh":{"type":"boolean"},"max_files":{"type":"integer","minimum":1,"maximum":4096},"max_file_bytes":{"type":"integer","minimum":1,"maximum":5242880}}}""",
             "read",
+            true,
             false,
-            false,
-            ["planned-agent-tool"],
-            "Local file Q&A tool is reserved for R9/R10 and will not require PostgreSQL in Community.",
-            ["Index local files in a later R10/R11 flow before enabling this tool."]);
+            ["manual-read-only", "chat-context", "auto-read-only", "read-only-workflow"],
+            "Local file Q&A searches Tomur-managed text files through SQLite FTS without PostgreSQL.",
+            ["Place text documents under the Tomur data files directory before invoking files.search."]);
 
         yield return new AgentToolDescriptor(
             "runtime.diagnose",
@@ -760,6 +861,21 @@ public sealed class AgentRuntimeService
             ["manual-read-only", "chat-context", "auto-read-only", "read-only-workflow"],
             "Agent Framework tool declarations can be inspected without invoking side-effect tools.",
             []);
+
+        yield return new AgentToolDescriptor(
+            "runtime.repair",
+            "Runtime Repair",
+            "ready",
+            "tomur doctor/native/session APIs",
+            null,
+            "/api/agents/tools/invoke",
+            """{"type":"object","required":["action"],"properties":{"action":{"type":"string","enum":["native.prepare","session.unload"]},"reason":{"type":"string"}}}""",
+            "repairs-local-runtime",
+            true,
+            true,
+            ["manual-controlled", "chat-controlled", "requires-confirmation"],
+            "Runtime repair actions are explicit controlled tools and require confirm=true; read-only diagnosis remains runtime.diagnose.",
+            ["Confirm the specific repair action with the user before invoking runtime.repair."]);
     }
 
     private AgentToolDescriptor CreateMultimodalTool(
@@ -783,7 +899,7 @@ public sealed class AgentRuntimeService
             ResolveToolRoute(backendId),
             ResolveToolInputSchema(backendId),
             ResolveToolSideEffect(backendId),
-            false,
+            ResolveToolCallable(backendId, status),
             RequiresConfirmation(backendId),
             ResolveInvocationModes(backendId),
             backend.Message,
@@ -798,11 +914,15 @@ public sealed class AgentRuntimeService
 
     private static IReadOnlyList<string> ResolveInvocationModes(string backendId)
         => RequiresConfirmation(backendId)
-            ? ["dedicated-endpoint", "blocked-agent-tool"]
-            : ["dedicated-endpoint", "planned-agent-tool"];
+            ? ["dedicated-endpoint", "manual-controlled", "chat-controlled", "requires-confirmation"]
+            : ["dedicated-endpoint", "manual-controlled", "chat-controlled", "planned-agent-tool"];
 
     private static string ResolveExecutableToolStatus(string backendId)
         => "ready";
+
+    private static bool ResolveToolCallable(string backendId, string status)
+        => string.Equals(status, "ready", StringComparison.OrdinalIgnoreCase) &&
+            backendId is "image-generation" or "vlm" or "ocr" or "asr" or "tts";
 
     private static bool IsChatModel(LocalModelDescriptor model)
         => model.Capabilities.Any(static capability =>
@@ -848,7 +968,7 @@ public sealed class AgentRuntimeService
             "image-generation" => """{"type":"object","required":["prompt"],"properties":{"prompt":{"type":"string"},"size":{"type":"string"},"steps":{"type":"integer"}}}""",
             "vlm" => """{"type":"object","required":["prompt","images"],"properties":{"prompt":{"type":"string"},"images":{"type":"array"}}}""",
             "ocr" => """{"type":"object","required":["image"],"properties":{"image":{"type":"object"},"language":{"type":"string"},"prompt":{"type":"string"}}}""",
-            "asr" => """{"type":"object","required":["file"],"properties":{"file":{"type":"string","description":"multipart/form-data file field"},"language":{"type":"string"}}}""",
+            "asr" => """{"type":"object","properties":{"audio_data_uri":{"type":"string"},"audio_base64":{"type":"string"},"media_type":{"type":"string"},"language":{"type":"string"}}}""",
             "tts" => """{"type":"object","required":["input"],"properties":{"input":{"type":"string"},"voice":{"type":"string"},"response_format":{"type":"string"}}}""",
             _ => """{"type":"object","properties":{}}"""
         };

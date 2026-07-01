@@ -513,9 +513,12 @@ public static class ApiRouteExtensions
         try
         {
             var response = await toolInvoker.InvokeAsync(request, context.RequestAborted);
-            var statusCode = response.Status == "blocked"
-                ? StatusCodes.Status409Conflict
-                : StatusCodes.Status200OK;
+            var statusCode = response.Status switch
+            {
+                "blocked" => StatusCodes.Status409Conflict,
+                "error" => StatusCodes.Status503ServiceUnavailable,
+                _ => StatusCodes.Status200OK
+            };
             await JsonHttpResponse.WriteAsync(
                 context,
                 response,

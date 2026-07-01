@@ -9,6 +9,12 @@ public sealed class AgentTelemetry : IDisposable
     public const string SourceName = "Tomur.Agents";
 
     private readonly ActivitySource source = new(SourceName);
+    private readonly AgentTelemetryExporterOptions exporterOptions;
+
+    public AgentTelemetry(AgentTelemetryExporterOptions exporterOptions)
+    {
+        this.exporterOptions = exporterOptions;
+    }
 
     public Activity? StartChat(AgentChatRequest request, string runtime)
     {
@@ -148,10 +154,11 @@ public sealed class AgentTelemetry : IDisposable
 
     public AgentTelemetryStatus GetStatus(string localEventLogPath)
         => new(
-            "draft",
+            exporterOptions.Enabled ? "configured" : "local_only",
             DateTimeOffset.UtcNow,
             SourceName,
             "System.Diagnostics.ActivitySource",
+            exporterOptions.ToStatus(),
             string.IsNullOrWhiteSpace(localEventLogPath) ? null : localEventLogPath,
             [
                 new AgentTelemetrySpanDescriptor(
@@ -170,7 +177,7 @@ public sealed class AgentTelemetry : IDisposable
                 new AgentTelemetrySpanDescriptor(
                     "tomur.agent.tool_invocation",
                     "tool_invocation",
-                    "Controlled local tool invocation, currently limited to R9 read-only tools unless blocked.",
+                    "Controlled local tool invocation for read-only diagnostics and explicit R8 adapter calls.",
                     [
                         "tomur.agent.tool.name",
                         "tomur.agent.invocation_kind",
@@ -210,15 +217,18 @@ public sealed class AgentTelemetry : IDisposable
                 new AgentTelemetryAttributeDescriptor("tomur.agent.model", "string", "bounded", "Requested or selected local model id."),
                 new AgentTelemetryAttributeDescriptor("tomur.agent.tool.name", "string", "bounded", "Tomur tool-map name, such as runtime.diagnose or tools.inspect."),
                 new AgentTelemetryAttributeDescriptor("tomur.agent.status", "string", "low", "ok, partial, blocked or error."),
-                new AgentTelemetryAttributeDescriptor("tomur.agent.blocked", "boolean", "low", "Whether the operation hit the R9 safety boundary."),
+                new AgentTelemetryAttributeDescriptor("tomur.agent.blocked", "boolean", "low", "Whether the operation hit the R9 safety or readiness boundary."),
                 new AgentTelemetryAttributeDescriptor("tomur.agent.elapsed_ms", "int64", "high", "Operation duration in milliseconds."),
-                new AgentTelemetryAttributeDescriptor("tomur.agent.diagnostic.code", "string", "bounded", "Structured Tomur diagnostic code for failures.")
+                new AgentTelemetryAttributeDescriptor("tomur.agent.diagnostic.code", "string", "bounded", "Structured Tomur diagnostic code for failures."),
+                new AgentTelemetryAttributeDescriptor("tomur.agent.side_effect", "string", "low", "none, read, generates-local-artifact or repairs-local-runtime."),
+                new AgentTelemetryAttributeDescriptor("tomur.agent.requires_confirmation", "boolean", "low", "Whether the tool invocation required explicit user confirmation.")
             ],
             [
                 "No user message body, prompt text or full tool result is added to ActivitySource tags.",
                 "The local JSONL event log remains available through GET /api/agents/events.",
-                "External OpenTelemetry exporters are not configured by Tomur by default.",
-                "Side-effect multimodal tools remain blocked from automatic Agent Framework execution until their R8 smoke evidence and R9 confirmation loop are complete."
+                "External OpenTelemetry export is opt-in through TOMUR_AGENTS_OTEL_EXPORTER=otlp and TOMUR_AGENTS_OTEL_ENDPOINT.",
+                "Ready R8 multimodal tools can be invoked through Tomur's explicit controlled path; model-selected automatic multimodal tool-calling remains disabled.",
+                "Image generation and TTS require explicit confirmation before local artifacts are written."
             ]);
 
     public void Dispose()
@@ -247,6 +257,7 @@ public sealed record AgentTelemetryStatus(
     [property: JsonPropertyName("checked_at")] DateTimeOffset CheckedAt,
     [property: JsonPropertyName("source_name")] string SourceName,
     [property: JsonPropertyName("instrumentation")] string Instrumentation,
+    [property: JsonPropertyName("exporter")] AgentTelemetryExporterStatus Exporter,
     [property: JsonPropertyName("local_event_log")] string? LocalEventLog,
     [property: JsonPropertyName("spans")] IReadOnlyList<AgentTelemetrySpanDescriptor> Spans,
     [property: JsonPropertyName("attributes")] IReadOnlyList<AgentTelemetryAttributeDescriptor> Attributes,
@@ -263,3 +274,57 @@ public sealed record AgentTelemetryAttributeDescriptor(
     [property: JsonPropertyName("type")] string Type,
     [property: JsonPropertyName("cardinality")] string Cardinality,
     [property: JsonPropertyName("description")] string Description);
+
+public sealed class AgentTelemetryExporterOptions
+{
+    public const string ExporterEnvironmentVariable = "TOMUR_AGENTS_OTEL_EXPORTER";
+    public const string EndpointEnvironmentVariable = "TOMUR_AGENTS_OTEL_ENDPOINT";
+    public const string HeadersEnvironmentVariable = "TOMUR_AGENTS_OTEL_HEADERS";
+
+    public AgentTelemetryExporterOptions()
+    {
+        Exporter = Normalize(Environment.GetEnvironmentVariable(ExporterEnvironmentVariable));
+        Endpoint = Normalize(Environment.GetEnvironmentVariable(EndpointEnvironmentVariable));
+        Headers = Normalize(Environment.GetEnvironmentVariable(HeadersEnvironmentVariable));
+    }
+
+    public string? Exporter { get; }
+
+    public string? Endpoint { get; }
+
+    public string? Headers { get; }
+
+    public bool Enabled =>
+        string.Equals(Exporter, "otlp", StringComparison.OrdinalIgnoreCase) &&
+        !string.IsNullOrWhiteSpace(Endpoint);
+
+    public AgentTelemetryExporterStatus ToStatus()
+        => new(
+            Enabled ? "configured" : "disabled",
+            string.IsNullOrWhiteSpace(Exporter) ? "none" : Exporter,
+            Endpoint,
+            !string.IsNullOrWhiteSpace(Headers),
+            Enabled
+                ? "Tomur.Agents ActivitySource is wired to the opt-in OTLP exporter."
+                : "Tomur keeps agent telemetry local unless OTLP export is explicitly configured.",
+            Enabled
+                ? []
+                : [
+                    $"Set {ExporterEnvironmentVariable}=otlp to enable OTLP trace export.",
+                    $"Set {EndpointEnvironmentVariable}=http://host:4317 or another local collector endpoint."
+                ]);
+
+    private static string? Normalize(string? value)
+    {
+        var trimmed = value?.Trim();
+        return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed;
+    }
+}
+
+public sealed record AgentTelemetryExporterStatus(
+    [property: JsonPropertyName("status")] string Status,
+    [property: JsonPropertyName("exporter")] string Exporter,
+    [property: JsonPropertyName("endpoint")] string? Endpoint,
+    [property: JsonPropertyName("headers_configured")] bool HeadersConfigured,
+    [property: JsonPropertyName("message")] string Message,
+    [property: JsonPropertyName("actions")] IReadOnlyList<string> Actions);

@@ -121,7 +121,11 @@ public sealed record AgentChatToolResult(
 
 public sealed record AgentChatToolRequest(
     [property: JsonPropertyName("tool")] string? Tool,
-    [property: JsonPropertyName("arguments")] JsonElement? Arguments);
+    [property: JsonPropertyName("arguments")] JsonElement? Arguments)
+{
+    [JsonPropertyName("confirm")]
+    public bool? Confirm { get; init; }
+}
 
 public sealed record AgentChatResponse(
     [property: JsonPropertyName("status")] string Status,
@@ -156,7 +160,14 @@ public sealed record AgentChatToolCall(
 
 public sealed record AgentToolInvokeRequest(
     [property: JsonPropertyName("tool")] string? Tool,
-    [property: JsonPropertyName("arguments")] JsonElement? Arguments);
+    [property: JsonPropertyName("arguments")] JsonElement? Arguments)
+{
+    [JsonPropertyName("mode")]
+    public string? Mode { get; init; }
+
+    [JsonPropertyName("confirm")]
+    public bool? Confirm { get; init; }
+}
 
 public sealed record AgentToolInvokeResponse(
     [property: JsonPropertyName("status")] string Status,
@@ -175,6 +186,30 @@ public sealed record AgentToolInvokeAudit(
     [property: JsonPropertyName("side_effect")] string SideEffect,
     [property: JsonPropertyName("requires_confirmation")] bool RequiresConfirmation,
     [property: JsonPropertyName("actions")] IReadOnlyList<string> Actions);
+
+public sealed record AgentToolExecutionResult(
+    [property: JsonPropertyName("status")] string Status,
+    [property: JsonPropertyName("tool")] string Tool,
+    [property: JsonPropertyName("backend")] string Backend,
+    [property: JsonPropertyName("model")] string? Model,
+    [property: JsonPropertyName("route")] string? Route,
+    [property: JsonPropertyName("text")] string? Text,
+    [property: JsonPropertyName("artifact")] AgentToolArtifact? Artifact,
+    [property: JsonPropertyName("elapsed_ms")] long ElapsedMs,
+    [property: JsonPropertyName("diagnostics")] IReadOnlyList<string> Diagnostics,
+    [property: JsonPropertyName("diagnostic")] Tomur.Runtime.RuntimeDiagnostic? Diagnostic)
+{
+    [JsonPropertyName("data")]
+    public JsonElement? Data { get; init; }
+}
+
+public sealed record AgentToolArtifact(
+    [property: JsonPropertyName("type")] string Type,
+    [property: JsonPropertyName("path")] string Path,
+    [property: JsonPropertyName("media_type")] string? MediaType,
+    [property: JsonPropertyName("format")] string? Format,
+    [property: JsonPropertyName("bytes")] long Bytes,
+    [property: JsonPropertyName("sample_rate")] int? SampleRate);
 
 public sealed record AgentErrorResponse(
     [property: JsonPropertyName("status")] string Status,

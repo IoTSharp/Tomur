@@ -9,6 +9,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Hosting.WindowsServices;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 using Tomur.Api;
 using Tomur.Agents;
 using Tomur.Config;
@@ -152,9 +154,12 @@ internal static class ServeCommand
         builder.Services.AddSingleton<MultimodalExecutionService>();
         builder.Services.AddSingleton<IsolatedImageGenerationService>();
         builder.Services.AddSingleton<AgentEventLog>();
+        builder.Services.AddSingleton<FileIndexStore>();
+        builder.Services.AddSingleton<AgentTelemetryExporterOptions>();
         builder.Services.AddSingleton<AgentTelemetry>();
         builder.Services.AddSingleton<AgentRuntimeService>();
         builder.Services.AddSingleton<ToolFactory>();
+        builder.Services.AddSingleton<ToolExecutionService>();
         builder.Services.AddSingleton<ToolInvoker>();
         builder.Services.AddSingleton<RuntimeDiagnosticsProvider>();
         builder.Services.AddSingleton<LocalModelCatalog>();
@@ -163,6 +168,7 @@ internal static class ServeCommand
         {
             options.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonSerializerContext.Default);
         });
+        ConfigureAgentTelemetry(builder);
 
         builder.WebHost.UseUrls(state.ServerOptions.Urls);
 
@@ -190,6 +196,32 @@ internal static class ServeCommand
             });
         });
         return app;
+    }
+
+    private static void ConfigureAgentTelemetry(WebApplicationBuilder builder)
+    {
+        var exporterOptions = new AgentTelemetryExporterOptions();
+        if (!exporterOptions.Enabled)
+        {
+            return;
+        }
+
+        builder.Services.AddOpenTelemetry()
+            .ConfigureResource(resource => resource.AddService(
+                serviceName: Defaults.ProductName,
+                serviceVersion: Defaults.Version))
+            .WithTracing(tracing =>
+            {
+                tracing.AddSource(AgentTelemetry.SourceName);
+                tracing.AddOtlpExporter(options =>
+                {
+                    options.Endpoint = new Uri(exporterOptions.Endpoint!);
+                    if (!string.IsNullOrWhiteSpace(exporterOptions.Headers))
+                    {
+                        options.Headers = exporterOptions.Headers;
+                    }
+                });
+            });
     }
 
     private static bool ShouldUseSpa(HttpContext context)

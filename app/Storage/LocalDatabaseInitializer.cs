@@ -175,6 +175,37 @@ public sealed class LocalDatabaseInitializer
 
             CREATE INDEX IF NOT EXISTS ix_conversation_diagnostics_conversation
             ON conversation_diagnostics(conversation_id, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS file_documents (
+                id TEXT PRIMARY KEY NOT NULL,
+                root TEXT NOT NULL,
+                relative_path TEXT NOT NULL,
+                absolute_path TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                extension TEXT NOT NULL,
+                media_type TEXT NULL,
+                size_bytes INTEGER NOT NULL,
+                last_modified_utc TEXT NOT NULL,
+                sha256 TEXT NOT NULL,
+                indexed_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS ix_file_documents_root
+            ON file_documents(root, relative_path);
+
+            CREATE TABLE IF NOT EXISTS file_chunks (
+                id TEXT PRIMARY KEY NOT NULL,
+                document_id TEXT NOT NULL,
+                ordinal INTEGER NOT NULL,
+                text TEXT NOT NULL,
+                start_line INTEGER NOT NULL,
+                end_line INTEGER NOT NULL,
+                char_count INTEGER NOT NULL,
+                FOREIGN KEY(document_id) REFERENCES file_documents(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS ix_file_chunks_document
+            ON file_chunks(document_id, ordinal);
             """;
         command.Parameters.AddWithValue("$schema_version", Defaults.DatabaseSchemaVersion.ToString(CultureInfo.InvariantCulture));
         command.ExecuteNonQuery();

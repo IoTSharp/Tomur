@@ -357,7 +357,7 @@ internal static class ServiceCommand
     private static ExecutableInvocation ResolveExecutableInvocation()
     {
         var processPath = Environment.ProcessPath;
-        var assemblyPath = Assembly.GetExecutingAssembly().Location;
+        var assemblyPath = ResolveAssemblyPath();
         var processName = string.IsNullOrWhiteSpace(processPath)
             ? string.Empty
             : Path.GetFileNameWithoutExtension(processPath);
@@ -383,6 +383,18 @@ internal static class ServiceCommand
         }
 
         throw new InvalidOperationException("Current executable path could not be resolved.");
+    }
+
+    private static string ResolveAssemblyPath()
+    {
+        var assemblyName = Assembly.GetExecutingAssembly().GetName().Name;
+        if (string.IsNullOrWhiteSpace(assemblyName))
+        {
+            return string.Empty;
+        }
+
+        var path = Path.Combine(AppContext.BaseDirectory, assemblyName + ".dll");
+        return File.Exists(path) ? path : string.Empty;
     }
 
     private static string BuildSystemdUnit(ServiceInstallState install)
