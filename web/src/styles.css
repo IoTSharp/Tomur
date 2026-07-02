@@ -1,16 +1,16 @@
 :root {
   color-scheme: light;
-  --app-bg: #f3efe6;
-  --app-panel: rgba(255, 252, 246, 0.94);
-  --app-panel-strong: rgba(255, 249, 240, 0.98);
-  --app-border: rgba(111, 78, 55, 0.12);
-  --app-shadow: 0 18px 48px rgba(83, 53, 31, 0.08);
-  --ink-strong: #2d241c;
-  --ink-soft: #65584b;
+  --app-bg: #f4f7f8;
+  --app-panel: rgba(255, 255, 255, 0.94);
+  --app-panel-strong: rgba(255, 255, 255, 0.98);
+  --app-border: rgba(37, 54, 61, 0.12);
+  --app-shadow: 0 18px 48px rgba(23, 39, 45, 0.08);
+  --ink-strong: #20292d;
+  --ink-soft: #5d6b71;
   --accent: #0d6b5f;
   --accent-strong: #084d45;
   --accent-soft: rgba(13, 107, 95, 0.12);
-  --warning-soft: rgba(181, 119, 35, 0.14);
+  --warning-soft: rgba(197, 134, 45, 0.14);
   --font-sans: "Noto Sans SC", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-display: "Source Han Serif SC", "Songti SC", "Noto Serif SC", serif;
 }
@@ -29,10 +29,7 @@ body,
 
 body {
   color: var(--ink-strong);
-  background:
-    radial-gradient(circle at top left, rgba(220, 188, 146, 0.28), transparent 26%),
-    radial-gradient(circle at right center, rgba(13, 107, 95, 0.12), transparent 22%),
-    linear-gradient(180deg, #f6f1e8 0%, #efe7db 48%, #f5efe7 100%);
+  background: linear-gradient(180deg, #f7fafb 0%, #eef3f4 52%, #f6f8f9 100%);
   font-family: var(--font-sans);
 }
 
@@ -71,7 +68,7 @@ button {
   overflow: hidden;
   border-radius: 28px;
   background:
-    linear-gradient(180deg, rgba(255, 251, 244, 0.97), rgba(249, 243, 233, 0.92)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(246, 249, 250, 0.92)),
     var(--app-panel);
 }
 
@@ -81,7 +78,7 @@ button {
   overflow: hidden;
   border-radius: 32px;
   background:
-    linear-gradient(180deg, rgba(255, 253, 248, 0.98), rgba(252, 248, 241, 0.95)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 251, 0.95)),
     var(--app-panel-strong);
 }
 
@@ -129,7 +126,7 @@ button {
   margin: 0 14px 14px;
   border-radius: 20px;
   background: rgba(255, 255, 255, 0.66);
-  border: 1px solid rgba(111, 78, 55, 0.08);
+  border: 1px solid rgba(37, 54, 61, 0.08);
 }
 
 .conversation-list {
@@ -200,7 +197,7 @@ button {
 }
 
 .status-pill-default {
-  border-color: rgba(111, 78, 55, 0.1);
+  border-color: rgba(37, 54, 61, 0.1);
 }
 
 .status-pill-success {
@@ -254,11 +251,9 @@ button {
 
 .empty-chat .ant-x-welcome {
   padding: 32px;
-  border: 1px solid rgba(111, 78, 55, 0.08);
+  border: 1px solid rgba(37, 54, 61, 0.08);
   border-radius: 28px;
-  background:
-    radial-gradient(circle at top right, rgba(13, 107, 95, 0.08), transparent 28%),
-    rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.7);
 }
 
 .composer {
@@ -303,20 +298,28 @@ button {
   text-overflow: ellipsis;
 }
 
+.message-meta .clickable-tag {
+  cursor: pointer;
+}
+
+.message-meta .clickable-tag:hover {
+  filter: brightness(0.96);
+}
+
 .drawer-stack {
   width: 100%;
 }
 
 .drawer-stack .ant-card {
   border-radius: 18px;
-  border-color: rgba(111, 78, 55, 0.1);
+  border-color: rgba(37, 54, 61, 0.1);
   background: rgba(255, 255, 255, 0.72);
 }
 
 .drawer-stack .ant-collapse {
   border-radius: 16px;
   overflow: hidden;
-  border-color: rgba(111, 78, 55, 0.12);
+  border-color: rgba(37, 54, 61, 0.12);
 }
 
 .drawer-stack .ant-collapse > .ant-collapse-item > .ant-collapse-header {

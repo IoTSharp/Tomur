@@ -19,6 +19,8 @@ export interface Conversation {
   title: string;
   updatedAt: number;
   messages: ChatMessage[];
+  loaded?: boolean;
+  loading?: boolean;
 }
 
 export interface ConversationCreateRequest {
@@ -30,6 +32,25 @@ export interface ConversationCreateRequest {
 export interface ConversationCreateResponse {
   status: string;
   conversation: ConversationRecord;
+}
+
+export interface ConversationDeleteResponse {
+  status: string;
+  conversation: ConversationRecord;
+}
+
+export interface ConversationListResponse {
+  status: string;
+  checked_at: string;
+  conversations: ConversationRecord[];
+}
+
+export interface ConversationDetailResponse {
+  status: string;
+  conversation: ConversationRecord;
+  messages: ConversationMessageRecord[];
+  artifacts: ConversationArtifactRecord[];
+  diagnostics: ConversationDiagnosticRecord[];
 }
 
 export interface ConversationAppendMessageRequest {
@@ -235,6 +256,8 @@ export interface RuntimeStatusResponse {
   paths: PathConfiguration;
   configuration: ConfigurationState;
   directories: DirectoryState[];
+  database: LocalDatabaseState;
+  api_keys: ApiKeyStoreState;
   disk: DiskState;
   proxy: ProxyState;
   port: PortState;
@@ -266,6 +289,18 @@ export interface ConfigurationState {
   path: string;
   message: string;
   recovered_path?: string | null;
+  configuration: LocalConfiguration;
+}
+
+export interface LocalConfiguration {
+  schema_version: number;
+  server: {
+    urls: string;
+  };
+  paths: PathConfiguration;
+  runtime: {
+    default_backend: string;
+  };
 }
 
 export interface DirectoryState {
@@ -282,6 +317,28 @@ export interface DiskState {
   total_bytes?: number | null;
   status: string;
   message: string;
+}
+
+export interface LocalDatabaseState {
+  status: string;
+  path: string;
+  schema_version: number;
+  message: string;
+}
+
+export interface ApiKeyStoreState {
+  status: string;
+  active_key_count: number;
+  message: string;
+  keys: ApiKeyRecord[];
+}
+
+export interface ApiKeyRecord {
+  id: string;
+  name: string;
+  prefix: string;
+  created_at: string;
+  last_used_at?: string | null;
 }
 
 export interface ProxyState {

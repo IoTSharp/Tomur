@@ -52,7 +52,10 @@ import type { BubbleItemType, PromptsItemType } from "@ant-design/x";
 import {
   appendConversationMessage,
   createConversation,
+  deleteConversation,
+  getConversationDetail,
   getConversationArtifactContentUrl,
+  getConversations,
   getInstalledModels,
   getModelCatalog,
   getModels,
@@ -70,6 +73,7 @@ import type {
   Conversation,
   ConversationArtifactRecord,
   ConversationAttachment,
+  ConversationDetailResponse,
   ConversationDiagnosticRecord,
   ConversationMessageRecord,
   ConversationRecord,
@@ -153,6 +157,7 @@ function App() {
   const [runtimeAction, setRuntimeAction] = useState<"prepare" | "unload" | null>(null);
   const [prepareResult, setPrepareResult] = useState<NativeBundlePrepareResult>();
   const [sending, setSending] = useState(false);
+  const [loadingConversations, setLoadingConversations] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<ConversationAttachment[]>([]);
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
   const [speechEnabled, setSpeechEnabled] = useState(false);
@@ -211,6 +216,11 @@ function App() {
 
   const copyText = useCallback(
     async (text: string, successMessage = "已复制命令") => {
+      if (!text.trim()) {
+        message.warning("当前没有可复制内容");
+        return;
+      }
+
       try {
         await navigator.clipboard.writeText(text);
         message.success(successMessage);
@@ -265,6 +275,49 @@ function App() {
     void refreshStatus();
   }, [refreshStatus]);
 
+  const refreshConversations = useCallback(async () => {
+    const controller = new AbortController();
+    setLoadingConversations(true);
+
+    try {
+      const response = await getConversations(controller.signal);
+      const backendConversations = response.conversations.map(mapConversationRecord);
+      if (backendConversations.length === 0) {
+        setConversations((current) => current.length === 0 ? initialConversations : current);
+        return;
+      }
+
+      setConversations((current) => {
+        const localOnly = current.filter((conversation) => !conversation.backendId && conversation.messages.length > 0);
+        const backendIds = new Set(backendConversations.map((conversation) => conversation.id));
+        const loadedBackend = current.filter(
+          (conversation) => conversation.backendId && backendIds.has(conversation.backendId)
+        );
+        const loadedByBackendId = new Map(loadedBackend.map((conversation) => [conversation.backendId, conversation]));
+        const mergedBackend = backendConversations.map((conversation) => {
+          const existing = loadedByBackendId.get(conversation.backendId);
+          return existing?.loaded
+            ? { ...conversation, messages: existing.messages, loaded: true, loading: false }
+            : conversation;
+        });
+        return [...mergedBackend, ...localOnly];
+      });
+      setActiveConversationId((current) =>
+        backendConversations.some((conversation) => conversation.id === current)
+          ? current
+          : backendConversations[0].id
+      );
+    } catch (error) {
+      message.warning(error instanceof Error ? error.message : "本地会话历史加载失败");
+    } finally {
+      setLoadingConversations(false);
+    }
+  }, [message]);
+
+  useEffect(() => {
+    void refreshConversations();
+  }, [refreshConversations]);
+
   const runNativePrepare = useCallback(async () => {
     const controller = new AbortController();
     setRuntimeAction("prepare");
@@ -312,6 +365,10 @@ function App() {
     setSettingsOpen(true);
   }, []);
 
+  const openDiagnosticContext = useCallback((diagnostic: ConversationDiagnosticRecord) => {
+    openSettings(resolveSettingsSectionFromDiagnostic(diagnostic));
+  }, [openSettings]);
+
   const startConversation = useCallback(() => {
     const id = `chat-${crypto.randomUUID()}`;
     const conversation: Conversation = {
@@ -325,33 +382,82 @@ function App() {
     setActiveConversationId(id);
   }, []);
 
-  const removeConversation = useCallback(
+  const removeConversationFromState = useCallback(
     (conversationId: string) => {
-      setConversations((current) => {
-        if (current.length === 1) {
-          return [
-            {
-              id: initialConversationId,
-              title: "本地 Chat",
-              updatedAt: Date.now(),
-              messages: []
-            }
-          ];
-        }
+      const fallback: Conversation = {
+        id: initialConversationId,
+        title: "本地 Chat",
+        updatedAt: Date.now(),
+        messages: []
+      };
+      const next = conversations.length === 1
+        ? [fallback]
+        : conversations.filter((conversation) => conversation.id !== conversationId);
 
-        return current.filter((conversation) => conversation.id !== conversationId);
-      });
-
+      setConversations(next);
       if (activeConversationId === conversationId) {
-        const nextConversation = conversations.find((conversation) => conversation.id !== conversationId);
-        setActiveConversationId(nextConversation?.id ?? initialConversationId);
+        setActiveConversationId(next[0]?.id ?? initialConversationId);
       }
     },
     [activeConversationId, conversations]
   );
 
+  const removeConversation = useCallback(
+    async (conversationId: string) => {
+      const conversation = conversations.find((item) => item.id === conversationId);
+      removeConversationFromState(conversationId);
+
+      if (!conversation?.backendId) {
+        return;
+      }
+
+      const controller = new AbortController();
+      try {
+        await deleteConversation(conversation.backendId, controller.signal);
+        message.success("已移除本地会话");
+      } catch (error) {
+        message.warning(error instanceof Error ? error.message : "本地会话删除失败");
+        void refreshConversations();
+      }
+    },
+    [conversations, message, refreshConversations, removeConversationFromState]
+  );
+
+  const openConversation = useCallback(
+    async (conversationId: string) => {
+      setActiveConversationId(conversationId);
+      const conversation = conversations.find((item) => item.id === conversationId);
+      const backendId = conversation?.backendId;
+      if (!backendId || conversation.loaded || conversation.loading) {
+        return;
+      }
+
+      updateConversation(conversationId, (current) => ({ ...current, loading: true }));
+      const controller = new AbortController();
+      try {
+        const detail = await getConversationDetail(backendId, controller.signal);
+        updateConversation(conversationId, () => mapConversationDetail(detail));
+      } catch (error) {
+        updateConversation(conversationId, (current) => ({ ...current, loading: false }));
+        message.warning(error instanceof Error ? error.message : "本地会话详情加载失败");
+      }
+    },
+    [conversations, message, updateConversation]
+  );
+
+  useEffect(() => {
+    if (activeConversation.backendId && !activeConversation.loaded && !activeConversation.loading) {
+      void openConversation(activeConversation.id);
+    }
+  }, [activeConversation, openConversation]);
+
   const ensureBackendConversation = useCallback(
-    async (conversation: Conversation, model: string, signal?: AbortSignal) => {
+    async (
+      conversation: Conversation,
+      model: string,
+      signal?: AbortSignal,
+      messagesToSync = conversation.messages
+    ) => {
       if (conversation.backendId) {
         return conversation.backendId;
       }
@@ -368,11 +474,12 @@ function App() {
         ...current,
         backendId: response.conversation.id,
         title: response.conversation.title || current.title,
-        updatedAt: parseApiTime(response.conversation.updated_at)
+        updatedAt: parseApiTime(response.conversation.updated_at),
+        loaded: true
       }));
 
       try {
-        await syncPlainMessagesToBackend(response.conversation.id, conversation.messages, signal);
+        await syncPlainMessagesToBackend(response.conversation.id, messagesToSync, signal);
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") {
           throw error;
@@ -398,6 +505,8 @@ function App() {
         backendId: response.conversation.id,
         title: resolveConversationTitle(conversation, response.conversation),
         updatedAt: parseApiTime(response.conversation.updated_at),
+        loaded: true,
+        loading: false,
         messages: replaceTurnMessages(
           conversation.messages,
           userMessageId,
@@ -421,6 +530,8 @@ function App() {
         backendId: response.conversation.id,
         title: resolveConversationTitle(conversation, response.conversation, response.transcript),
         updatedAt: parseApiTime(response.conversation.updated_at),
+        loaded: true,
+        loading: false,
         messages: replaceTurnMessages(
           conversation.messages,
           userMessageId,
@@ -675,7 +786,8 @@ function App() {
           const backendConversationId = await ensureBackendConversation(
             activeConversation,
             model,
-            controller.signal
+            controller.signal,
+            activeConversation.messages
           );
           const response = await sendConversationTurn(
             backendConversationId,
@@ -725,18 +837,26 @@ function App() {
           )
         }));
 
-        if (activeConversation.backendId) {
-          try {
-            await appendPlainTurnToBackend(
-              activeConversation.backendId,
-              model,
-              userMessage.content,
-              text || accumulated,
-              controller.signal
-            );
-          } catch {
-            message.warning("本地会话历史同步失败，当前回复已保留在前端。");
+        try {
+          const backendConversationId = await ensureBackendConversation(
+            activeConversation,
+            model,
+            controller.signal,
+            activeConversation.messages
+          );
+          await appendPlainTurnToBackend(
+            backendConversationId,
+            model,
+            userMessage.content,
+            text || accumulated,
+            controller.signal
+          );
+        } catch (error) {
+          if (error instanceof DOMException && error.name === "AbortError") {
+            throw error;
           }
+
+          message.warning("本地会话历史同步失败，当前回复已保留在前端。");
         }
       } catch (error) {
         if (attachments.length > 0) {
@@ -803,6 +923,7 @@ function App() {
         ? () => (
             <MessageFooter
               message={item}
+              onOpenDiagnostic={openDiagnosticContext}
               onCopy={() => {
                 void navigator.clipboard.writeText(item.content);
                 message.success("已复制");
@@ -848,27 +969,29 @@ function App() {
                   {runtimeOk ? "本地工作台已就绪" : "需要完成本地准备"}
                 </Typography.Text>
               </Space>
-              <Button type="text" size="small" onClick={() => setStatusDrawerOpen(true)}>
-                详情
-              </Button>
-            </Flex>
-            <Typography.Text type="secondary">
-              {runtimeStatus?.runtime.message ?? "正在读取本地运行状态"}
-            </Typography.Text>
-          </Space>
-        </Card>
+            <Button type="text" size="small" onClick={() => setStatusDrawerOpen(true)}>
+              详情
+            </Button>
+          </Flex>
+          <Typography.Text type="secondary">
+              {loadingConversations
+                ? "正在加载本地会话历史"
+                : runtimeStatus?.runtime.message ?? "正在读取本地运行状态"}
+          </Typography.Text>
+        </Space>
+      </Card>
 
         <Conversations
           className="conversation-list"
           items={conversationItems}
           activeKey={activeConversation.id}
           groupable
-          onActiveChange={(key) => setActiveConversationId(String(key))}
+          onActiveChange={(key) => void openConversation(String(key))}
           menu={(item) => ({
             items: [{ key: "delete", icon: <Trash2 size={14} />, label: "删除" }],
             onClick: ({ key }) => {
               if (key === "delete") {
-                removeConversation(item.key);
+                void removeConversation(item.key);
               }
             }
           })}
@@ -1195,11 +1318,20 @@ function StatusPanel({
       />
 
       <Flex gap={8} wrap>
+        <Button icon={<Layers3 size={16} />} onClick={() => onOpenSettings("models")}>
+          Models
+        </Button>
+        <Button icon={<Download size={16} />} onClick={() => onOpenSettings("downloads")}>
+          Downloads
+        </Button>
         <Button icon={<Wrench size={16} />} onClick={() => onOpenSettings("runtime")}>
           Runtime
         </Button>
         <Button icon={<FolderOpen size={16} />} onClick={() => onOpenSettings("files")}>
           Files
+        </Button>
+        <Button icon={<Settings size={16} />} onClick={() => onOpenSettings("api")}>
+          API
         </Button>
       </Flex>
 
@@ -1296,14 +1428,45 @@ function SettingsPanel({
       />
 
       {section === "general" && (
-        <Descriptions column={1} size="small" bordered>
-          <Descriptions.Item label="Version">{runtimeStatus?.version ?? "-"}</Descriptions.Item>
-          <Descriptions.Item label="Data directory">
-            {runtimeStatus?.paths.data_directory ?? "-"}
-          </Descriptions.Item>
-          <Descriptions.Item label="Theme">System</Descriptions.Item>
-          <Descriptions.Item label="Startup">tomur open / tomur serve</Descriptions.Item>
-        </Descriptions>
+        <Space direction="vertical" size={16} className="drawer-stack">
+          <Alert
+            type={runtimeStatus?.configuration.status === "error" ? "warning" : "info"}
+            showIcon
+            message={runtimeStatus?.configuration.message ?? "配置状态尚未加载"}
+            description={runtimeStatus?.configuration.path ?? "刷新状态后可查看当前配置文件。"}
+          />
+          <Descriptions column={1} size="small" bordered>
+            <Descriptions.Item label="Version">{runtimeStatus?.version ?? "-"}</Descriptions.Item>
+            <Descriptions.Item label="Schema">
+              {runtimeStatus?.configuration.configuration.schema_version ?? "-"}
+            </Descriptions.Item>
+            <Descriptions.Item label="Server URLs">
+              {runtimeStatus?.configuration.configuration.server.urls ?? runtimeStatus?.port.url ?? "-"}
+            </Descriptions.Item>
+            <Descriptions.Item label="Default backend">
+              {runtimeStatus?.configuration.configuration.runtime.default_backend ?? "-"}
+            </Descriptions.Item>
+            <Descriptions.Item label="Data directory">
+              {runtimeStatus?.paths.data_directory ?? "-"}
+            </Descriptions.Item>
+            <Descriptions.Item label="Theme">跟随当前工作台样式</Descriptions.Item>
+            <Descriptions.Item label="Startup">tomur open / tomur serve</Descriptions.Item>
+          </Descriptions>
+          <Space wrap>
+            <Button
+              icon={<Copy size={14} />}
+              onClick={() => void onCopyText("tomur open", "已复制打开工作台命令")}
+            >
+              复制 open
+            </Button>
+            <Button
+              icon={<Copy size={14} />}
+              onClick={() => void onCopyText("tomur serve", "已复制 serve 命令")}
+            >
+              复制 serve
+            </Button>
+          </Space>
+        </Space>
       )}
 
       {section === "models" && (
@@ -1542,50 +1705,183 @@ function SettingsPanel({
       )}
 
       {section === "api" && (
-        <Descriptions column={1} size="small" bordered>
-          <Descriptions.Item label="URL">{runtimeStatus?.port.url ?? "-"}</Descriptions.Item>
-          <Descriptions.Item label="Port status">{runtimeStatus?.port.status ?? "-"}</Descriptions.Item>
-          <Descriptions.Item label="OpenAI models">/v1/models</Descriptions.Item>
-          <Descriptions.Item label="OpenAI chat">/v1/chat/completions</Descriptions.Item>
-          <Descriptions.Item label="Ollama chat">/api/chat</Descriptions.Item>
-        </Descriptions>
+        <Space direction="vertical" size={16} className="drawer-stack">
+          <Alert
+            type={runtimeStatus?.api_keys.status === "ok" ? "success" : "warning"}
+            showIcon
+            message={runtimeStatus?.api_keys.message ?? "API key 状态尚未加载"}
+            description="本地浏览器工作台使用同源 API；对外暴露兼容接口前应创建本地 API key。"
+          />
+          <Descriptions column={1} size="small" bordered>
+            <Descriptions.Item label="URL">{runtimeStatus?.port.url ?? "-"}</Descriptions.Item>
+            <Descriptions.Item label="Port status">{runtimeStatus?.port.status ?? "-"}</Descriptions.Item>
+            <Descriptions.Item label="Active API keys">
+              {runtimeStatus?.api_keys.active_key_count ?? 0}
+            </Descriptions.Item>
+            <Descriptions.Item label="OpenAI models">GET /v1/models</Descriptions.Item>
+            <Descriptions.Item label="OpenAI chat">POST /v1/chat/completions</Descriptions.Item>
+            <Descriptions.Item label="Ollama chat">POST /api/chat</Descriptions.Item>
+            <Descriptions.Item label="Conversations">GET /api/conversations</Descriptions.Item>
+          </Descriptions>
+          <List
+            size="small"
+            header="本地 API key"
+            dataSource={runtimeStatus?.api_keys.keys ?? []}
+            locale={{ emptyText: "当前没有本地 API key 记录" }}
+            renderItem={(key) => (
+              <List.Item>
+                <List.Item.Meta
+                  title={key.name}
+                  description={`${key.prefix}... / ${formatRelativeTime(key.created_at)}`}
+                />
+              </List.Item>
+            )}
+          />
+          <Space wrap>
+            <Button
+              icon={<Copy size={14} />}
+              onClick={() =>
+                void onCopyText("tomur api-key create local", "已复制 API key 创建命令")
+              }
+            >
+              复制创建命令
+            </Button>
+            <Button
+              icon={<Copy size={14} />}
+              onClick={() =>
+                void onCopyText("GET /api/version", "已复制 version API")
+              }
+            >
+              复制检查 API
+            </Button>
+          </Space>
+        </Space>
       )}
 
       {section === "files" && (
-        <Descriptions column={1} size="small" bordered>
-          <Descriptions.Item label="Models">
-            {runtimeStatus?.paths.models_directory ?? "-"}
-          </Descriptions.Item>
-          <Descriptions.Item label="Runtime">
-            {runtimeStatus?.paths.runtime_directory ?? "-"}
-          </Descriptions.Item>
-          <Descriptions.Item label="Logs">
-            {runtimeStatus?.paths.logs_directory ?? "-"}
-          </Descriptions.Item>
-          <Descriptions.Item label="Database">
-            {runtimeStatus?.paths.database_path ?? "-"}
-          </Descriptions.Item>
-        </Descriptions>
+        <Space direction="vertical" size={16} className="drawer-stack">
+          <Descriptions column={1} size="small" bordered>
+            <Descriptions.Item label="Data">
+              {runtimeStatus?.paths.data_directory ?? "-"}
+            </Descriptions.Item>
+            <Descriptions.Item label="Models">
+              {runtimeStatus?.paths.models_directory ?? "-"}
+            </Descriptions.Item>
+            <Descriptions.Item label="Runtime">
+              {runtimeStatus?.paths.runtime_directory ?? "-"}
+            </Descriptions.Item>
+            <Descriptions.Item label="Logs">
+              {runtimeStatus?.paths.logs_directory ?? "-"}
+            </Descriptions.Item>
+            <Descriptions.Item label="Database">
+              {runtimeStatus?.paths.database_path ?? "-"}
+            </Descriptions.Item>
+            <Descriptions.Item label="Database status">
+              {runtimeStatus?.database.status ?? "-"}
+            </Descriptions.Item>
+          </Descriptions>
+          <List
+            size="small"
+            header="目录状态"
+            dataSource={runtimeStatus?.directories ?? []}
+            locale={{ emptyText: "暂无目录状态" }}
+            renderItem={(directory) => (
+              <List.Item>
+                <List.Item.Meta
+                  title={
+                    <Space>
+                      <Tag color={tagColor(directory.status)}>{directory.status}</Tag>
+                      {directory.name}
+                    </Space>
+                  }
+                  description={directory.path}
+                />
+              </List.Item>
+            )}
+          />
+          <Space wrap>
+            <Button
+              icon={<Copy size={14} />}
+              disabled={!runtimeStatus?.paths.data_directory}
+              onClick={() =>
+                void onCopyText(runtimeStatus?.paths.data_directory ?? "", "已复制数据目录")
+              }
+            >
+              复制数据目录
+            </Button>
+            <Button
+              icon={<Copy size={14} />}
+              onClick={() =>
+                void onCopyText("tomur doctor", "已复制 doctor 命令")
+              }
+            >
+              复制 doctor
+            </Button>
+          </Space>
+        </Space>
       )}
 
       {section === "advanced" && (
-        <List
-          dataSource={multimodalStatus?.backends ?? []}
-          locale={{ emptyText: "暂无高级能力状态" }}
-          renderItem={(backend) => (
-            <List.Item>
-              <List.Item.Meta
-                title={
-                  <Space>
-                    <Tag color={tagColor(backend.status)}>{backend.status}</Tag>
-                    {backend.capability}
-                  </Space>
-                }
-                description={backend.message}
-              />
-            </List.Item>
-          )}
-        />
+        <Space direction="vertical" size={16} className="drawer-stack">
+          <Alert
+            type="info"
+            showIcon
+            message="高级能力保持本地受控边界"
+            description="Agent 工具、OpenTelemetry exporter、AOT 审计和 smoke 套件仍以项目内 API 与文档记录为准。"
+          />
+          <Descriptions column={1} size="small" bordered>
+            <Descriptions.Item label="Acceleration">
+              {runtimeStatus?.acceleration.effective_backend ?? "-"}
+            </Descriptions.Item>
+            <Descriptions.Item label="GPU layers">
+              {runtimeStatus?.acceleration.effective_gpu_layers ?? 0}
+            </Descriptions.Item>
+            <Descriptions.Item label="Proxy">
+              {runtimeStatus?.proxy.message ?? "-"}
+            </Descriptions.Item>
+            <Descriptions.Item label="Telemetry">
+              GET /api/agents/telemetry
+            </Descriptions.Item>
+            <Descriptions.Item label="Events">
+              GET /api/agents/events
+            </Descriptions.Item>
+          </Descriptions>
+          <List
+            dataSource={multimodalStatus?.backends ?? []}
+            locale={{ emptyText: "暂无高级能力状态" }}
+            renderItem={(backend) => (
+              <List.Item>
+                <List.Item.Meta
+                  title={
+                    <Space>
+                      <Tag color={tagColor(backend.status)}>{backend.status}</Tag>
+                      {backend.capability}
+                    </Space>
+                  }
+                  description={backend.message}
+                />
+              </List.Item>
+            )}
+          />
+          <Space wrap>
+            <Button
+              icon={<Copy size={14} />}
+              onClick={() =>
+                void onCopyText("GET /api/agents/telemetry", "已复制 telemetry API")
+              }
+            >
+              复制 telemetry API
+            </Button>
+            <Button
+              icon={<Copy size={14} />}
+              onClick={() =>
+                void onCopyText("dotnet publish app/Tomur.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishAot=false", "已复制自包含发布命令")
+              }
+            >
+              复制发布命令
+            </Button>
+          </Space>
+        </Space>
       )}
     </Space>
   );
@@ -1960,9 +2256,11 @@ function renderBundleAssetSummary(asset: ModelCatalogBundleAsset) {
 
 function MessageFooter({
   message,
+  onOpenDiagnostic,
   onCopy
 }: {
   message: ChatMessage;
+  onOpenDiagnostic: (diagnostic: ConversationDiagnosticRecord) => void;
   onCopy: () => void;
 }) {
   const diagnostics = message.diagnostics ?? [];
@@ -1977,7 +2275,13 @@ function MessageFooter({
         <Space size={6} wrap className="message-meta">
           {diagnostics.slice(0, 3).map((diagnostic) => (
             <Tooltip key={diagnostic.id} title={diagnostic.message}>
-              <Tag color={tagColor(diagnostic.status)}>{diagnostic.code}</Tag>
+              <Tag
+                className="clickable-tag"
+                color={tagColor(diagnostic.status)}
+                onClick={() => onOpenDiagnostic(diagnostic)}
+              >
+                {diagnostic.code}
+              </Tag>
             </Tooltip>
           ))}
           {artifacts.slice(0, 3).map((artifact) => (
@@ -2041,6 +2345,79 @@ function buildTurnMessages(
       audioMediaType: response.speech_media_type
     }
   ];
+}
+
+function mapConversationRecord(record: ConversationRecord): Conversation {
+  return {
+    id: record.id,
+    backendId: record.id,
+    title: record.title || "本地会话",
+    updatedAt: parseApiTime(record.updated_at),
+    messages: [],
+    loaded: false,
+    loading: false
+  };
+}
+
+function mapConversationDetail(response: ConversationDetailResponse): Conversation {
+  const artifactMap = createArtifactMap(response.artifacts);
+  const diagnostics = response.diagnostics;
+  const latestAssistantId = [...response.messages]
+    .reverse()
+    .find((message) => message.role === "assistant")?.id;
+  const latestSpeechArtifact = resolveLatestSpeechArtifact(response.artifacts);
+  const messages = response.messages.map((message) => {
+    const speechArtifact =
+      resolveExplicitSpeechArtifact(message, response.artifacts) ??
+      (message.id === latestAssistantId ? latestSpeechArtifact : null);
+    return mapConversationMessage(
+      message,
+      diagnostics,
+      artifactMap,
+      speechArtifact,
+      speechArtifact?.media_type
+    );
+  });
+
+  return {
+    id: response.conversation.id,
+    backendId: response.conversation.id,
+    title: response.conversation.title || "本地会话",
+    updatedAt: parseApiTime(response.conversation.updated_at),
+    messages,
+    loaded: true,
+    loading: false
+  };
+}
+
+function resolveExplicitSpeechArtifact(
+  message: ConversationMessageRecord,
+  artifacts: ConversationArtifactRecord[]
+) {
+  if (message.role !== "assistant") {
+    return null;
+  }
+
+  const explicit = message.artifact_ids
+    .map((id) => artifacts.find((artifact) => artifact.id === id))
+    .find((artifact) => artifact?.media_type?.startsWith("audio/"));
+  if (explicit) {
+    return explicit;
+  }
+
+  return null;
+}
+
+function resolveLatestSpeechArtifact(artifacts: ConversationArtifactRecord[]) {
+  return artifacts
+    .filter((artifact) =>
+      artifact.type === "audio" &&
+      artifact.media_type?.startsWith("audio/") &&
+      (artifact.source === "conversation.turn.tts" ||
+        artifact.source === "conversation.voice-turn.tts")
+    )
+    .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at))
+    .at(0) ?? null;
 }
 
 function buildVoiceTurnMessages(
@@ -2167,6 +2544,44 @@ function normalizeRole(role: string): ChatMessage["role"] {
 function summarizeDiagnostics(diagnostics: ConversationDiagnosticRecord[]) {
   const diagnostic = diagnostics.find((item) => item.status === "error") ?? diagnostics.at(0);
   return diagnostic?.message ?? "";
+}
+
+function resolveSettingsSectionFromDiagnostic(
+  diagnostic: ConversationDiagnosticRecord
+): SettingsSection {
+  const value = [
+    diagnostic.code,
+    diagnostic.backend,
+    diagnostic.message,
+    ...diagnostic.actions
+  ].join(" ").toLowerCase();
+
+  if (value.includes("model") || value.includes("download") || value.includes("pull")) {
+    return "models";
+  }
+
+  if (
+    value.includes("native") ||
+    value.includes("runtime") ||
+    value.includes("llama") ||
+    value.includes("whisper") ||
+    value.includes("tts") ||
+    value.includes("ocr") ||
+    value.includes("vlm") ||
+    value.includes("stable-diffusion")
+  ) {
+    return "runtime";
+  }
+
+  if (value.includes("file") || value.includes("artifact") || value.includes("path")) {
+    return "files";
+  }
+
+  if (value.includes("api") || value.includes("port") || value.includes("key")) {
+    return "api";
+  }
+
+  return "advanced";
 }
 
 function resolveConversationTitle(

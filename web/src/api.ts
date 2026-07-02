@@ -5,6 +5,9 @@ import type {
   ConversationAppendMessageResponse,
   ConversationCreateRequest,
   ConversationCreateResponse,
+  ConversationDeleteResponse,
+  ConversationDetailResponse,
+  ConversationListResponse,
   ConversationTurnRequest,
   ConversationTurnResponse,
   ConversationVoiceTurnResponse,
@@ -80,6 +83,33 @@ export async function createConversation(
   signal?: AbortSignal
 ): Promise<ConversationCreateResponse> {
   return postJson<ConversationCreateResponse>("/api/conversations", request, signal);
+}
+
+export async function getConversations(signal?: AbortSignal): Promise<ConversationListResponse> {
+  return getJson<ConversationListResponse>("/api/conversations", signal);
+}
+
+export async function getConversationDetail(
+  conversationId: string,
+  signal?: AbortSignal
+): Promise<ConversationDetailResponse> {
+  return getJson<ConversationDetailResponse>(conversationUrl(conversationId), signal);
+}
+
+export async function deleteConversation(
+  conversationId: string,
+  signal?: AbortSignal
+): Promise<ConversationDeleteResponse> {
+  const response = await fetch(conversationUrl(conversationId), {
+    method: "DELETE",
+    signal
+  });
+
+  if (!response.ok) {
+    throw await createApiError(response);
+  }
+
+  return (await response.json()) as ConversationDeleteResponse;
 }
 
 export async function sendConversationTurn(

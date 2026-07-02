@@ -183,6 +183,38 @@ public sealed class ConversationStore
         return conversation;
     }
 
+    public ConversationDeleteResponse Delete(string conversationId)
+    {
+        var id = NormalizeId(conversationId);
+        var now = DateTimeOffset.UtcNow;
+
+        using var connection = database.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        var conversation = GetConversation(connection, id, transaction);
+
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText =
+            """
+            UPDATE conversations
+            SET status = 'deleted',
+                updated_at = $updated_at
+            WHERE id = $id;
+            """;
+        command.Parameters.AddWithValue("$id", conversation.Id);
+        command.Parameters.AddWithValue("$updated_at", FormatDate(now));
+        command.ExecuteNonQuery();
+        transaction.Commit();
+
+        return new ConversationDeleteResponse(
+            "ok",
+            conversation with
+            {
+                Status = "deleted",
+                UpdatedAt = now
+            });
+    }
+
     public ConversationAppendMessageResponse AppendMessage(
         string conversationId,
         ConversationAppendMessageRequest request)

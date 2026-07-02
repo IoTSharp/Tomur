@@ -122,6 +122,7 @@ public static class ApiRouteExtensions
 
         app.MapPost("/api/conversations", HandleConversationCreateAsync);
         app.MapGet("/api/conversations/{conversationId}", HandleConversationGetAsync);
+        app.MapDelete("/api/conversations/{conversationId}", HandleConversationDeleteAsync);
         app.MapPost("/api/conversations/{conversationId}/turns", HandleConversationTurnAsync);
         app.MapPost("/api/conversations/{conversationId}/voice-turns", HandleConversationVoiceTurnAsync);
         app.MapPost("/api/conversations/{conversationId}/messages", HandleConversationAppendMessageAsync);
@@ -231,6 +232,7 @@ public static class ApiRouteExtensions
                     "/api/conversations",
                     "POST /api/conversations",
                     "/api/conversations/{conversationId}",
+                    "DELETE /api/conversations/{conversationId}",
                     "POST /api/conversations/{conversationId}/turns",
                     "POST /api/conversations/{conversationId}/voice-turns",
                     "POST /api/conversations/{conversationId}/messages",
@@ -606,6 +608,22 @@ public static class ApiRouteExtensions
         {
             var response = conversations.Get(conversationId, limit);
             await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.ConversationDetailResponse);
+        }
+        catch (ConversationStoreException exception)
+        {
+            await WriteConversationErrorAsync(context, exception);
+        }
+    }
+
+    private static async Task HandleConversationDeleteAsync(
+        HttpContext context,
+        ConversationStore conversations,
+        string conversationId)
+    {
+        try
+        {
+            var response = conversations.Delete(conversationId);
+            await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.ConversationDeleteResponse);
         }
         catch (ConversationStoreException exception)
         {

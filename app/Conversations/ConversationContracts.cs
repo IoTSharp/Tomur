@@ -26,6 +26,10 @@ public sealed record ConversationCreateResponse(
     [property: JsonPropertyName("status")] string Status,
     [property: JsonPropertyName("conversation")] ConversationRecord Conversation);
 
+public sealed record ConversationDeleteResponse(
+    [property: JsonPropertyName("status")] string Status,
+    [property: JsonPropertyName("conversation")] ConversationRecord Conversation);
+
 public sealed record ConversationAppendMessageRequest(
     [property: JsonPropertyName("role")] string? Role,
     [property: JsonPropertyName("content")] string? Content,
