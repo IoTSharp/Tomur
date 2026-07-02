@@ -209,7 +209,7 @@ public static class ApiRouteExtensions
         app.MapPost("/api/generate", HandleOllamaGenerateAsync);
         app.MapPost("/api/chat", HandleOllamaChatAsync);
 
-        app.MapGet("/api", static async (HttpContext context) =>
+        app.MapGet("/api", (Func<HttpContext, Task>)(static async context =>
         {
             var response = new RootResponse(
                 Defaults.ProductName,
@@ -260,7 +260,7 @@ public static class ApiRouteExtensions
                 ]);
 
             await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.RootResponse);
-        });
+        }));
     }
 
     private static async Task HandleOpenAiModelsAsync(HttpContext context, LocalModelCatalog modelCatalog)

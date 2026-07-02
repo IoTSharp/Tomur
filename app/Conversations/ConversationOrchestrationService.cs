@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -144,7 +145,7 @@ public sealed class ConversationOrchestrationService
                                 ["Send a valid image, audio or local file attachment, or include text content."]))
                     }
                     : diagnostics;
-                var response = new ConversationTurnResponse(
+                var errorResponse = new ConversationTurnResponse(
                     "error",
                     userAppend.Conversation,
                     messages,
@@ -157,7 +158,7 @@ public sealed class ConversationOrchestrationService
                     null,
                     null,
                     null);
-                return new ConversationTurnResult(response, HttpBadRequest);
+                return new ConversationTurnResult(errorResponse, HttpBadRequest);
             }
 
             var recentMessages = conversations.ListRecentMessages(conversationId, request.HistoryLimit);
@@ -401,7 +402,7 @@ public sealed class ConversationOrchestrationService
         try
         {
             transcriptResult = multimodalExecution.TranscribeAudio(
-                asrModel!,
+                asrModel,
                 audioBytes,
                 request.Language,
                 cancellationToken);
@@ -416,7 +417,7 @@ public sealed class ConversationOrchestrationService
                 null,
                 null,
                 null,
-                diagnosticsProvider.GetRuntimeFailure(asrModel!.Id, exception),
+                diagnosticsProvider.GetRuntimeFailure(asrModel.Id, exception),
                 diagnostics,
                 ResolveInferenceStatusCode(exception));
         }
@@ -438,7 +439,7 @@ public sealed class ConversationOrchestrationService
                 null,
                 null,
                 null,
-                diagnosticsProvider.GetRuntimeFailure(asrModel!.Id, runtimeException),
+                diagnosticsProvider.GetRuntimeFailure(asrModel.Id, runtimeException),
                 diagnostics,
                 HttpServiceUnavailable);
         }
@@ -450,7 +451,7 @@ public sealed class ConversationOrchestrationService
                 "ok",
                 "asr_transcribed",
                 "Audio input was transcribed by the local ASR runtime.",
-                asrModel!.Id,
+                asrModel.Id,
                 transcriptResult.Diagnostics.Count == 0
                     ? [$"elapsed_ms: {(long)Math.Round(transcriptResult.Elapsed.TotalMilliseconds)}"]
                     : transcriptResult.Diagnostics)));
@@ -574,7 +575,7 @@ public sealed class ConversationOrchestrationService
                     "warning",
                     "invalid_request",
                     "The voice turn response_format currently supports only 'wav'. Text response was still persisted.",
-                    ttsModel!.Id,
+                    ttsModel.Id,
                     ["Set response_format to wav or omit it."]));
             diagnostics.Add(diagnostic);
             return new ConversationVoiceTurnResult(
@@ -598,7 +599,7 @@ public sealed class ConversationOrchestrationService
         try
         {
             speechResult = multimodalExecution.SynthesizeSpeech(
-                ttsModel!,
+                ttsModel,
                 new SpeechSynthesisOptions(
                     turnResult.Response.AssistantMessage.Content,
                     request.Voice,
@@ -611,7 +612,7 @@ public sealed class ConversationOrchestrationService
         {
             var diagnostic = AppendRuntimeDiagnostic(
                 conversationId,
-                diagnosticsProvider.GetRuntimeFailure(ttsModel!.Id, exception));
+                diagnosticsProvider.GetRuntimeFailure(ttsModel.Id, exception));
             diagnostics.Add(diagnostic);
             return new ConversationVoiceTurnResult(
                 new ConversationVoiceTurnResponse(
@@ -641,7 +642,7 @@ public sealed class ConversationOrchestrationService
                 exception);
             var diagnostic = AppendRuntimeDiagnostic(
                 conversationId,
-                diagnosticsProvider.GetRuntimeFailure(ttsModel!.Id, runtimeException));
+                diagnosticsProvider.GetRuntimeFailure(ttsModel.Id, runtimeException));
             diagnostics.Add(diagnostic);
             return new ConversationVoiceTurnResult(
                 new ConversationVoiceTurnResponse(
@@ -697,7 +698,7 @@ public sealed class ConversationOrchestrationService
                 "ok",
                 "tts_synthesized",
                 "Assistant text was synthesized by the local TTS runtime and registered as a conversation artifact.",
-                ttsModel!.Id,
+                ttsModel.Id,
                 speechResult.Diagnostics.Count == 0
                     ? [
                         $"elapsed_ms: {(long)Math.Round(speechResult.Elapsed.TotalMilliseconds)}",
@@ -973,16 +974,16 @@ public sealed class ConversationOrchestrationService
             return;
         }
 
-        artifact = artifact!;
-        artifacts.Add(artifact);
-        normalized.Add(ToAttachment(attachment, artifact));
+        var registeredArtifact = artifact!;
+        artifacts.Add(registeredArtifact);
+        normalized.Add(ToAttachment(attachment, registeredArtifact));
         tools.Add(new AgentChatToolRequest(
             ShouldUseOcr(attachment)
                 ? "ocr.recognize"
                 : "vision.analyze",
             ShouldUseOcr(attachment)
-                ? CreateOcrArguments(attachment, artifact, bytes, mediaType)
-                : CreateVisionArguments(attachment, artifact, bytes, mediaType)));
+                ? CreateOcrArguments(attachment, registeredArtifact, bytes, mediaType)
+                : CreateVisionArguments(attachment, registeredArtifact, bytes, mediaType)));
     }
 
     private void PrepareAudioAttachment(
@@ -1022,9 +1023,9 @@ public sealed class ConversationOrchestrationService
             return;
         }
 
-        artifact = artifact!;
-        artifacts.Add(artifact);
-        normalized.Add(ToAttachment(attachment, artifact));
+        var registeredArtifact = artifact!;
+        artifacts.Add(registeredArtifact);
+        normalized.Add(ToAttachment(attachment, registeredArtifact));
         tools.Add(new AgentChatToolRequest(
             "audio.transcribe",
             CreateAudioTranscriptionArguments(attachment, bytes, mediaType)));
@@ -1061,12 +1062,12 @@ public sealed class ConversationOrchestrationService
                 return;
             }
 
-            artifact = artifact!;
-            artifacts.Add(artifact);
-            normalized.Add(ToAttachment(attachment, artifact));
+            var registeredArtifact = artifact!;
+            artifacts.Add(registeredArtifact);
+            normalized.Add(ToAttachment(attachment, registeredArtifact));
             tools.Add(new AgentChatToolRequest(
                 "files.search",
-                CreateFileSearchArguments(path: Path.GetDirectoryName(artifact.Path), query: BuildFileSearchQuery(attachment))));
+                CreateFileSearchArguments(path: Path.GetDirectoryName(registeredArtifact.Path), query: BuildFileSearchQuery(attachment))));
             return;
         }
 
@@ -1246,7 +1247,7 @@ public sealed class ConversationOrchestrationService
                     "warning",
                     "invalid_request",
                     "The conversation turn response_format currently supports only 'wav'. Text response was still persisted.",
-                    ttsModel!.Id,
+                    ttsModel.Id,
                     ["Set response_format to wav or omit it."])));
             return new SpeechTurnResult(null, null, null);
         }
@@ -1254,7 +1255,7 @@ public sealed class ConversationOrchestrationService
         try
         {
             var speechResult = multimodalExecution.SynthesizeSpeech(
-                ttsModel!,
+                ttsModel,
                 new SpeechSynthesisOptions(
                     text,
                     request.Voice,
@@ -1289,7 +1290,7 @@ public sealed class ConversationOrchestrationService
         {
             diagnostics.Add(AppendRuntimeDiagnostic(
                 conversationId,
-                diagnosticsProvider.GetRuntimeFailure(ttsModel!.Id, exception)));
+                diagnosticsProvider.GetRuntimeFailure(ttsModel.Id, exception)));
             return new SpeechTurnResult(null, null, null);
         }
         catch (Exception exception) when (IsNativeRuntimeException(exception))
@@ -1304,7 +1305,7 @@ public sealed class ConversationOrchestrationService
                 exception);
             diagnostics.Add(AppendRuntimeDiagnostic(
                 conversationId,
-                diagnosticsProvider.GetRuntimeFailure(ttsModel!.Id, runtimeException)));
+                diagnosticsProvider.GetRuntimeFailure(ttsModel.Id, runtimeException)));
             return new SpeechTurnResult(null, null, null);
         }
     }
@@ -1314,7 +1315,7 @@ public sealed class ConversationOrchestrationService
         string capability,
         string route,
         string backendId,
-        out LocalModelDescriptor? model,
+        [NotNullWhen(true)] out LocalModelDescriptor? model,
         out RuntimeDiagnostic? diagnostic,
         out int statusCode)
     {

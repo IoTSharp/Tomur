@@ -17,6 +17,9 @@
     <JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>
     <GenerateEmbeddedFilesManifest>true</GenerateEmbeddedFilesManifest>
     <SpaRoot>..\web\</SpaRoot>
+    <TomurReleaseProfile Condition="'$(TomurReleaseProfile)' == '' and '$(PublishAot)' == 'true'">native-aot-audit</TomurReleaseProfile>
+    <TomurReleaseProfile Condition="'$(TomurReleaseProfile)' == ''">self-contained-single-file</TomurReleaseProfile>
+    <DefineConstants Condition="'$(PublishAot)' == 'true'">$(DefineConstants);TOMUR_NATIVE_AOT</DefineConstants>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(RuntimeIdentifier)' != ''">
