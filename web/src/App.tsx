@@ -2000,6 +2000,10 @@ function SettingsPanel({
             </Descriptions.Item>
             <Descriptions.Item label="OpenAI models">GET /v1/models</Descriptions.Item>
             <Descriptions.Item label="OpenAI chat">POST /v1/chat/completions</Descriptions.Item>
+            <Descriptions.Item label="Claude Code models">
+              GET /v1/models?limit=1000
+            </Descriptions.Item>
+            <Descriptions.Item label="Claude Code messages">POST /v1/messages</Descriptions.Item>
             <Descriptions.Item label="Ollama chat">POST /api/chat</Descriptions.Item>
             <Descriptions.Item label="Conversations">GET /api/conversations</Descriptions.Item>
           </Descriptions>
@@ -2765,8 +2769,18 @@ function CapabilitiesPanel({
                       size="small"
                       onClick={() => void onCopyText(row.route, `已复制 ${row.title} 路由`)}
                     >
-                      复制
-                    </Button>
+                      路由
+                    </Button>,
+                    row.sample ? (
+                      <Button
+                        key={`${row.route}-sample`}
+                        type="text"
+                        size="small"
+                        onClick={() => void onCopyText(row.sample ?? "", `已复制 ${row.title} 示例`)}
+                      >
+                        示例
+                      </Button>
+                    ) : null
                   ]}
                 >
                   <List.Item.Meta
@@ -2796,6 +2810,7 @@ interface CapabilityRow {
   status: string;
   ui: string;
   message: string;
+  sample?: string;
 }
 
 function buildCapabilityRows({
@@ -2894,7 +2909,8 @@ function buildCapabilityRows({
       route: "POST /api/conversations/{conversationId}/turns",
       status: generationReady,
       ui: "chat",
-      message: "附件、朗读和会话诊断通过该入口聚合。"
+      message: "附件、朗读和会话诊断通过该入口聚合。",
+      sample: 'POST /api/conversations/{conversationId}/turns {"content":"列出当前 runtime 状态。","model":"<local-model>"}'
     },
     {
       group: "Conversations",
@@ -2926,7 +2942,8 @@ function buildCapabilityRows({
       route: "POST /v1/chat/completions",
       status: generationReady,
       ui: "chat",
-      message: `${chatModels.length} 个 Chat 模型可用于文本 streaming。`
+      message: `${chatModels.length} 个 Chat 模型可用于文本 streaming。`,
+      sample: 'POST /v1/chat/completions {"model":"<local-model>","messages":[{"role":"user","content":"你好"}],"stream":true}'
     },
     {
       group: "OpenAI",
@@ -2934,7 +2951,8 @@ function buildCapabilityRows({
       route: "POST /v1/completions",
       status: generationReady,
       ui: "api",
-      message: "后端已接入；Web 当前优先使用 Chat 与 Conversations。"
+      message: "后端已接入；Web 当前优先使用 Chat 与 Conversations。",
+      sample: 'POST /v1/completions {"model":"<local-model>","prompt":"你好","stream":false}'
     },
     {
       group: "OpenAI",
@@ -2942,7 +2960,8 @@ function buildCapabilityRows({
       route: "POST /v1/embeddings",
       status: embeddingModels.length > 0 ? "ok" : "not_configured",
       ui: "api",
-      message: `${embeddingModels.length} 个 embedding 模型可见；文件检索 UI 后续补齐。`
+      message: `${embeddingModels.length} 个 embedding 模型可见；文件检索 UI 后续补齐。`,
+      sample: 'POST /v1/embeddings {"model":"<embedding-model>","input":"Tomur"}'
     },
     {
       group: "OpenAI",
@@ -2967,6 +2986,41 @@ function buildCapabilityRows({
       status: multimodal(["tts", "audio-output"])?.status ?? "not_configured",
       ui: "chat",
       message: "回复朗读和语音回合 TTS 已接入。"
+    },
+    {
+      group: "Claude Code",
+      title: "Model discovery",
+      route: "GET /v1/models?limit=1000",
+      status: chatModels.length > 0 ? "ok" : "not_configured",
+      ui: "api",
+      message: `${chatModels.length} 个文本模型会暴露为 claude-tomur-* 发现别名。`
+    },
+    {
+      group: "Claude Code",
+      title: "Messages",
+      route: "POST /v1/messages",
+      status: generationReady,
+      ui: "api",
+      message: "Anthropic Messages 兼容入口会映射到 Tomur 本地文本 Chat runtime。",
+      sample: 'POST /v1/messages {"model":"<claude-tomur-alias>","max_tokens":512,"messages":[{"role":"user","content":"你好"}],"stream":false}'
+    },
+    {
+      group: "Claude Code",
+      title: "Streaming messages",
+      route: "POST /v1/messages {\"stream\":true}",
+      status: generationReady,
+      ui: "api",
+      message: "支持 message_start、content_block_delta、message_delta 和 message_stop SSE 事件。",
+      sample: 'POST /v1/messages {"model":"<claude-tomur-alias>","max_tokens":512,"messages":[{"role":"user","content":"你好"}],"stream":true}'
+    },
+    {
+      group: "Claude Code",
+      title: "Token count",
+      route: "POST /v1/messages/count_tokens",
+      status: chatModels.length > 0 ? "ok" : "not_configured",
+      ui: "api",
+      message: "本地估算输入 token 数，用于 Claude Code 兼容探测和上下文预算。",
+      sample: 'POST /v1/messages/count_tokens {"model":"<claude-tomur-alias>","messages":[{"role":"user","content":"你好"}]}'
     },
     {
       group: "Multimodal",
@@ -2998,7 +3052,8 @@ function buildCapabilityRows({
       route: "POST /api/generate, POST /api/chat, POST /api/show",
       status: generationReady,
       ui: "api",
-      message: "后端兼容接口已接入；Web 当前默认走 OpenAI/Conversations。"
+      message: "后端兼容接口已接入；Web 当前默认走 OpenAI/Conversations。",
+      sample: 'POST /api/chat {"model":"<local-model>","messages":[{"role":"user","content":"你好"}],"stream":false}'
     },
     {
       group: "Agents",
@@ -3014,7 +3069,8 @@ function buildCapabilityRows({
       route: "POST /api/agents/chat",
       status: agentRuntime?.chat_client.status ?? agentRuntime?.status ?? "checking",
       ui: "planned",
-      message: "后端已接入 Agent Framework chat；Web 受控 Agent 对话入口后续补齐。"
+      message: "后端已接入 Agent Framework chat；Web 受控 Agent 对话入口后续补齐。",
+      sample: 'POST /api/agents/chat {"message":"检查 runtime 状态","tool_mode":"auto_read_only"}'
     },
     {
       group: "Agents",
@@ -3022,7 +3078,8 @@ function buildCapabilityRows({
       route: "POST /api/agents/workflows/read-only",
       status: agentRuntime?.orchestration.status ?? agentRuntime?.status ?? "checking",
       ui: "planned",
-      message: "后端已接入受控只读 workflow；Web 调用入口后续补齐。"
+      message: "后端已接入受控只读 workflow；Web 调用入口后续补齐。",
+      sample: 'POST /api/agents/workflows/read-only {"message":"汇总本地诊断","tools":[{"tool":"runtime.diagnose"}],"respond":true}'
     },
     {
       group: "Agents",
@@ -3046,7 +3103,8 @@ function buildCapabilityRows({
       route: "POST /api/agents/tools/invoke",
       status: agentTool("runtime.diagnose")?.status ?? agentRuntime?.status ?? "checking",
       ui: "action",
-      message: "runtime.diagnose、tools.inspect 与 files.search 已提供只读 Web 调用。"
+      message: "runtime.diagnose、tools.inspect 与 files.search 已提供只读 Web 调用。",
+      sample: 'POST /api/agents/tools/invoke {"tool":"runtime.diagnose","mode":"read_only"}'
     },
     {
       group: "Agents",

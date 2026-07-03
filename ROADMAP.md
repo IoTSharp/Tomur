@@ -16,7 +16,7 @@
 Tomur 面向本地 AI 工作负载，提供模型服务、兼容 API、模型资产管理、运行时诊断和 Web 工作台。产品目标如下：
 
 1. 以单一进程承载 CLI、本地 HTTP API、模型运行、模型下载、运行时诊断和 Web 工作台。
-2. 提供 OpenAI / Ollama 兼容接口，降低现有客户端和自动化工具的接入成本。
+2. 提供 OpenAI / Ollama / Anthropic Messages 兼容接口，降低现有客户端和自动化工具的接入成本。
 3. 支持交互式运行、后台服务运行和系统服务运行。
 4. 采用自包含、单文件和 Native AOT 友好的发布路线。
 5. 由发行包携带必要的 C++ native dynamic libraries，避免依赖用户手工安装本地推理运行时。
@@ -625,8 +625,8 @@ R13 不改变以下边界：
 
 R13 计划范围：
 
-1. 🚧 Agent 能力聚合：接入 `/api/agents/runtime`、`/api/agents/tools`、`/api/agents/tool-bindings`、`/api/agents/events` 与 `/api/agents/telemetry`，在 Settings 中展示工具目录、可调用状态、确认要求、事件与 telemetry 边界。
-2. 🚧 协议能力聚合：在 UI 中明确展示 OpenAI / Ollama / Conversations / Agent API 的当前可用端点、能力状态、诊断和最小请求示例。
+1. ✅ Agent 能力聚合：接入 `/api/agents/runtime`、`/api/agents/tools`、`/api/agents/tool-bindings`、`/api/agents/events` 与 `/api/agents/telemetry`，在 Settings 中展示工具目录、可调用状态、确认要求、事件与 telemetry 边界。
+2. ✅ 协议能力聚合：在 UI 中明确展示 OpenAI / Ollama / Claude Code / Conversations / Agent API 的当前可用端点、能力状态、诊断和最小请求示例。
 3. ✅ Chat 上下文增强：快捷 Prompt 必须携带当前 runtime、模型、下载、多模态和 Agent 状态摘要，避免让用户以为模型已经读取本地状态但实际没有上下文。
 4. 🚧 多模态与产物呈现：补齐图像、音频、文本文件和生成产物的预览、打开、复制路径或下载入口；诊断标签继续跳转到对应 Settings 分组。
 5. 🚧 受控工具入口：为 `runtime.diagnose`、`tools.inspect`、`files.search` 等只读工具提供 Web 调用入口；`image.generate`、`audio.speak`、`runtime.repair` 等副作用工具必须保持显式确认。
@@ -642,21 +642,24 @@ R13 计划范围：
 2. ✅ 扩展前端 API / types 覆盖 Agent runtime、工具地图、tool bindings、events 和 telemetry。
 3. ✅ 让快捷 Prompt 注入当前本地状态摘要。
 4. ✅ 补齐 Chat 气泡中的产物链接、图片预览和下载入口。
-5. 🚧 增加只读受控工具调用；下载队列和 Settings 写入后续补齐。
+5. ✅ 增加只读受控工具调用；下载队列和 Settings 写入后续补齐。
+6. ✅ 增加 Claude Code / Anthropic Messages 协议兼容入口。
 
 R13 当前接线状态：
 
 1. `web/src/api.ts` 已接入 Agent runtime、工具地图、tool bindings、events 和 telemetry 的只读查询。
-2. Settings 已增加 `Agents` 与 `Capabilities` 分组，聚合 Agent 工具状态、bindings、事件、telemetry、OpenAI / Ollama / Conversations / Multimodal / Runtime API 能力地图。
+2. Settings 已增加 `Agents` 与 `Capabilities` 分组，聚合 Agent 工具状态、bindings、事件、telemetry、OpenAI / Ollama / Claude Code / Conversations / Multimodal / Runtime API 能力地图。
 3. Chat 欢迎区快捷 Prompt 已改为注入当前本地状态摘要，再交给本地模型回答。
 4. Chat 气泡底部已增加图片产物预览和产物打开入口；音频产物继续使用播放器。
 5. Agents 分组已提供 `runtime.diagnose`、`tools.inspect` 与 `files.search` 的只读 Web 调用；`files.search` 使用受控查询输入并返回结构化结果预览。
 6. Chat 的重新生成已改为替换上一条纯文本 assistant 回复；附件和语音回合仍要求重新发送原始输入，直到后端提供持久化回合替换能力。
-7. 当前仍未完成副作用工具确认流、可视化下载队列、Settings 写入、模型删除、完整文件索引配置、VAD / 打断和流式语音回合。
+7. `GET /v1/models?limit=1000` 已支持 Claude Code 模型发现形状，为本地文本模型返回 `claude-tomur-*` 别名；`POST /v1/messages` 与 `POST /v1/messages/count_tokens` 已接入 Anthropic Messages 风格请求、非流式响应和 SSE streaming 事件，并映射到 Tomur 本地文本 runtime。
+8. Capabilities 分组已为 OpenAI、Ollama、Claude Code、Conversations 与 Agent API 提供最小请求示例复制入口。
+9. 当前仍未完成副作用工具确认流、可视化下载队列、Settings 写入、模型删除、完整文件索引配置、VAD / 打断和流式语音回合。
 
 验收标准：
 
-1. 用户可以在 Web UI 中看到 Tomur 当前公开后端能力的完整地图，并能区分已可用、缺模型、缺 native runtime、需确认和仅 CLI/API 可用的能力。
+1. 用户可以在 Web UI 中看到 Tomur 当前公开后端能力的完整地图，并能区分 OpenAI、Ollama、Claude Code、Conversations、Agent、Runtime 与多模态能力的已可用、缺模型、缺 native runtime、需确认和仅 CLI/API 可用状态。
 2. 用户可以从 Chat 进入对应诊断或 Settings 分组，不需要猜测某个能力藏在哪个 API。
 3. 前端不虚标未实现动作；每个不可用状态都给出本地可执行的下一步。
 4. Web UI 继续由 Tomur 本地 HTTP 服务托管，首屏仍是可直接使用的 Chat 工作台。
@@ -674,6 +677,6 @@ R13 当前接线状态：
 7. 后续把模型自主工具选择循环、checkpoint 与更完整文件附件 RAG 放入 R12 之后的增量，不改变 R9 已完成的受控工具边界。
 8. 为 R10/R11 补构建/启动 smoke，并按 `docs/r10-r11-smoke-maintenance.md` 维护 Web 录音入口、播放控制、失败诊断展示和会话历史同步的回归清单。
 9. 按 `docs/r12-aot-release-audit.md` 补齐 R12 Linux/macOS 发布执行记录、服务形态实机 smoke 和发布包最小回归证据。
-10. 推进 R13 首批前端聚合：Agent / Capabilities 视图、状态上下文 Prompt、产物预览和发布静态资源链路。
+10. 推进 R13 后续闭环：副作用工具确认流、下载体验增强、Settings 写入、文件索引配置和发布静态资源链路。
 
 

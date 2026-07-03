@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using Tomur.Api;
+using Tomur.Api.Anthropic;
 using Tomur.Api.Models;
 using Tomur.Api.OpenAI;
 using Tomur.Api.Ollama;
@@ -45,6 +46,25 @@ namespace Tomur.Serialization;
 [JsonSerializable(typeof(OpenAiAudioTranscriptionResponse))]
 [JsonSerializable(typeof(OpenAiErrorResponse))]
 [JsonSerializable(typeof(OpenAiError))]
+[JsonSerializable(typeof(AnthropicModelListResponse))]
+[JsonSerializable(typeof(AnthropicModelResponse))]
+[JsonSerializable(typeof(AnthropicMessageRequest))]
+[JsonSerializable(typeof(AnthropicInputMessage))]
+[JsonSerializable(typeof(AnthropicMessageResponse))]
+[JsonSerializable(typeof(AnthropicContentBlock))]
+[JsonSerializable(typeof(AnthropicUsage))]
+[JsonSerializable(typeof(AnthropicTokenCountResponse))]
+[JsonSerializable(typeof(AnthropicErrorResponse))]
+[JsonSerializable(typeof(AnthropicError))]
+[JsonSerializable(typeof(AnthropicMessageStartEvent))]
+[JsonSerializable(typeof(AnthropicContentBlockStartEvent))]
+[JsonSerializable(typeof(AnthropicContentBlockDeltaEvent))]
+[JsonSerializable(typeof(AnthropicTextDelta))]
+[JsonSerializable(typeof(AnthropicContentBlockStopEvent))]
+[JsonSerializable(typeof(AnthropicMessageDeltaEvent))]
+[JsonSerializable(typeof(AnthropicMessageDelta))]
+[JsonSerializable(typeof(AnthropicDeltaUsage))]
+[JsonSerializable(typeof(AnthropicMessageStopEvent))]
 [JsonSerializable(typeof(OllamaChatRequest))]
 [JsonSerializable(typeof(OllamaChatMessage))]
 [JsonSerializable(typeof(OllamaGenerateRequest))]

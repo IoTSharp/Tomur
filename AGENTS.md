@@ -50,6 +50,8 @@
   - `POST /v1/chat/completions`
   - `POST /api/chat`
 - OpenAI / Ollama 兼容 API 是核心能力。
+- R13 协议能力聚合包含 Claude Code 所需的 Anthropic Messages 兼容入口：`GET /v1/models?limit=1000`、`POST /v1/messages` 与 `POST /v1/messages/count_tokens`。
+- Claude Code / Anthropic Messages 兼容入口必须映射到 Tomur 本地模型与本地 runtime；未下载模型、runtime 不可用或上下文超限时返回对应协议风格的清晰诊断，不得伪造推理结果。
 - 未接通本地 runtime 时，API 必须返回清晰的未配置或不可用诊断，不得伪造推理结果。
 - Streaming、错误响应、模型未下载、runtime 不可用、上下文超限等协议行为必须明确设计。
 

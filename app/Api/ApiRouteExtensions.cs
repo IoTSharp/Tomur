@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Tomur.Agents;
+using Tomur.Api.Anthropic;
 using Tomur.Api.Models;
 using Tomur.Api.Ollama;
 using Tomur.Api.OpenAI;
@@ -200,6 +201,8 @@ public static class ApiRouteExtensions
         app.MapPost("/v1/images/generations", HandleOpenAiImageGenerationsAsync);
         app.MapPost("/v1/audio/transcriptions", HandleOpenAiAudioTranscriptionsAsync);
         app.MapPost("/v1/audio/speech", HandleOpenAiAudioSpeechAsync);
+        app.MapPost("/v1/messages", HandleAnthropicMessagesAsync);
+        app.MapPost("/v1/messages/count_tokens", HandleAnthropicCountTokensAsync);
 
         app.MapPost("/api/vision/analyze", HandleVisionAnalyzeAsync);
         app.MapPost("/api/ocr/analyze", HandleOcrAnalyzeAsync);
@@ -251,6 +254,8 @@ public static class ApiRouteExtensions
                     "/v1/images/generations",
                     "/v1/audio/transcriptions",
                     "/v1/audio/speech",
+                    "/v1/messages",
+                    "/v1/messages/count_tokens",
                     "/api/vision/analyze",
                     "/api/ocr/analyze",
                     "/api/tags",
@@ -265,6 +270,16 @@ public static class ApiRouteExtensions
 
     private static async Task HandleOpenAiModelsAsync(HttpContext context, LocalModelCatalog modelCatalog)
     {
+        if (IsAnthropicModelListRequest(context))
+        {
+            var anthropicResponse = CreateAnthropicModelListResponse(modelCatalog);
+            await JsonHttpResponse.WriteAsync(
+                context,
+                anthropicResponse,
+                AppJsonSerializerContext.Default.AnthropicModelListResponse);
+            return;
+        }
+
         var models = modelCatalog
             .ListModels()
             .Select(static model => new OpenAiModelResponse(
@@ -279,6 +294,136 @@ public static class ApiRouteExtensions
 
         var response = new OpenAiModelListResponse(models);
         await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.OpenAiModelListResponse);
+    }
+
+    private static async Task HandleAnthropicMessagesAsync(
+        HttpContext context,
+        RuntimeDiagnosticsProvider diagnosticsProvider,
+        LocalModelCatalog modelCatalog,
+        LocalInferenceService inferenceService)
+    {
+        var request = await ReadAnthropicRequestAsync(
+            context,
+            AppJsonSerializerContext.Default.AnthropicMessageRequest);
+        if (request is null)
+        {
+            return;
+        }
+
+        var stream = request.Stream == true;
+        var model = await RequireAnthropicModelAsync(context, request.Model, diagnosticsProvider, modelCatalog, stream);
+        if (model is null)
+        {
+            return;
+        }
+
+        if (request.Messages is null || request.Messages.Count == 0)
+        {
+            await WriteAnthropicInvalidRequestAsync(
+                context,
+                "The messages field must contain at least one message.",
+                stream);
+            return;
+        }
+
+        var inputCharacters = EstimateAnthropicInputCharacters(request);
+        if (!await RequireAnthropicInputWithinLimitAsync(context, diagnosticsProvider, request.Model, inputCharacters, stream))
+        {
+            return;
+        }
+
+        var messages = CreateAnthropicChatTurns(request);
+        if (messages.Count == 0)
+        {
+            await WriteAnthropicInvalidRequestAsync(
+                context,
+                "At least one text message is required for the Claude Code compatibility endpoint.",
+                stream);
+            return;
+        }
+
+        var options = LocalInferenceService.MergeOptions(
+            CompletionOptions.Default,
+            request.Temperature,
+            request.TopP,
+            request.MaxTokens,
+            stopSequences: request.StopSequences);
+        var responseModel = string.IsNullOrWhiteSpace(request.Model)
+            ? ToClaudeCodeModelAlias(model)
+            : request.Model.Trim();
+        var inputTokenEstimate = EstimateTokenCount(string.Join("\n", messages.Select(static message => message.Content)));
+
+        try
+        {
+            if (stream)
+            {
+                await WriteAnthropicMessageStreamAsync(
+                    context,
+                    responseModel,
+                    inputTokenEstimate,
+                    onGenerate: emit => inferenceService.Chat(model, messages, options, context.RequestAborted, emit),
+                    onInferenceError: exception => diagnosticsProvider.GetRuntimeFailure(model.Id, exception));
+                return;
+            }
+
+            var result = inferenceService.Chat(model, messages, options, context.RequestAborted);
+            await WriteAnthropicMessageSuccessAsync(context, responseModel, result);
+        }
+        catch (InferenceException exception)
+        {
+            await WriteAnthropicRuntimeUnavailableAsync(
+                context,
+                diagnosticsProvider.GetRuntimeFailure(model.Id, exception),
+                stream);
+        }
+        catch (Exception exception) when (IsNativeRuntimeException(exception))
+        {
+            await WriteAnthropicRuntimeUnavailableAsync(
+                context,
+                diagnosticsProvider.GetRuntimeFailure(model.Id, CreateNativeRuntimeException(exception)),
+                stream);
+        }
+    }
+
+    private static async Task HandleAnthropicCountTokensAsync(
+        HttpContext context,
+        RuntimeDiagnosticsProvider diagnosticsProvider,
+        LocalModelCatalog modelCatalog)
+    {
+        var request = await ReadAnthropicRequestAsync(
+            context,
+            AppJsonSerializerContext.Default.AnthropicMessageRequest);
+        if (request is null)
+        {
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.Model) &&
+            FindProtocolModel(modelCatalog, request.Model) is null)
+        {
+            await JsonHttpResponse.WriteAsync(
+                context,
+                AnthropicErrorResponse.ModelNotFound(diagnosticsProvider.GetModelNotDownloaded(request.Model)),
+                AppJsonSerializerContext.Default.AnthropicErrorResponse,
+                StatusCodes.Status404NotFound);
+            return;
+        }
+
+        if (request.Messages is null || request.Messages.Count == 0)
+        {
+            await WriteAnthropicInvalidRequestAsync(
+                context,
+                "The messages field must contain at least one message.");
+            return;
+        }
+
+        var messages = CreateAnthropicChatTurns(request);
+        var text = string.Join("\n", messages.Select(static message => message.Content));
+        var response = new AnthropicTokenCountResponse(EstimateTokenCount(text));
+        await JsonHttpResponse.WriteAsync(
+            context,
+            response,
+            AppJsonSerializerContext.Default.AnthropicTokenCountResponse);
     }
 
     private static async Task HandleAgentChatAsync(
@@ -1926,6 +2071,32 @@ public static class ApiRouteExtensions
         }
     }
 
+    private static async Task<T?> ReadAnthropicRequestAsync<T>(
+        HttpContext context,
+        System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> jsonTypeInfo)
+    {
+        try
+        {
+            var request = await JsonSerializer.DeserializeAsync(
+                context.Request.Body,
+                jsonTypeInfo,
+                context.RequestAborted);
+
+            if (request is not null)
+            {
+                return request;
+            }
+
+            await WriteAnthropicInvalidRequestAsync(context, "Request body is required.");
+            return default;
+        }
+        catch (JsonException exception)
+        {
+            await WriteAnthropicInvalidRequestAsync(context, $"Invalid JSON request body: {exception.Message}");
+            return default;
+        }
+    }
+
     private static async Task<T?> ReadAgentRequestAsync<T>(
         HttpContext context,
         System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> jsonTypeInfo)
@@ -2183,7 +2354,7 @@ public static class ApiRouteExtensions
             return null;
         }
 
-        var resolvedModel = modelCatalog.Find(requestedModel);
+        var resolvedModel = FindProtocolModel(modelCatalog, requestedModel);
         if (resolvedModel is null)
         {
             var response = OpenAiErrorResponse.ModelNotDownloaded(diagnosticsProvider.GetModelNotDownloaded(requestedModel));
@@ -2197,6 +2368,42 @@ public static class ApiRouteExtensions
                     context,
                     response,
                     AppJsonSerializerContext.Default.OpenAiErrorResponse,
+                    StatusCodes.Status404NotFound);
+            }
+
+            return null;
+        }
+
+        return resolvedModel;
+    }
+
+    private static async Task<LocalModelDescriptor?> RequireAnthropicModelAsync(
+        HttpContext context,
+        string? requestedModel,
+        RuntimeDiagnosticsProvider diagnosticsProvider,
+        LocalModelCatalog modelCatalog,
+        bool stream)
+    {
+        if (string.IsNullOrWhiteSpace(requestedModel))
+        {
+            await WriteAnthropicInvalidRequestAsync(context, "The model field is required.", stream);
+            return null;
+        }
+
+        var resolvedModel = FindProtocolModel(modelCatalog, requestedModel);
+        if (resolvedModel is null)
+        {
+            var response = AnthropicErrorResponse.ModelNotFound(diagnosticsProvider.GetModelNotDownloaded(requestedModel));
+            if (stream)
+            {
+                await WriteAnthropicStreamErrorAsync(context, response);
+            }
+            else
+            {
+                await JsonHttpResponse.WriteAsync(
+                    context,
+                    response,
+                    AppJsonSerializerContext.Default.AnthropicErrorResponse,
                     StatusCodes.Status404NotFound);
             }
 
@@ -2325,6 +2532,36 @@ public static class ApiRouteExtensions
         return false;
     }
 
+    private static async Task<bool> RequireAnthropicInputWithinLimitAsync(
+        HttpContext context,
+        RuntimeDiagnosticsProvider diagnosticsProvider,
+        string? model,
+        int characterCount,
+        bool stream)
+    {
+        if (characterCount <= CompatibilityProtocolLimits.MaxInputCharacters)
+        {
+            return true;
+        }
+
+        var error = AnthropicErrorResponse.ContextLengthExceeded(
+            diagnosticsProvider.GetContextLengthExceeded(model, characterCount));
+        if (stream)
+        {
+            await WriteAnthropicStreamErrorAsync(context, error);
+        }
+        else
+        {
+            await JsonHttpResponse.WriteAsync(
+                context,
+                error,
+                AppJsonSerializerContext.Default.AnthropicErrorResponse,
+                StatusCodes.Status400BadRequest);
+        }
+
+        return false;
+    }
+
     private static async Task<bool> RequireOllamaInputWithinLimitAsync(
         HttpContext context,
         RuntimeDiagnosticsProvider diagnosticsProvider,
@@ -2371,6 +2608,25 @@ public static class ApiRouteExtensions
             context,
             response,
             AppJsonSerializerContext.Default.OpenAiErrorResponse,
+            StatusCodes.Status503ServiceUnavailable);
+    }
+
+    private static async Task WriteAnthropicRuntimeUnavailableAsync(
+        HttpContext context,
+        RuntimeDiagnostic diagnostic,
+        bool stream)
+    {
+        var response = AnthropicErrorResponse.RuntimeUnavailable(diagnostic);
+        if (stream)
+        {
+            await WriteAnthropicStreamErrorAsync(context, response);
+            return;
+        }
+
+        await JsonHttpResponse.WriteAsync(
+            context,
+            response,
+            AppJsonSerializerContext.Default.AnthropicErrorResponse,
             StatusCodes.Status503ServiceUnavailable);
     }
 
@@ -2604,6 +2860,149 @@ public static class ApiRouteExtensions
             AppJsonSerializerContext.Default.OpenAiCompletionResponse);
     }
 
+    private static async Task WriteAnthropicMessageSuccessAsync(
+        HttpContext context,
+        string model,
+        CompletionResult result)
+    {
+        var response = CreateAnthropicMessageResponse(
+            $"msg_{Guid.NewGuid():N}",
+            model,
+            [new AnthropicContentBlock("text", result.Text)],
+            "end_turn",
+            result.Usage);
+
+        await JsonHttpResponse.WriteAsync(
+            context,
+            response,
+            AppJsonSerializerContext.Default.AnthropicMessageResponse);
+    }
+
+    private static async Task WriteAnthropicMessageStreamAsync(
+        HttpContext context,
+        string model,
+        int inputTokens,
+        Func<Action<string>, CompletionResult> onGenerate,
+        Func<InferenceException, RuntimeDiagnostic> onInferenceError)
+    {
+        var id = $"msg_{Guid.NewGuid():N}";
+        var streamStarted = false;
+        var contentStarted = false;
+        var wroteText = false;
+        CompletionResult result;
+
+        try
+        {
+            result = onGenerate(chunk =>
+            {
+                if (string.IsNullOrEmpty(chunk))
+                {
+                    return;
+                }
+
+                EnsureStreamStarted();
+                EnsureContentStarted();
+                wroteText = true;
+                WriteAnthropicEventAsync(
+                    context,
+                    "content_block_delta",
+                    new AnthropicContentBlockDeltaEvent(
+                        "content_block_delta",
+                        0,
+                        new AnthropicTextDelta("text_delta", chunk)),
+                    AppJsonSerializerContext.Default.AnthropicContentBlockDeltaEvent).GetAwaiter().GetResult();
+            });
+        }
+        catch (InferenceException exception)
+        {
+            await WriteAnthropicStreamErrorAsync(
+                context,
+                AnthropicErrorResponse.RuntimeUnavailable(onInferenceError(exception)));
+            return;
+        }
+        catch (Exception exception) when (IsNativeRuntimeException(exception))
+        {
+            await WriteAnthropicStreamErrorAsync(
+                context,
+                AnthropicErrorResponse.RuntimeUnavailable(onInferenceError(CreateNativeRuntimeException(exception))));
+            return;
+        }
+
+        EnsureStreamStarted();
+        EnsureContentStarted();
+        if (!wroteText)
+        {
+            await WriteAnthropicEventAsync(
+                context,
+                "content_block_delta",
+                new AnthropicContentBlockDeltaEvent(
+                    "content_block_delta",
+                    0,
+                    new AnthropicTextDelta("text_delta", result.Text)),
+                AppJsonSerializerContext.Default.AnthropicContentBlockDeltaEvent);
+        }
+
+        await WriteAnthropicEventAsync(
+            context,
+            "content_block_stop",
+            new AnthropicContentBlockStopEvent("content_block_stop", 0),
+            AppJsonSerializerContext.Default.AnthropicContentBlockStopEvent);
+        await WriteAnthropicEventAsync(
+            context,
+            "message_delta",
+            new AnthropicMessageDeltaEvent(
+                "message_delta",
+                new AnthropicMessageDelta("end_turn", null),
+                new AnthropicDeltaUsage(result.Usage.CompletionTokens)),
+            AppJsonSerializerContext.Default.AnthropicMessageDeltaEvent);
+        await WriteAnthropicEventAsync(
+            context,
+            "message_stop",
+            new AnthropicMessageStopEvent("message_stop"),
+            AppJsonSerializerContext.Default.AnthropicMessageStopEvent);
+
+        void EnsureStreamStarted()
+        {
+            if (streamStarted)
+            {
+                return;
+            }
+
+            StartAnthropicStream(context);
+            WriteAnthropicEventAsync(
+                context,
+                "message_start",
+                new AnthropicMessageStartEvent(
+                    "message_start",
+                    CreateAnthropicMessageResponse(
+                        id,
+                        model,
+                        [],
+                        null,
+                        new TokenUsage(inputTokens, 0, inputTokens))),
+                AppJsonSerializerContext.Default.AnthropicMessageStartEvent).GetAwaiter().GetResult();
+            streamStarted = true;
+        }
+
+        void EnsureContentStarted()
+        {
+            if (contentStarted)
+            {
+                return;
+            }
+
+            WriteAnthropicEventAsync(
+                context,
+                "content_block_start",
+                new AnthropicContentBlockStartEvent(
+                    "content_block_start",
+                    0,
+                    new AnthropicContentBlock("text", string.Empty)),
+                AppJsonSerializerContext.Default.AnthropicContentBlockStartEvent).GetAwaiter().GetResult();
+            contentStarted = true;
+        }
+    }
+
     private static async Task WriteOpenAiChatCompletionStreamAsync(
         HttpContext context,
         string model,
@@ -2788,6 +3187,30 @@ public static class ApiRouteExtensions
         context.Response.Headers.CacheControl = "no-cache";
     }
 
+    private static void StartAnthropicStream(HttpContext context)
+    {
+        context.Response.StatusCode = StatusCodes.Status200OK;
+        context.Response.ContentType = "text/event-stream; charset=utf-8";
+        context.Response.Headers.CacheControl = "no-cache";
+    }
+
+    private static async Task WriteAnthropicEventAsync<T>(
+        HttpContext context,
+        string eventName,
+        T value,
+        System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> jsonTypeInfo)
+    {
+        await context.Response.WriteAsync($"event: {eventName}\n", context.RequestAborted);
+        await context.Response.WriteAsync("data: ", context.RequestAborted);
+        await JsonSerializer.SerializeAsync(
+            context.Response.Body,
+            value,
+            jsonTypeInfo,
+            context.RequestAborted);
+        await context.Response.WriteAsync("\n\n", context.RequestAborted);
+        await context.Response.Body.FlushAsync(context.RequestAborted);
+    }
+
     private static async Task WriteOpenAiStreamErrorAsync(HttpContext context, OpenAiErrorResponse error)
     {
         if (!context.Response.HasStarted)
@@ -2806,6 +3229,20 @@ public static class ApiRouteExtensions
         await context.Response.WriteAsync("\n\n", context.RequestAborted);
         await context.Response.WriteAsync("data: [DONE]\n\n", context.RequestAborted);
         await context.Response.Body.FlushAsync(context.RequestAborted);
+    }
+
+    private static async Task WriteAnthropicStreamErrorAsync(HttpContext context, AnthropicErrorResponse error)
+    {
+        if (!context.Response.HasStarted)
+        {
+            StartAnthropicStream(context);
+        }
+
+        await WriteAnthropicEventAsync(
+            context,
+            "error",
+            error,
+            AppJsonSerializerContext.Default.AnthropicErrorResponse);
     }
 
     private static async Task WriteOllamaGenerateSuccessAsync(
@@ -2919,6 +3356,22 @@ public static class ApiRouteExtensions
             StatusCodes.Status400BadRequest);
     }
 
+    private static async Task WriteAnthropicInvalidRequestAsync(HttpContext context, string message, bool stream = false)
+    {
+        var error = AnthropicErrorResponse.InvalidRequest(message);
+        if (stream)
+        {
+            await WriteAnthropicStreamErrorAsync(context, error);
+            return;
+        }
+
+        await JsonHttpResponse.WriteAsync(
+            context,
+            error,
+            AppJsonSerializerContext.Default.AnthropicErrorResponse,
+            StatusCodes.Status400BadRequest);
+    }
+
     private static async Task WriteOllamaInvalidRequestAsync(HttpContext context, string message)
     {
         var error = OllamaErrorResponse.InvalidRequest(message);
@@ -2955,6 +3408,24 @@ public static class ApiRouteExtensions
     private static OpenAiUsage ToOpenAiUsage(TokenUsage usage)
         => new(usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens);
 
+    private static AnthropicMessageResponse CreateAnthropicMessageResponse(
+        string id,
+        string model,
+        IReadOnlyList<AnthropicContentBlock> content,
+        string? stopReason,
+        TokenUsage usage)
+    {
+        return new AnthropicMessageResponse(
+            id,
+            "message",
+            "assistant",
+            content,
+            model,
+            stopReason,
+            null,
+            new AnthropicUsage(usage.PromptTokens, usage.CompletionTokens));
+    }
+
     private static TokenUsage EstimateVisionUsage(string prompt, string output)
     {
         var promptTokens = EstimateTokenCount(prompt);
@@ -2976,6 +3447,226 @@ public static class ApiRouteExtensions
         }
 
         return $"[SYSTEM]\n{request.System.Trim()}\n\n[USER]\n{request.Prompt?.Trim() ?? string.Empty}";
+    }
+
+    private static bool IsAnthropicModelListRequest(HttpContext context)
+    {
+        if (context.Request.Query.ContainsKey("limit") ||
+            context.Request.Headers.ContainsKey("anthropic-version") ||
+            context.Request.Headers.ContainsKey("anthropic-beta"))
+        {
+            return true;
+        }
+
+        var userAgent = context.Request.Headers["User-Agent"].ToString();
+        return userAgent.Contains("claude-code", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static AnthropicModelListResponse CreateAnthropicModelListResponse(LocalModelCatalog modelCatalog)
+    {
+        var models = modelCatalog
+            .ListModels()
+            .Where(IsTextGenerationModel)
+            .Select(static model => new AnthropicModelResponse(
+                ToClaudeCodeModelAlias(model),
+                $"{model.Name} (Tomur local)",
+                new DateTimeOffset(model.LastModifiedUtc, TimeSpan.Zero),
+                "local",
+                model.Capabilities))
+            .ToArray();
+
+        return new AnthropicModelListResponse(
+            models,
+            false,
+            models.FirstOrDefault()?.Id,
+            models.LastOrDefault()?.Id);
+    }
+
+    private static LocalModelDescriptor? FindProtocolModel(LocalModelCatalog modelCatalog, string? requestedModel)
+    {
+        var direct = modelCatalog.Find(requestedModel);
+        if (direct is not null)
+        {
+            return direct;
+        }
+
+        if (string.IsNullOrWhiteSpace(requestedModel))
+        {
+            return null;
+        }
+
+        var requested = requestedModel.Trim();
+        return modelCatalog
+            .ListModels()
+            .FirstOrDefault(model =>
+                IsTextGenerationModel(model) &&
+                string.Equals(ToClaudeCodeModelAlias(model), requested, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string ToClaudeCodeModelAlias(LocalModelDescriptor model)
+    {
+        var slug = CreateProtocolSlug(model.Id);
+        var hash = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(model.Id));
+        var suffix = Convert.ToHexString(hash)[..8].ToLowerInvariant();
+        return $"claude-tomur-{slug}-{suffix}";
+    }
+
+    private static string CreateProtocolSlug(string value)
+    {
+        var normalized = value.Trim().ToLowerInvariant();
+        var builder = new System.Text.StringBuilder(normalized.Length);
+        var previousDash = false;
+        foreach (var character in normalized)
+        {
+            if ((character >= 'a' && character <= 'z') || (character >= '0' && character <= '9'))
+            {
+                builder.Append(character);
+                previousDash = false;
+                continue;
+            }
+
+            if (!previousDash)
+            {
+                builder.Append('-');
+                previousDash = true;
+            }
+        }
+
+        var slug = builder.ToString().Trim('-');
+        return string.IsNullOrWhiteSpace(slug) ? "local-model" : slug;
+    }
+
+    private static bool IsTextGenerationModel(LocalModelDescriptor model)
+        => model.Capabilities.Any(static capability =>
+            string.Equals(capability, "chat", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(capability, "completion", StringComparison.OrdinalIgnoreCase));
+
+    private static IReadOnlyList<ChatTurn> CreateAnthropicChatTurns(AnthropicMessageRequest request)
+    {
+        var messages = new List<ChatTurn>();
+        var system = ExtractAnthropicTextContent(request.System);
+        if (!string.IsNullOrWhiteSpace(system))
+        {
+            messages.Add(new ChatTurn("system", system));
+        }
+
+        if (request.Messages is null)
+        {
+            return messages;
+        }
+
+        foreach (var message in request.Messages)
+        {
+            var text = ExtractAnthropicTextContent(message.Content);
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                continue;
+            }
+
+            messages.Add(new ChatTurn(NormalizeAnthropicRole(message.Role), text));
+        }
+
+        return messages;
+    }
+
+    private static string NormalizeAnthropicRole(string? role)
+        => role?.Trim().ToLowerInvariant() switch
+        {
+            "assistant" => "assistant",
+            "system" => "system",
+            _ => "user"
+        };
+
+    private static int EstimateAnthropicInputCharacters(AnthropicMessageRequest request)
+    {
+        var count = EstimateJsonElementCharacters(request.System);
+        if (request.Messages is null)
+        {
+            return count;
+        }
+
+        return count + request.Messages.Sum(static message => EstimateJsonElementCharacters(message.Content));
+    }
+
+    private static string ExtractAnthropicTextContent(JsonElement? element)
+    {
+        if (element is null)
+        {
+            return string.Empty;
+        }
+
+        return ExtractAnthropicTextContent(element.Value);
+    }
+
+    private static string ExtractAnthropicTextContent(JsonElement value)
+    {
+        if (value.ValueKind == JsonValueKind.String)
+        {
+            return value.GetString() ?? string.Empty;
+        }
+
+        if (value.ValueKind == JsonValueKind.Array)
+        {
+            var parts = new List<string>();
+            foreach (var item in value.EnumerateArray())
+            {
+                var part = ExtractAnthropicTextContent(item);
+                if (!string.IsNullOrWhiteSpace(part))
+                {
+                    parts.Add(part);
+                }
+            }
+
+            return string.Join("\n", parts);
+        }
+
+        if (value.ValueKind != JsonValueKind.Object)
+        {
+            return value.GetRawText();
+        }
+
+        var type = TryGetString(value, "type");
+        if (string.Equals(type, "text", StringComparison.OrdinalIgnoreCase))
+        {
+            return TryGetString(value, "text") ?? string.Empty;
+        }
+
+        if (string.Equals(type, "tool_result", StringComparison.OrdinalIgnoreCase))
+        {
+            var toolUseId = TryGetString(value, "tool_use_id");
+            var content = value.TryGetProperty("content", out var contentElement)
+                ? ExtractAnthropicTextContent(contentElement)
+                : value.GetRawText();
+            return string.IsNullOrWhiteSpace(toolUseId)
+                ? $"Tool result:\n{content}"
+                : $"Tool result for {toolUseId}:\n{content}";
+        }
+
+        if (string.Equals(type, "tool_use", StringComparison.OrdinalIgnoreCase))
+        {
+            var name = TryGetString(value, "name") ?? "tool";
+            var input = value.TryGetProperty("input", out var inputElement)
+                ? inputElement.GetRawText()
+                : "{}";
+            return $"Tool request {name}:\n{input}";
+        }
+
+        if (string.Equals(type, "image", StringComparison.OrdinalIgnoreCase))
+        {
+            return "[Image content was provided, but this Claude Code compatibility endpoint currently maps requests to local text chat.]";
+        }
+
+        if (value.TryGetProperty("text", out var textElement) && textElement.ValueKind == JsonValueKind.String)
+        {
+            return textElement.GetString() ?? string.Empty;
+        }
+
+        if (value.TryGetProperty("content", out var nestedContent))
+        {
+            return ExtractAnthropicTextContent(nestedContent);
+        }
+
+        return value.GetRawText();
     }
 
     private static string ExtractOpenAiTextContent(JsonElement? element)
