@@ -42,9 +42,7 @@ public sealed class ReleaseProfileService
     {
         var isAotAudit = string.Equals(profile, "native-aot-audit", StringComparison.OrdinalIgnoreCase);
         yield return Supported("core_cli", "Core CLI", "Program.cs command dispatch and local data directory handling stay in the single Tomur entry.");
-        yield return isAotAudit
-            ? Audited("http_api", "HTTP API", "Minimal API routes stay in the same local process. Known ASP.NET RequestDelegateGenerator issues are handled as build audit items, not by removing endpoints.")
-            : Supported("http_api", "HTTP API", "Minimal API routes stay in the same local process.");
+        yield return Supported("http_api", "HTTP API", "Minimal API routes stay in the same local process.");
         yield return Supported("native_loader", "Native loader", "Native bundle manifest, prepare, probe and library load diagnostics stay source-generated JSON compatible.");
         yield return Supported("model_catalog", "Model catalog", "Catalog, installed manifest and local model visibility remain filesystem based.");
         yield return Supported("download", "Model download", "tomur pull keeps resume, checksum, proxy and local manifest behavior.");
@@ -52,29 +50,22 @@ public sealed class ReleaseProfileService
         yield return new ReleaseCapabilityStatus(
             "multimodal_adapters",
             "Multimodal adapters",
-            isAotAudit ? "audit" : "diagnosed",
+            isAotAudit ? "supported" : "diagnosed",
             "R8 adapters stay available when their native libraries and model assets are present; missing backends return structured diagnostics.",
             ["/api/runtime/multimodal", "tomur native prepare"]);
-        yield return isAotAudit
-            ? Audited("agent_framework", "Agent Framework orchestration", "Agent Framework chat, tools and read-only workflow remain part of the build surface; R12 tracks any AOT incompatibility as an audit blocker instead of silently disabling it.")
-            : Supported("agent_framework", "Agent Framework orchestration", "Full self-contained builds keep Microsoft Agent Framework chat, tools and read-only workflow orchestration.");
-        yield return isAotAudit
-            ? Audited("open_telemetry", "OpenTelemetry export", "The opt-in OTLP exporter remains part of the build surface; R12 records warnings or blockers explicitly instead of replacing exporter behavior.")
-            : Supported("open_telemetry", "OpenTelemetry export", "OTLP export remains opt-in through TOMUR_AGENTS_OTEL_EXPORTER and TOMUR_AGENTS_OTEL_ENDPOINT.");
+        yield return Supported("agent_framework", "Agent Framework orchestration", "Microsoft Agent Framework chat, tools and read-only workflow orchestration remain in the release surface.");
+        yield return Supported("open_telemetry", "OpenTelemetry export", "OTLP export remains opt-in through TOMUR_AGENTS_OTEL_EXPORTER and TOMUR_AGENTS_OTEL_ENDPOINT.");
         yield return Supported("web_static_hosting", "Web static hosting", "Embedded app/wwwroot assets continue to be served by the local HTTP host.");
         yield return new ReleaseCapabilityStatus(
             "native_bundle_manifest",
             "Native bundle manifest",
-            isAotAudit ? "audit" : "diagnosed",
-            "Release packages keep native/runtimes outside the single file and prepare them into the Tomur data runtime directory.",
+            "diagnosed",
+            "Release packages keep native/runtimes outside the single file and prepare them into the Tomur data runtime directory; current inventory is recorded in docs/r12-native-bundle-inventory.md.",
             ["Ensure native/runtimes/<rid>/native is present in the publish output before distribution."]);
     }
 
     private static ReleaseCapabilityStatus Supported(string id, string name, string message)
         => new(id, name, "supported", message, []);
-
-    private static ReleaseCapabilityStatus Audited(string id, string name, string message)
-        => new(id, name, "audit", message, ["Run the native-aot-audit publish profile and record any warning or blocker in docs/r12-aot-release-audit.md."]);
 
     private static IReadOnlyList<string> BuildPublishCommands(string profile)
         => string.Equals(profile, "native-aot-audit", StringComparison.OrdinalIgnoreCase)
@@ -94,13 +85,13 @@ public sealed class ReleaseProfileService
     private static IReadOnlyList<string> BuildNotes(string profile)
         => string.Equals(profile, "native-aot-audit", StringComparison.OrdinalIgnoreCase)
             ? [
-                "This profile keeps the full Tomur build surface and treats Native AOT as an audit target.",
-                "R12 should reduce warnings and blockers without deleting product capabilities merely to satisfy AOT.",
-                "The self-contained-single-file profile remains the primary full-capability release path until Native AOT is verified."
+                "This profile keeps the full Tomur build surface and publishes through Native AOT.",
+                "R12 Native AOT warnings are cleared; remaining release work is platform package evidence and service smoke.",
+                "The self-contained-single-file profile remains as a compatibility release path with the same public command and API surface."
             ]
             : [
                 "This profile keeps the full Tomur feature set in a self-contained single-file publish.",
-                "Native AOT verification remains tracked separately by the native-aot-audit profile and R12 audit matrix."
+                "Native AOT publishing is tracked by the native-aot-audit profile and R12 release records."
             ];
 }
 

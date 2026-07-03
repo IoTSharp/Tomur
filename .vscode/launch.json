@@ -1,0 +1,22 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Tomur Desktop (Windows Tray)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "Tomur: build app",
+      "program": "${workspaceFolder}/app/bin/Debug/net10.0/Tomur.dll",
+      "args": [
+        "open"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "stopAtEntry": false,
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Production",
+        "DOTNET_ENVIRONMENT": "Production"
+      }
+    }
+  ]
+}

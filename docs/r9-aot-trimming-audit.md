@@ -2,6 +2,8 @@
 
 记录时间：2026-07-02
 
+后续状态：R12 已承接并清除本文记录的 Native AOT 阻塞；当前发布口径见 `docs/r12-aot-release-audit.md`。本文保留 R9 时点的历史审计记录。
+
 ## 范围
 
 R9 覆盖 Microsoft AI 抽象、Microsoft Agent Framework 文本编排、受控工具调用、本地文件检索、runtime 诊断/修复边界和 agent telemetry。当前审计目标是明确 AOT / trimming 风险点、可验证发布路径和后续限制，不把尚未验证的 Agent Framework Native AOT 能力写成承诺。
