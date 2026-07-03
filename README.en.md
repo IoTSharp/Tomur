@@ -120,7 +120,7 @@ tomur list --catalog
 
 ## 🚧 Current Status
 
-Tomur has completed the main R1-R11 loops and is currently converging the R12 Native AOT / self-contained release matrix.
+Tomur has completed the main R1-R11 loops, is converging the R12 Native AOT / self-contained release matrix, and is continuing the R13 web capability aggregation loop.
 
 | Stage | Status |
 | --- | --- |
@@ -130,6 +130,7 @@ Tomur has completed the main R1-R11 loops and is currently converging the R12 Na
 | R9-R10 | Microsoft AI abstractions, controlled Agent Framework orchestration, SQLite local file search, conversation state, attachment entry points, and voice turn service are connected. |
 | R11 | React + Ant Design X Chat-first web workspace is connected and served by Tomur through `app/wwwroot`. |
 | R12 | Native AOT publishing currently passes without warnings; Linux/macOS release logs, macOS native bundle assets, and real-machine service smoke remain in progress. |
+| R13 | Web capability aggregation has connected Agent / Capabilities views, read-only Agent tool calls, explicit side-effect tool confirmation, protocol capability maps, and Claude Code / Anthropic Messages compatibility; visual download queue and editable Settings remain in progress. |
 
 Planned follow-up work includes a visual download queue, editable Settings, model deletion, VAD / interruption, streaming voice turns, multi-model residency, Linux/macOS release records, and real-machine service smoke.
 

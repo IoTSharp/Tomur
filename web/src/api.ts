@@ -90,8 +90,18 @@ export async function invokeAgentTool(
     signal
   });
 
-  if (!response.ok && response.status !== 409) {
-    throw await createApiError(response);
+  if (!response.ok) {
+    const errorResponse = response.clone();
+    try {
+      const data = (await response.json()) as Partial<AgentToolInvokeResponse>;
+      if (data.tool && data.audit) {
+        return data as AgentToolInvokeResponse;
+      }
+    } catch {
+      // Fall through to the common API error parser.
+    }
+
+    throw await createApiError(errorResponse);
   }
 
   return (await response.json()) as AgentToolInvokeResponse;

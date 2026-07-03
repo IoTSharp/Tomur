@@ -6,6 +6,7 @@ import {
   Badge,
   Button,
   Card,
+  Checkbox,
   Collapse,
   Descriptions,
   Drawer,
@@ -173,6 +174,11 @@ function App() {
   const [agentToolInvokeAction, setAgentToolInvokeAction] = useState<string | null>(null);
   const [agentToolInvokeResult, setAgentToolInvokeResult] = useState<AgentToolInvokeResponse>();
   const [fileSearchQuery, setFileSearchQuery] = useState("");
+  const [controlledToolName, setControlledToolName] = useState("runtime.repair");
+  const [controlledToolArguments, setControlledToolArguments] = useState(
+    createDefaultControlledToolArguments("runtime.repair")
+  );
+  const [controlledToolConfirmed, setControlledToolConfirmed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("runtime");
   const [statusDrawerOpen, setStatusDrawerOpen] = useState(false);
@@ -214,6 +220,10 @@ function App() {
           : model.id
       })),
     [chatModels]
+  );
+  const controlledAgentTools = useMemo(
+    () => (agentTools?.tools ?? []).filter(isSideEffectAgentTool),
+    [agentTools]
   );
   const selectedModelLabel = selectedChatModel?.id;
 
@@ -356,6 +366,22 @@ function App() {
     void refreshConversations();
   }, [refreshConversations]);
 
+  const selectControlledAgentTool = useCallback((tool: string) => {
+    setControlledToolName(tool);
+    setControlledToolArguments(createDefaultControlledToolArguments(tool));
+    setControlledToolConfirmed(false);
+  }, []);
+
+  useEffect(() => {
+    if (controlledAgentTools.length === 0) {
+      return;
+    }
+
+    if (!controlledAgentTools.some((tool) => tool.name === controlledToolName)) {
+      selectControlledAgentTool(controlledAgentTools[0].name);
+    }
+  }, [controlledAgentTools, controlledToolName, selectControlledAgentTool]);
+
   const runNativePrepare = useCallback(async () => {
     const controller = new AbortController();
     setRuntimeAction("prepare");
@@ -427,6 +453,63 @@ function App() {
       refresh: true
     });
   }, [fileSearchQuery, message, runReadOnlyAgentTool]);
+
+  const runControlledAgentTool = useCallback(async () => {
+    const selectedTool = controlledAgentTools.find((tool) => tool.name === controlledToolName);
+    if (!selectedTool) {
+      message.warning("当前没有可调用的受控工具");
+      return;
+    }
+
+    if (selectedTool.requires_confirmation && !controlledToolConfirmed) {
+      message.warning("请先确认本次副作用工具调用");
+      return;
+    }
+
+    let argumentsPayload: Record<string, unknown>;
+    try {
+      argumentsPayload = parseJsonObject(controlledToolArguments);
+    } catch (error) {
+      message.warning(error instanceof Error ? error.message : "工具参数必须是 JSON object");
+      return;
+    }
+
+    const controller = new AbortController();
+    setAgentToolInvokeAction(selectedTool.name);
+
+    try {
+      const result = await invokeAgentTool(
+        {
+          tool: selectedTool.name,
+          mode: "controlled",
+          confirm: selectedTool.requires_confirmation ? true : controlledToolConfirmed || undefined,
+          arguments: argumentsPayload
+        },
+        controller.signal
+      );
+      setAgentToolInvokeResult(result);
+      if (result.status === "ok") {
+        message.success(`${selectedTool.name} ${result.status}`);
+      } else if (result.status === "blocked") {
+        message.warning(`${selectedTool.name} ${result.status}`);
+      } else {
+        message.error(`${selectedTool.name} ${result.status}`);
+      }
+      setControlledToolConfirmed(false);
+      await refreshStatus();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : `${selectedTool.name} 调用失败`);
+    } finally {
+      setAgentToolInvokeAction(null);
+    }
+  }, [
+    controlledAgentTools,
+    controlledToolArguments,
+    controlledToolConfirmed,
+    controlledToolName,
+    message,
+    refreshStatus
+  ]);
 
   const updateConversation = useCallback(
     (conversationId: string, updater: (conversation: Conversation) => Conversation) => {
@@ -1451,6 +1534,9 @@ function App() {
           agentToolInvokeAction={agentToolInvokeAction}
           agentToolInvokeResult={agentToolInvokeResult}
           fileSearchQuery={fileSearchQuery}
+          controlledToolName={controlledToolName}
+          controlledToolArguments={controlledToolArguments}
+          controlledToolConfirmed={controlledToolConfirmed}
           runtimeAction={runtimeAction}
           prepareResult={prepareResult}
           onCopyText={copyText}
@@ -1459,6 +1545,10 @@ function App() {
           onRunReadOnlyAgentTool={runReadOnlyAgentTool}
           onFileSearchQueryChange={setFileSearchQuery}
           onRunFileSearch={runFileSearch}
+          onControlledToolChange={selectControlledAgentTool}
+          onControlledToolArgumentsChange={setControlledToolArguments}
+          onControlledToolConfirmedChange={setControlledToolConfirmed}
+          onRunControlledAgentTool={runControlledAgentTool}
         />
       </Drawer>
     </div>
@@ -1621,6 +1711,9 @@ function SettingsPanel({
   agentToolInvokeAction,
   agentToolInvokeResult,
   fileSearchQuery,
+  controlledToolName,
+  controlledToolArguments,
+  controlledToolConfirmed,
   runtimeAction,
   prepareResult,
   onCopyText,
@@ -1628,7 +1721,11 @@ function SettingsPanel({
   onUnloadRuntimeSession,
   onRunReadOnlyAgentTool,
   onFileSearchQueryChange,
-  onRunFileSearch
+  onRunFileSearch,
+  onControlledToolChange,
+  onControlledToolArgumentsChange,
+  onControlledToolConfirmedChange,
+  onRunControlledAgentTool
 }: {
   section: SettingsSection;
   onSectionChange: (section: SettingsSection) => void;
@@ -1645,6 +1742,9 @@ function SettingsPanel({
   agentToolInvokeAction: string | null;
   agentToolInvokeResult?: AgentToolInvokeResponse;
   fileSearchQuery: string;
+  controlledToolName: string;
+  controlledToolArguments: string;
+  controlledToolConfirmed: boolean;
   runtimeAction: "prepare" | "unload" | null;
   prepareResult?: NativeBundlePrepareResult;
   onCopyText: (text: string, successMessage?: string) => Promise<void>;
@@ -1653,6 +1753,10 @@ function SettingsPanel({
   onRunReadOnlyAgentTool: (tool: string, argumentsPayload?: Record<string, unknown>) => Promise<void>;
   onFileSearchQueryChange: (value: string) => void;
   onRunFileSearch: () => Promise<void>;
+  onControlledToolChange: (tool: string) => void;
+  onControlledToolArgumentsChange: (value: string) => void;
+  onControlledToolConfirmedChange: (value: boolean) => void;
+  onRunControlledAgentTool: () => Promise<void>;
 }) {
   const visibleModels = installedModels?.visible_models ?? [];
   const installedPackages = installedModels?.packages ?? [];
@@ -1965,10 +2069,17 @@ function SettingsPanel({
           agentToolInvokeAction={agentToolInvokeAction}
           agentToolInvokeResult={agentToolInvokeResult}
           fileSearchQuery={fileSearchQuery}
+          controlledToolName={controlledToolName}
+          controlledToolArguments={controlledToolArguments}
+          controlledToolConfirmed={controlledToolConfirmed}
           onCopyText={onCopyText}
           onRunReadOnlyAgentTool={onRunReadOnlyAgentTool}
           onFileSearchQueryChange={onFileSearchQueryChange}
           onRunFileSearch={onRunFileSearch}
+          onControlledToolChange={onControlledToolChange}
+          onControlledToolArgumentsChange={onControlledToolArgumentsChange}
+          onControlledToolConfirmedChange={onControlledToolConfirmedChange}
+          onRunControlledAgentTool={onRunControlledAgentTool}
         />
       )}
 
@@ -2391,10 +2502,17 @@ function AgentSettingsPanel({
   agentToolInvokeAction,
   agentToolInvokeResult,
   fileSearchQuery,
+  controlledToolName,
+  controlledToolArguments,
+  controlledToolConfirmed,
   onCopyText,
   onRunReadOnlyAgentTool,
   onFileSearchQueryChange,
-  onRunFileSearch
+  onRunFileSearch,
+  onControlledToolChange,
+  onControlledToolArgumentsChange,
+  onControlledToolConfirmedChange,
+  onRunControlledAgentTool
 }: {
   agentRuntime?: AgentRuntimeStatus;
   agentTools?: AgentToolMapResponse;
@@ -2404,12 +2522,21 @@ function AgentSettingsPanel({
   agentToolInvokeAction: string | null;
   agentToolInvokeResult?: AgentToolInvokeResponse;
   fileSearchQuery: string;
+  controlledToolName: string;
+  controlledToolArguments: string;
+  controlledToolConfirmed: boolean;
   onCopyText: (text: string, successMessage?: string) => Promise<void>;
   onRunReadOnlyAgentTool: (tool: string, argumentsPayload?: Record<string, unknown>) => Promise<void>;
   onFileSearchQueryChange: (value: string) => void;
   onRunFileSearch: () => Promise<void>;
+  onControlledToolChange: (tool: string) => void;
+  onControlledToolArgumentsChange: (value: string) => void;
+  onControlledToolConfirmedChange: (value: boolean) => void;
+  onRunControlledAgentTool: () => Promise<void>;
 }) {
   const tools = agentTools?.tools ?? [];
+  const controlledTools = tools.filter(isSideEffectAgentTool);
+  const selectedControlledTool = controlledTools.find((tool) => tool.name === controlledToolName);
   const safeBindings = agentToolBindings?.safe_tools ?? [];
   const declarationBindings = agentToolBindings?.declaration_tools ?? [];
 
@@ -2484,48 +2611,156 @@ function AgentSettingsPanel({
             onChange={(event) => onFileSearchQueryChange(event.target.value)}
             onSearch={() => void onRunFileSearch()}
           />
-          {agentToolInvokeResult && (
+        </Space>
+      </Card>
+
+      <Card
+        size="small"
+        title="副作用工具确认"
+        extra={<Tag color="gold">controlled</Tag>}
+      >
+        <Space direction="vertical" size={12} className="drawer-stack">
+          <Typography.Text type="secondary">
+            这里仅暴露会写入本地产物或修改 runtime 状态的工具；调用会发送 mode=controlled，需确认的工具会附带 confirm=true。
+          </Typography.Text>
+          {controlledTools.length === 0 ? (
             <Alert
-              type={agentToolInvokeResult.status === "ok" ? "success" : "warning"}
+              type="info"
               showIcon
-              message={`${agentToolInvokeResult.tool} / ${agentToolInvokeResult.status}`}
-              description={
-                <Space direction="vertical" size={6}>
-                  <Typography.Text type="secondary">
-                    {agentToolInvokeResult.implementation} / {agentToolInvokeResult.elapsed_ms} ms / {agentToolInvokeResult.audit.side_effect}
-                  </Typography.Text>
-                  {agentToolInvokeResult.diagnostics.length > 0 && (
-                    <Typography.Text type="secondary">
-                      {agentToolInvokeResult.diagnostics.join(" ")}
-                    </Typography.Text>
-                  )}
-                  {agentToolInvokeResult.audit.actions.length > 0 && (
-                    <Typography.Text type="secondary">
-                      下一步：{agentToolInvokeResult.audit.actions.join(" ")}
-                    </Typography.Text>
-                  )}
-                </Space>
-              }
+              message="当前没有需要显式确认的受控工具"
+              description="刷新 Agent 工具地图后可查看 image.generate、audio.speak 或 runtime.repair 的可用状态。"
             />
-          )}
-          {agentToolInvokeResult?.result !== undefined && (
-            <Collapse
-              size="small"
-              items={[
-                {
-                  key: "result",
-                  label: "结构化结果",
-                  children: (
-                    <pre className="json-preview">
-                      {formatJsonPreview(agentToolInvokeResult.result)}
-                    </pre>
-                  )
-                }
-              ]}
-            />
+          ) : (
+            <>
+              <Select
+                style={{ width: "100%" }}
+                value={selectedControlledTool?.name ?? controlledToolName}
+                options={controlledTools.map((tool) => ({
+                  value: tool.name,
+                  label: `${tool.name} · ${tool.status}`
+                }))}
+                onChange={onControlledToolChange}
+              />
+
+              {selectedControlledTool && (
+                <Descriptions column={1} size="small" bordered>
+                  <Descriptions.Item label="Status">
+                    <Space wrap>
+                      <Tag color={tagColor(selectedControlledTool.status)}>
+                        {selectedControlledTool.status}
+                      </Tag>
+                      {selectedControlledTool.callable ? <Tag color="green">callable</Tag> : <Tag>blocked</Tag>}
+                      {selectedControlledTool.requires_confirmation ? <Tag color="gold">confirm</Tag> : null}
+                    </Space>
+                  </Descriptions.Item>
+                  <Descriptions.Item label="Backend">{selectedControlledTool.backend}</Descriptions.Item>
+                  <Descriptions.Item label="Side effect">{selectedControlledTool.side_effect}</Descriptions.Item>
+                  <Descriptions.Item label="Model">{selectedControlledTool.model ?? "-"}</Descriptions.Item>
+                  <Descriptions.Item label="Message">{selectedControlledTool.message}</Descriptions.Item>
+                </Descriptions>
+              )}
+
+              <Input.TextArea
+                className="controlled-tool-json"
+                value={controlledToolArguments}
+                autoSize={{ minRows: 5, maxRows: 10 }}
+                spellCheck={false}
+                onChange={(event) => onControlledToolArgumentsChange(event.target.value)}
+              />
+
+              {selectedControlledTool?.requires_confirmation && (
+                <Checkbox
+                  checked={controlledToolConfirmed}
+                  onChange={(event) => onControlledToolConfirmedChange(event.target.checked)}
+                >
+                  我确认执行 {selectedControlledTool.name}，允许 Tomur 写入本地产物或修改本地 runtime 状态。
+                </Checkbox>
+              )}
+
+              <Space wrap>
+                <Button
+                  type="primary"
+                  danger={Boolean(selectedControlledTool?.requires_confirmation)}
+                  icon={<Wrench size={14} />}
+                  loading={Boolean(
+                    selectedControlledTool &&
+                      agentToolInvokeAction === selectedControlledTool.name
+                  )}
+                  disabled={
+                    Boolean(agentToolInvokeAction) ||
+                    Boolean(selectedControlledTool?.requires_confirmation && !controlledToolConfirmed)
+                  }
+                  onClick={() => void onRunControlledAgentTool()}
+                >
+                  确认并调用
+                </Button>
+                <Button
+                  icon={<Copy size={14} />}
+                  onClick={() =>
+                    void onCopyText(
+                      buildControlledToolInvokeSample(
+                        selectedControlledTool?.name ?? controlledToolName,
+                        controlledToolArguments,
+                        Boolean(selectedControlledTool?.requires_confirmation && controlledToolConfirmed)
+                      ),
+                      "已复制受控工具调用示例"
+                    )
+                  }
+                >
+                  复制请求
+                </Button>
+              </Space>
+            </>
           )}
         </Space>
       </Card>
+
+      {agentToolInvokeResult && (
+        <Alert
+          type={
+            agentToolInvokeResult.status === "ok"
+              ? "success"
+              : agentToolInvokeResult.status === "blocked"
+                ? "warning"
+                : "error"
+          }
+          showIcon
+          message={`${agentToolInvokeResult.tool} / ${agentToolInvokeResult.status}`}
+          description={
+            <Space direction="vertical" size={6}>
+              <Typography.Text type="secondary">
+                {agentToolInvokeResult.implementation} / {agentToolInvokeResult.elapsed_ms} ms / {agentToolInvokeResult.audit.side_effect}
+              </Typography.Text>
+              {agentToolInvokeResult.diagnostics.length > 0 && (
+                <Typography.Text type="secondary">
+                  {agentToolInvokeResult.diagnostics.join(" ")}
+                </Typography.Text>
+              )}
+              {agentToolInvokeResult.audit.actions.length > 0 && (
+                <Typography.Text type="secondary">
+                  下一步：{agentToolInvokeResult.audit.actions.join(" ")}
+                </Typography.Text>
+              )}
+            </Space>
+          }
+        />
+      )}
+      {agentToolInvokeResult?.result !== undefined && (
+        <Collapse
+          size="small"
+          items={[
+            {
+              key: "result",
+              label: "结构化结果",
+              children: (
+                <pre className="json-preview">
+                  {formatJsonPreview(agentToolInvokeResult.result)}
+                </pre>
+              )
+            }
+          ]}
+        />
+      )}
 
       <Card
         size="small"
@@ -3087,7 +3322,7 @@ function buildCapabilityRows({
       route: "GET /api/agents/tools",
       status: agentTools?.status ?? "checking",
       ui: "settings",
-      message: `${agentTools?.tools.length ?? 0} 个工具；只读工具 Web 调用入口后续补齐。`
+      message: `${agentTools?.tools.length ?? 0} 个工具；只读与确认式受控调用已在 Agents 分组展示。`
     },
     {
       group: "Agents",
@@ -3105,6 +3340,15 @@ function buildCapabilityRows({
       ui: "action",
       message: "runtime.diagnose、tools.inspect 与 files.search 已提供只读 Web 调用。",
       sample: 'POST /api/agents/tools/invoke {"tool":"runtime.diagnose","mode":"read_only"}'
+    },
+    {
+      group: "Agents",
+      title: "Controlled side-effect tools",
+      route: "POST /api/agents/tools/invoke",
+      status: agentTool("runtime.repair")?.status ?? agentRuntime?.status ?? "checking",
+      ui: "action",
+      message: "image.generate、audio.speak 与 runtime.repair 等受控工具在 Web 中保持显式确认边界。",
+      sample: 'POST /api/agents/tools/invoke {"tool":"runtime.repair","mode":"controlled","confirm":true,"arguments":{"action":"session.unload"}}'
     },
     {
       group: "Agents",
@@ -3132,6 +3376,71 @@ function findMultimodalBackend(
     ].join(" ").toLowerCase();
     return normalized.some((keyword) => value.includes(keyword));
   });
+}
+
+function isSideEffectAgentTool(tool: AgentToolMapResponse["tools"][number]) {
+  const sideEffect = tool.side_effect.trim().toLowerCase();
+  return tool.requires_confirmation || (sideEffect !== "" && sideEffect !== "read" && sideEffect !== "none");
+}
+
+function createDefaultControlledToolArguments(toolName: string) {
+  const defaults: Record<string, unknown> =
+    toolName === "image.generate"
+      ? {
+          prompt: "A precise product-style image of a local AI runtime workspace",
+          size: "1024x1024",
+          steps: 4
+        }
+      : toolName === "audio.speak"
+        ? {
+            input: "Tomur local speech synthesis test.",
+            response_format: "wav",
+            speed: 1
+          }
+        : toolName === "runtime.repair"
+          ? {
+              action: "session.unload",
+              reason: "Confirmed from Tomur Web Settings."
+            }
+          : {};
+
+  return formatJsonPreview(defaults);
+}
+
+function parseJsonObject(value: string): Record<string, unknown> {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return {};
+  }
+
+  const parsed = JSON.parse(trimmed) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("工具参数必须是 JSON object");
+  }
+
+  return parsed as Record<string, unknown>;
+}
+
+function buildControlledToolInvokeSample(
+  toolName: string,
+  argumentsText: string,
+  confirm: boolean
+) {
+  const payload: Record<string, unknown> = {
+    tool: toolName,
+    mode: "controlled"
+  };
+  if (confirm) {
+    payload.confirm = true;
+  }
+
+  try {
+    payload.arguments = parseJsonObject(argumentsText);
+  } catch {
+    payload.arguments = "<JSON object>";
+  }
+
+  return `POST /api/agents/tools/invoke ${formatJsonPreview(payload)}`;
 }
 
 function formatJsonPreview(value: unknown) {

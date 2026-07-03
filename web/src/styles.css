@@ -382,6 +382,12 @@ button {
   line-height: 1.55;
 }
 
+.controlled-tool-json {
+  font-family: Consolas, "SFMono-Regular", "Cascadia Mono", monospace;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
 .runtime-action {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
