@@ -1,0 +1,1 @@
+export { resolveSettingsSectionFromDiagnostic } from "./settings";
