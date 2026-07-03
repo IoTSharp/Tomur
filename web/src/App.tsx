@@ -11,6 +11,7 @@ import {
   Drawer,
   Empty,
   Flex,
+  Input,
   List,
   Select,
   Segmented,
@@ -50,6 +51,12 @@ import {
 import XMarkdown from "@ant-design/x-markdown";
 import type { BubbleItemType, PromptsItemType } from "@ant-design/x";
 import {
+  getAgentEvents,
+  getAgentRuntime,
+  getAgentTelemetry,
+  getAgentToolBindings,
+  getAgentTools,
+  invokeAgentTool,
   appendConversationMessage,
   createConversation,
   deleteConversation,
@@ -69,6 +76,12 @@ import {
   unloadRuntimeSession
 } from "./api";
 import type {
+  AgentEventLogRecentResponse,
+  AgentFrameworkToolBindingResponse,
+  AgentRuntimeStatus,
+  AgentTelemetryStatus,
+  AgentToolInvokeResponse,
+  AgentToolMapResponse,
   ChatMessage,
   Conversation,
   ConversationArtifactRecord,
@@ -134,6 +147,8 @@ type SettingsSection =
   | "models"
   | "downloads"
   | "runtime"
+  | "agents"
+  | "capabilities"
   | "api"
   | "files"
   | "advanced";
@@ -150,6 +165,14 @@ function App() {
   const [installedModels, setInstalledModels] = useState<InstalledModelsResponse>();
   const [catalog, setCatalog] = useState<ModelCatalogResponse>();
   const [multimodalStatus, setMultimodalStatus] = useState<MultimodalRuntimeStatus>();
+  const [agentRuntime, setAgentRuntime] = useState<AgentRuntimeStatus>();
+  const [agentTools, setAgentTools] = useState<AgentToolMapResponse>();
+  const [agentToolBindings, setAgentToolBindings] = useState<AgentFrameworkToolBindingResponse>();
+  const [agentEvents, setAgentEvents] = useState<AgentEventLogRecentResponse>();
+  const [agentTelemetry, setAgentTelemetry] = useState<AgentTelemetryStatus>();
+  const [agentToolInvokeAction, setAgentToolInvokeAction] = useState<string | null>(null);
+  const [agentToolInvokeResult, setAgentToolInvokeResult] = useState<AgentToolInvokeResponse>();
+  const [fileSearchQuery, setFileSearchQuery] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("runtime");
   const [statusDrawerOpen, setStatusDrawerOpen] = useState(false);
@@ -242,14 +265,24 @@ function App() {
         nextModels,
         nextInstalledModels,
         nextCatalog,
-        nextMultimodalStatus
+        nextMultimodalStatus,
+        nextAgentRuntime,
+        nextAgentTools,
+        nextAgentToolBindings,
+        nextAgentEvents,
+        nextAgentTelemetry
       ] = await Promise.all([
         getVersion(controller.signal),
         getRuntimeStatus(controller.signal),
         getModels(controller.signal),
         getInstalledModels(controller.signal),
         getModelCatalog(controller.signal),
-        getMultimodalStatus(controller.signal)
+        getMultimodalStatus(controller.signal),
+        getAgentRuntime(controller.signal),
+        getAgentTools(controller.signal),
+        getAgentToolBindings(controller.signal),
+        getAgentEvents(controller.signal),
+        getAgentTelemetry(controller.signal)
       ]);
 
       setVersion(nextVersion);
@@ -258,6 +291,11 @@ function App() {
       setInstalledModels(nextInstalledModels);
       setCatalog(nextCatalog);
       setMultimodalStatus(nextMultimodalStatus);
+      setAgentRuntime(nextAgentRuntime);
+      setAgentTools(nextAgentTools);
+      setAgentToolBindings(nextAgentToolBindings);
+      setAgentEvents(nextAgentEvents);
+      setAgentTelemetry(nextAgentTelemetry);
       const nextChatModels = nextModels.data.filter(isChatModel);
       setSelectedModel((current) =>
         current && nextChatModels.some((model) => model.id === current)
@@ -348,6 +386,47 @@ function App() {
       setRuntimeAction(null);
     }
   }, [message]);
+
+  const runReadOnlyAgentTool = useCallback(
+    async (tool: string, argumentsPayload?: Record<string, unknown>) => {
+      const controller = new AbortController();
+      setAgentToolInvokeAction(tool);
+
+      try {
+        const result = await invokeAgentTool(
+          {
+            tool,
+            mode: "read_only",
+            arguments: argumentsPayload
+          },
+          controller.signal
+        );
+        setAgentToolInvokeResult(result);
+        message[result.status === "ok" ? "success" : "warning"](
+          `${tool} ${result.status}`
+        );
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : `${tool} 调用失败`);
+      } finally {
+        setAgentToolInvokeAction(null);
+      }
+    },
+    [message]
+  );
+
+  const runFileSearch = useCallback(async () => {
+    const query = fileSearchQuery.trim();
+    if (!query) {
+      message.warning("请输入要检索的本地文件查询");
+      return;
+    }
+
+    await runReadOnlyAgentTool("files.search", {
+      query,
+      top_k: 8,
+      refresh: true
+    });
+  }, [fileSearchQuery, message, runReadOnlyAgentTool]);
 
   const updateConversation = useCallback(
     (conversationId: string, updater: (conversation: Conversation) => Conversation) => {
@@ -899,12 +978,105 @@ function App() {
     ]
   );
 
-  const regenerate = useCallback(() => {
-    const lastUser = [...activeConversation.messages].reverse().find((item) => item.role === "user");
-    if (lastUser) {
-      void submitMessage(lastUser.content);
+  const regenerate = useCallback(async () => {
+    if (sending) {
+      return;
     }
-  }, [activeConversation.messages, submitMessage]);
+
+    const model = selectedModelLabel;
+    if (!model) {
+      openSettings("models");
+      message.warning("Tomur 当前没有可见 Chat 模型");
+      return;
+    }
+
+    const lastUserIndex = findLastUserMessageIndex(activeConversation.messages);
+    if (lastUserIndex < 0) {
+      return;
+    }
+
+    const lastUser = activeConversation.messages[lastUserIndex];
+    if (lastUser.attachments?.length || lastUser.transcript) {
+      message.warning("附件或语音回合请重新发送原始输入。");
+      return;
+    }
+
+    const conversationId = activeConversation.id;
+    const history = activeConversation.messages.slice(0, lastUserIndex + 1);
+    const assistantMessage: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: "assistant",
+      content: "",
+      status: "loading"
+    };
+
+    updateConversation(conversationId, (conversation) => ({
+      ...conversation,
+      updatedAt: Date.now(),
+      messages: [...conversation.messages.slice(0, lastUserIndex + 1), assistantMessage]
+    }));
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setSending(true);
+
+    try {
+      let accumulated = "";
+      const text = await sendChatCompletion(
+        model,
+        history,
+        controller.signal,
+        (chunk) => {
+          accumulated += chunk;
+          updateConversation(conversationId, (conversation) => ({
+            ...conversation,
+            messages: conversation.messages.map((item) =>
+              item.id === assistantMessage.id
+                ? { ...item, content: accumulated, status: "loading" }
+                : item
+            )
+          }));
+        }
+      );
+
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        updatedAt: Date.now(),
+        messages: conversation.messages.map((item) =>
+          item.id === assistantMessage.id
+            ? { ...item, content: text || accumulated, status: "success" }
+            : item
+        )
+      }));
+    } catch (error) {
+      const errorText =
+        error instanceof DOMException && error.name === "AbortError"
+          ? "已停止生成。"
+          : error instanceof Error
+            ? error.message
+            : "Tomur Chat 请求失败";
+
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        messages: conversation.messages.map((item) =>
+          item.id === assistantMessage.id
+            ? { ...item, content: errorText, status: "error" }
+            : item
+        )
+      }));
+    } finally {
+      setSending(false);
+      abortRef.current = null;
+    }
+  }, [
+    activeConversation.id,
+    activeConversation.messages,
+    message,
+    openSettings,
+    selectedModelLabel,
+    sending,
+    updateConversation
+  ]);
 
   const stopGeneration = useCallback(() => {
     abortRef.current?.abort();
@@ -1057,6 +1229,12 @@ function App() {
             tone={multimodalStatus?.status === "ok" ? "success" : "warning"}
             onClick={() => setStatusDrawerOpen(true)}
           />
+          <StatusPill
+            label="Agents"
+            value={agentRuntime?.status ?? "pending"}
+            tone={agentRuntime?.status === "ok" ? "success" : "warning"}
+            onClick={() => openSettings("agents")}
+          />
         </section>
 
         {!chatReady && (
@@ -1101,7 +1279,16 @@ function App() {
                 wrap
                 items={promptItems}
                 onItemClick={({ data }) => {
-                  const text = promptText[data.key] ?? String(data.label ?? "");
+                  const promptKey = String(data.key);
+                  const text = resolvePromptText(promptKey, {
+                    runtimeStatus,
+                    models,
+                    installedModels,
+                    catalog,
+                    multimodalStatus,
+                    agentRuntime,
+                    agentTools
+                  }) ?? promptText[promptKey] ?? String(data.label ?? "");
                   setInput(text);
                 }}
               />
@@ -1236,6 +1423,7 @@ function App() {
         <StatusPanel
           runtimeStatus={runtimeStatus}
           multimodalStatus={multimodalStatus}
+          agentRuntime={agentRuntime}
           loading={loadingStatus}
           onOpenSettings={openSettings}
         />
@@ -1255,11 +1443,22 @@ function App() {
           installedModels={installedModels}
           catalog={catalog}
           multimodalStatus={multimodalStatus}
+          agentRuntime={agentRuntime}
+          agentTools={agentTools}
+          agentToolBindings={agentToolBindings}
+          agentEvents={agentEvents}
+          agentTelemetry={agentTelemetry}
+          agentToolInvokeAction={agentToolInvokeAction}
+          agentToolInvokeResult={agentToolInvokeResult}
+          fileSearchQuery={fileSearchQuery}
           runtimeAction={runtimeAction}
           prepareResult={prepareResult}
           onCopyText={copyText}
           onPrepareNativeRuntime={runNativePrepare}
           onUnloadRuntimeSession={runSessionUnload}
+          onRunReadOnlyAgentTool={runReadOnlyAgentTool}
+          onFileSearchQueryChange={setFileSearchQuery}
+          onRunFileSearch={runFileSearch}
         />
       </Drawer>
     </div>
@@ -1288,11 +1487,13 @@ function StatusPill({
 function StatusPanel({
   runtimeStatus,
   multimodalStatus,
+  agentRuntime,
   loading,
   onOpenSettings
 }: {
   runtimeStatus?: RuntimeStatusResponse;
   multimodalStatus?: MultimodalRuntimeStatus;
+  agentRuntime?: AgentRuntimeStatus;
   loading: boolean;
   onOpenSettings: (section: SettingsSection) => void;
 }) {
@@ -1326,6 +1527,12 @@ function StatusPanel({
         </Button>
         <Button icon={<Wrench size={16} />} onClick={() => onOpenSettings("runtime")}>
           Runtime
+        </Button>
+        <Button icon={<Settings size={16} />} onClick={() => onOpenSettings("agents")}>
+          Agents
+        </Button>
+        <Button icon={<Layers3 size={16} />} onClick={() => onOpenSettings("capabilities")}>
+          Capabilities
         </Button>
         <Button icon={<FolderOpen size={16} />} onClick={() => onOpenSettings("files")}>
           Files
@@ -1374,6 +1581,26 @@ function StatusPanel({
           </List.Item>
         )}
       />
+
+      <List
+        size="small"
+        header="Agent 工具"
+        dataSource={agentRuntime?.tools ?? []}
+        locale={{ emptyText: "暂无 Agent 工具状态" }}
+        renderItem={(tool) => (
+          <List.Item>
+            <List.Item.Meta
+              title={
+                <Space>
+                  <Tag color={tagColor(tool.status)}>{tool.status}</Tag>
+                  {tool.name}
+                </Space>
+              }
+              description={tool.message}
+            />
+          </List.Item>
+        )}
+      />
     </Space>
   );
 }
@@ -1386,11 +1613,22 @@ function SettingsPanel({
   installedModels,
   catalog,
   multimodalStatus,
+  agentRuntime,
+  agentTools,
+  agentToolBindings,
+  agentEvents,
+  agentTelemetry,
+  agentToolInvokeAction,
+  agentToolInvokeResult,
+  fileSearchQuery,
   runtimeAction,
   prepareResult,
   onCopyText,
   onPrepareNativeRuntime,
-  onUnloadRuntimeSession
+  onUnloadRuntimeSession,
+  onRunReadOnlyAgentTool,
+  onFileSearchQueryChange,
+  onRunFileSearch
 }: {
   section: SettingsSection;
   onSectionChange: (section: SettingsSection) => void;
@@ -1399,11 +1637,22 @@ function SettingsPanel({
   installedModels?: InstalledModelsResponse;
   catalog?: ModelCatalogResponse;
   multimodalStatus?: MultimodalRuntimeStatus;
+  agentRuntime?: AgentRuntimeStatus;
+  agentTools?: AgentToolMapResponse;
+  agentToolBindings?: AgentFrameworkToolBindingResponse;
+  agentEvents?: AgentEventLogRecentResponse;
+  agentTelemetry?: AgentTelemetryStatus;
+  agentToolInvokeAction: string | null;
+  agentToolInvokeResult?: AgentToolInvokeResponse;
+  fileSearchQuery: string;
   runtimeAction: "prepare" | "unload" | null;
   prepareResult?: NativeBundlePrepareResult;
   onCopyText: (text: string, successMessage?: string) => Promise<void>;
   onPrepareNativeRuntime: () => Promise<void>;
   onUnloadRuntimeSession: () => Promise<void>;
+  onRunReadOnlyAgentTool: (tool: string, argumentsPayload?: Record<string, unknown>) => Promise<void>;
+  onFileSearchQueryChange: (value: string) => void;
+  onRunFileSearch: () => Promise<void>;
 }) {
   const visibleModels = installedModels?.visible_models ?? [];
   const installedPackages = installedModels?.packages ?? [];
@@ -1421,6 +1670,8 @@ function SettingsPanel({
           { label: "Models", value: "models" },
           { label: "Downloads", value: "downloads" },
           { label: "Runtime", value: "runtime" },
+          { label: "Agent", value: "agents" },
+          { label: "能力", value: "capabilities" },
           { label: "API", value: "api" },
           { label: "Files", value: "files" },
           { label: "Advanced", value: "advanced" }
@@ -1700,6 +1951,35 @@ function SettingsPanel({
           runtimeAction={runtimeAction}
           onPrepareNativeRuntime={onPrepareNativeRuntime}
           onUnloadRuntimeSession={onUnloadRuntimeSession}
+          onCopyText={onCopyText}
+        />
+      )}
+
+      {section === "agents" && (
+        <AgentSettingsPanel
+          agentRuntime={agentRuntime}
+          agentTools={agentTools}
+          agentToolBindings={agentToolBindings}
+          agentEvents={agentEvents}
+          agentTelemetry={agentTelemetry}
+          agentToolInvokeAction={agentToolInvokeAction}
+          agentToolInvokeResult={agentToolInvokeResult}
+          fileSearchQuery={fileSearchQuery}
+          onCopyText={onCopyText}
+          onRunReadOnlyAgentTool={onRunReadOnlyAgentTool}
+          onFileSearchQueryChange={onFileSearchQueryChange}
+          onRunFileSearch={onRunFileSearch}
+        />
+      )}
+
+      {section === "capabilities" && (
+        <CapabilitiesPanel
+          runtimeStatus={runtimeStatus}
+          models={models}
+          catalog={catalog}
+          multimodalStatus={multimodalStatus}
+          agentRuntime={agentRuntime}
+          agentTools={agentTools}
           onCopyText={onCopyText}
         />
       )}
@@ -2098,6 +2378,712 @@ function RuntimeSettingsPanel({
   );
 }
 
+function AgentSettingsPanel({
+  agentRuntime,
+  agentTools,
+  agentToolBindings,
+  agentEvents,
+  agentTelemetry,
+  agentToolInvokeAction,
+  agentToolInvokeResult,
+  fileSearchQuery,
+  onCopyText,
+  onRunReadOnlyAgentTool,
+  onFileSearchQueryChange,
+  onRunFileSearch
+}: {
+  agentRuntime?: AgentRuntimeStatus;
+  agentTools?: AgentToolMapResponse;
+  agentToolBindings?: AgentFrameworkToolBindingResponse;
+  agentEvents?: AgentEventLogRecentResponse;
+  agentTelemetry?: AgentTelemetryStatus;
+  agentToolInvokeAction: string | null;
+  agentToolInvokeResult?: AgentToolInvokeResponse;
+  fileSearchQuery: string;
+  onCopyText: (text: string, successMessage?: string) => Promise<void>;
+  onRunReadOnlyAgentTool: (tool: string, argumentsPayload?: Record<string, unknown>) => Promise<void>;
+  onFileSearchQueryChange: (value: string) => void;
+  onRunFileSearch: () => Promise<void>;
+}) {
+  const tools = agentTools?.tools ?? [];
+  const safeBindings = agentToolBindings?.safe_tools ?? [];
+  const declarationBindings = agentToolBindings?.declaration_tools ?? [];
+
+  return (
+    <Space direction="vertical" size={16} className="drawer-stack">
+      <Alert
+        type={agentRuntime?.status === "ok" ? "success" : "warning"}
+        showIcon
+        message={agentRuntime?.orchestration.message ?? "Agent runtime 状态尚未加载"}
+        description={agentRuntime?.agent_framework.message ?? "刷新状态后可查看 Agent Framework、工具地图和 telemetry 边界。"}
+      />
+
+      <Descriptions column={1} size="small" bordered>
+        <Descriptions.Item label="Runtime">{agentRuntime?.agent_framework.runtime ?? "-"}</Descriptions.Item>
+        <Descriptions.Item label="Chat client">{agentRuntime?.chat_client.provider ?? "-"}</Descriptions.Item>
+        <Descriptions.Item label="Default model">
+          {agentRuntime?.chat_client.default_model ?? "-"}
+        </Descriptions.Item>
+        <Descriptions.Item label="Agent endpoint">
+          {agentRuntime?.orchestration.endpoint ?? "POST /api/agents/chat"}
+        </Descriptions.Item>
+        <Descriptions.Item label="Tool map">{tools.length}</Descriptions.Item>
+        <Descriptions.Item label="Telemetry">{agentTelemetry?.status ?? "-"}</Descriptions.Item>
+        <Descriptions.Item label="Event log">{agentTelemetry?.local_event_log ?? agentEvents?.path ?? "-"}</Descriptions.Item>
+      </Descriptions>
+
+      <Card
+        size="small"
+        title="只读工具调用"
+        extra={<Tag color="green">read-only</Tag>}
+      >
+        <Space direction="vertical" size={12} className="drawer-stack">
+          <Typography.Text type="secondary">
+            这些工具只读取本地诊断和工具地图，不生成产物、不修改 runtime。
+          </Typography.Text>
+          <Space wrap>
+            <Button
+              icon={<Wrench size={14} />}
+              loading={agentToolInvokeAction === "runtime.diagnose"}
+              disabled={Boolean(agentToolInvokeAction)}
+              onClick={() => void onRunReadOnlyAgentTool("runtime.diagnose")}
+            >
+              runtime.diagnose
+            </Button>
+            <Button
+              icon={<Layers3 size={14} />}
+              loading={agentToolInvokeAction === "tools.inspect"}
+              disabled={Boolean(agentToolInvokeAction)}
+              onClick={() => void onRunReadOnlyAgentTool("tools.inspect")}
+            >
+              tools.inspect
+            </Button>
+            <Button
+              icon={<Copy size={14} />}
+              onClick={() =>
+                void onCopyText(
+                  'POST /api/agents/tools/invoke {"tool":"runtime.diagnose","mode":"read_only"}',
+                  "已复制只读工具调用示例"
+                )
+              }
+            >
+              复制示例
+            </Button>
+          </Space>
+          <Input.Search
+            value={fileSearchQuery}
+            allowClear
+            enterButton="检索文件"
+            placeholder="检索 Tomur 管理的本地文本文件"
+            loading={agentToolInvokeAction === "files.search"}
+            disabled={Boolean(agentToolInvokeAction && agentToolInvokeAction !== "files.search")}
+            onChange={(event) => onFileSearchQueryChange(event.target.value)}
+            onSearch={() => void onRunFileSearch()}
+          />
+          {agentToolInvokeResult && (
+            <Alert
+              type={agentToolInvokeResult.status === "ok" ? "success" : "warning"}
+              showIcon
+              message={`${agentToolInvokeResult.tool} / ${agentToolInvokeResult.status}`}
+              description={
+                <Space direction="vertical" size={6}>
+                  <Typography.Text type="secondary">
+                    {agentToolInvokeResult.implementation} / {agentToolInvokeResult.elapsed_ms} ms / {agentToolInvokeResult.audit.side_effect}
+                  </Typography.Text>
+                  {agentToolInvokeResult.diagnostics.length > 0 && (
+                    <Typography.Text type="secondary">
+                      {agentToolInvokeResult.diagnostics.join(" ")}
+                    </Typography.Text>
+                  )}
+                  {agentToolInvokeResult.audit.actions.length > 0 && (
+                    <Typography.Text type="secondary">
+                      下一步：{agentToolInvokeResult.audit.actions.join(" ")}
+                    </Typography.Text>
+                  )}
+                </Space>
+              }
+            />
+          )}
+          {agentToolInvokeResult?.result !== undefined && (
+            <Collapse
+              size="small"
+              items={[
+                {
+                  key: "result",
+                  label: "结构化结果",
+                  children: (
+                    <pre className="json-preview">
+                      {formatJsonPreview(agentToolInvokeResult.result)}
+                    </pre>
+                  )
+                }
+              ]}
+            />
+          )}
+        </Space>
+      </Card>
+
+      <Card
+        size="small"
+        title={`工具目录 ${tools.length}`}
+        extra={
+          <Button
+            type="text"
+            size="small"
+            icon={<Copy size={14} />}
+            onClick={() => void onCopyText("GET /api/agents/tools", "已复制工具地图 API")}
+          >
+            API
+          </Button>
+        }
+      >
+        <List
+          dataSource={tools}
+          locale={{ emptyText: "暂无 Agent 工具" }}
+          renderItem={(tool) => (
+            <List.Item
+              actions={
+                tool.route ? [
+                  <Button
+                    key={`${tool.name}-route`}
+                    type="text"
+                    size="small"
+                    onClick={() => void onCopyText(tool.route ?? "", `已复制 ${tool.name} 路由`)}
+                  >
+                    复制路由
+                  </Button>
+                ] : undefined
+              }
+            >
+              <List.Item.Meta
+                title={
+                  <Space wrap>
+                    <Tag color={tagColor(tool.status)}>{tool.status}</Tag>
+                    <span>{tool.name}</span>
+                    {tool.callable ? <Tag color="green">callable</Tag> : <Tag>blocked</Tag>}
+                    {tool.requires_confirmation ? <Tag color="gold">confirm</Tag> : null}
+                  </Space>
+                }
+                description={
+                  <Space direction="vertical" size={4}>
+                    <Typography.Text type="secondary">{tool.message}</Typography.Text>
+                    <Typography.Text type="secondary">
+                      {tool.backend} / {tool.side_effect} / {tool.invocation_modes.join(", ")}
+                    </Typography.Text>
+                  </Space>
+                }
+              />
+            </List.Item>
+          )}
+        />
+      </Card>
+
+      <Card
+        size="small"
+        title="Tool bindings"
+        extra={
+          <Button
+            type="text"
+            size="small"
+            icon={<Copy size={14} />}
+            onClick={() =>
+              void onCopyText("GET /api/agents/tool-bindings", "已复制 tool bindings API")
+            }
+          >
+            API
+          </Button>
+        }
+      >
+        <Collapse
+          size="small"
+          items={[
+            {
+              key: "safe",
+              label: `只读 AITool ${safeBindings.length}`,
+              children: <AgentBindingList bindings={safeBindings} />
+            },
+            {
+              key: "declaration",
+              label: `受控声明工具 ${declarationBindings.length}`,
+              children: <AgentBindingList bindings={declarationBindings} />
+            }
+          ]}
+        />
+      </Card>
+
+      <Card
+        size="small"
+        title={`最近事件 ${agentEvents?.count ?? 0}`}
+        extra={
+          <Button
+            type="text"
+            size="small"
+            icon={<Copy size={14} />}
+            onClick={() => void onCopyText("GET /api/agents/events?limit=20", "已复制 Agent events API")}
+          >
+            API
+          </Button>
+        }
+      >
+        <List
+          size="small"
+          dataSource={agentEvents?.events ?? []}
+          locale={{ emptyText: "暂无 Agent 事件" }}
+          renderItem={(event) => (
+            <List.Item>
+              <List.Item.Meta
+                title={
+                  <Space wrap>
+                    <Tag color={tagColor(event.status)}>{event.status}</Tag>
+                    <span>{event.event}</span>
+                    {event.tool ? <Tag>{event.tool}</Tag> : null}
+                  </Space>
+                }
+                description={`${formatRelativeTime(event.recorded_at)} / ${event.mode ?? "default"} / ${event.elapsed_ms} ms`}
+              />
+            </List.Item>
+          )}
+        />
+      </Card>
+
+      <Card
+        size="small"
+        title="Telemetry"
+        extra={<Tag color={tagColor(agentTelemetry?.exporter.status ?? "disabled")}>{agentTelemetry?.exporter.status ?? "disabled"}</Tag>}
+      >
+        <Space direction="vertical" size={10} className="drawer-stack">
+          <Typography.Text type="secondary">
+            {agentTelemetry?.exporter.message ?? "Telemetry 状态尚未加载。"}
+          </Typography.Text>
+          <List
+            size="small"
+            dataSource={agentTelemetry?.spans ?? []}
+            locale={{ emptyText: "暂无 span 描述" }}
+            renderItem={(span) => (
+              <List.Item>
+                <List.Item.Meta
+                  title={span.name}
+                  description={`${span.event} / ${span.description}`}
+                />
+              </List.Item>
+            )}
+          />
+        </Space>
+      </Card>
+    </Space>
+  );
+}
+
+function AgentBindingList({
+  bindings
+}: {
+  bindings: AgentFrameworkToolBindingResponse["safe_tools"];
+}) {
+  return (
+    <List
+      size="small"
+      dataSource={bindings}
+      locale={{ emptyText: "暂无 bindings" }}
+      renderItem={(binding) => (
+        <List.Item>
+          <List.Item.Meta
+            title={
+              <Space wrap>
+                <Tag color={tagColor(binding.status)}>{binding.status}</Tag>
+                <span>{binding.name}</span>
+                {binding.requires_confirmation ? <Tag color="gold">confirm</Tag> : null}
+              </Space>
+            }
+            description={`${binding.implementation} / ${binding.side_effect}`}
+          />
+        </List.Item>
+      )}
+    />
+  );
+}
+
+function CapabilitiesPanel({
+  runtimeStatus,
+  models,
+  catalog,
+  multimodalStatus,
+  agentRuntime,
+  agentTools,
+  onCopyText
+}: {
+  runtimeStatus?: RuntimeStatusResponse;
+  models: OpenAiModel[];
+  catalog?: ModelCatalogResponse;
+  multimodalStatus?: MultimodalRuntimeStatus;
+  agentRuntime?: AgentRuntimeStatus;
+  agentTools?: AgentToolMapResponse;
+  onCopyText: (text: string, successMessage?: string) => Promise<void>;
+}) {
+  const rows = buildCapabilityRows({
+    runtimeStatus,
+    models,
+    catalog,
+    multimodalStatus,
+    agentRuntime,
+    agentTools
+  });
+  const groups = Array.from(new Set(rows.map((row) => row.group)));
+
+  return (
+    <Space direction="vertical" size={16} className="drawer-stack">
+      <Alert
+        type="info"
+        showIcon
+        message="Tomur 本地能力地图"
+        description="这里聚合公开后端能力、当前可用状态和 Web 入口成熟度；产生副作用的动作仍需要显式确认。"
+      />
+
+      <Descriptions column={1} size="small" bordered>
+        <Descriptions.Item label="Visible models">{models.length}</Descriptions.Item>
+        <Descriptions.Item label="Catalog packages">{catalog?.packages.length ?? "-"}</Descriptions.Item>
+        <Descriptions.Item label="Multimodal">{multimodalStatus?.status ?? "-"}</Descriptions.Item>
+        <Descriptions.Item label="Agent tools">{agentTools?.tools.length ?? "-"}</Descriptions.Item>
+        <Descriptions.Item label="Native bundle">{runtimeStatus?.native_bundle.status ?? "-"}</Descriptions.Item>
+      </Descriptions>
+
+      <Collapse
+        size="small"
+        defaultActiveKey={groups.slice(0, 2)}
+        items={groups.map((group) => ({
+          key: group,
+          label: group,
+          children: (
+            <List
+              size="small"
+              dataSource={rows.filter((row) => row.group === group)}
+              renderItem={(row) => (
+                <List.Item
+                  actions={[
+                    <Button
+                      key={`${row.route}-copy`}
+                      type="text"
+                      size="small"
+                      onClick={() => void onCopyText(row.route, `已复制 ${row.title} 路由`)}
+                    >
+                      复制
+                    </Button>
+                  ]}
+                >
+                  <List.Item.Meta
+                    title={
+                      <Space wrap>
+                        <Tag color={tagColor(row.status)}>{row.status}</Tag>
+                        <span>{row.title}</span>
+                        <Tag>{row.ui}</Tag>
+                      </Space>
+                    }
+                    description={`${row.route} / ${row.message}`}
+                  />
+                </List.Item>
+              )}
+            />
+          )
+        }))}
+      />
+    </Space>
+  );
+}
+
+interface CapabilityRow {
+  group: string;
+  title: string;
+  route: string;
+  status: string;
+  ui: string;
+  message: string;
+}
+
+function buildCapabilityRows({
+  runtimeStatus,
+  models,
+  catalog,
+  multimodalStatus,
+  agentRuntime,
+  agentTools
+}: {
+  runtimeStatus?: RuntimeStatusResponse;
+  models: OpenAiModel[];
+  catalog?: ModelCatalogResponse;
+  multimodalStatus?: MultimodalRuntimeStatus;
+  agentRuntime?: AgentRuntimeStatus;
+  agentTools?: AgentToolMapResponse;
+}): CapabilityRow[] {
+  const chatModels = models.filter(isChatModel);
+  const embeddingModels = models.filter((model) =>
+    model.capabilities?.some((capability) => capability === "embeddings" || capability === "embedding")
+  );
+  const generationReady = chatModels.length > 0 ? "ok" : "not_configured";
+  const nativeStatus = runtimeStatus?.native_bundle.status ?? "checking";
+  const conversationStatus = runtimeStatus?.database.status === "ok" ? "ok" : runtimeStatus?.database.status ?? "checking";
+  const multimodal = (keywords: string[]) => findMultimodalBackend(multimodalStatus, keywords);
+  const agentTool = (name: string) => agentTools?.tools.find((tool) => tool.name === name);
+
+  return [
+    {
+      group: "Core",
+      title: "Health",
+      route: "GET /health",
+      status: runtimeStatus ? "ok" : "checking",
+      ui: "status",
+      message: "本地服务健康检查。"
+    },
+    {
+      group: "Core",
+      title: "Version",
+      route: "GET /api/version",
+      status: runtimeStatus ? "ok" : "checking",
+      ui: "status",
+      message: "工作台启动时读取版本。"
+    },
+    {
+      group: "Runtime",
+      title: "Runtime diagnostics",
+      route: "GET /api/runtime/status",
+      status: runtimeStatus?.status ?? "checking",
+      ui: "drawer",
+      message: runtimeStatus?.runtime.message ?? "读取本地 runtime、路径、数据库、proxy、端口和硬件状态。"
+    },
+    {
+      group: "Runtime",
+      title: "Native bundle prepare",
+      route: "POST /api/runtime/native/prepare",
+      status: nativeStatus,
+      ui: "action",
+      message: runtimeStatus?.native_bundle.message ?? "可从 Runtime 设置中执行 prepare。"
+    },
+    {
+      group: "Runtime",
+      title: "Native library resolve/load",
+      route: "GET/POST /api/runtime/native/{componentId}/{libraryName}",
+      status: nativeStatus,
+      ui: "api",
+      message: "当前 UI 展示 component 状态；逐库 resolve/load 仍以 API 为主。"
+    },
+    {
+      group: "Models",
+      title: "Visible models",
+      route: "GET /v1/models",
+      status: models.length > 0 ? "ok" : "not_configured",
+      ui: "settings",
+      message: `${models.length} 个本地可见模型。`
+    },
+    {
+      group: "Models",
+      title: "Catalog",
+      route: "GET /api/models/catalog",
+      status: catalog ? "ok" : "checking",
+      ui: "settings",
+      message: `${catalog?.packages.length ?? 0} 个 catalog 包；下载动作仍通过 CLI。`
+    },
+    {
+      group: "Conversations",
+      title: "Conversation history",
+      route: "GET/POST /api/conversations",
+      status: conversationStatus,
+      ui: "chat",
+      message: "会话列表、详情、删除和文本历史同步已接入。"
+    },
+    {
+      group: "Conversations",
+      title: "Multimodal turn",
+      route: "POST /api/conversations/{conversationId}/turns",
+      status: generationReady,
+      ui: "chat",
+      message: "附件、朗读和会话诊断通过该入口聚合。"
+    },
+    {
+      group: "Conversations",
+      title: "Voice turn",
+      route: "POST /api/conversations/{conversationId}/voice-turns",
+      status: multimodal(["asr"])?.status ?? "checking",
+      ui: "chat",
+      message: "按钮录音会转为 PCM WAV 并走语音回合服务。"
+    },
+    {
+      group: "Conversations",
+      title: "Messages / artifacts / diagnostics",
+      route: "POST /api/conversations/{conversationId}/messages, POST /api/conversations/{conversationId}/artifacts, POST /api/conversations/{conversationId}/diagnostics",
+      status: conversationStatus,
+      ui: "chat",
+      message: "消息同步、产物登记和诊断记录由会话服务管理。"
+    },
+    {
+      group: "Conversations",
+      title: "Artifact content",
+      route: "GET /api/conversations/{conversationId}/artifacts/{artifactId}/content",
+      status: conversationStatus,
+      ui: "artifact",
+      message: "音频播放、图片预览和产物打开入口复用该内容 API。"
+    },
+    {
+      group: "OpenAI",
+      title: "Chat completions",
+      route: "POST /v1/chat/completions",
+      status: generationReady,
+      ui: "chat",
+      message: `${chatModels.length} 个 Chat 模型可用于文本 streaming。`
+    },
+    {
+      group: "OpenAI",
+      title: "Completions",
+      route: "POST /v1/completions",
+      status: generationReady,
+      ui: "api",
+      message: "后端已接入；Web 当前优先使用 Chat 与 Conversations。"
+    },
+    {
+      group: "OpenAI",
+      title: "Embeddings",
+      route: "POST /v1/embeddings",
+      status: embeddingModels.length > 0 ? "ok" : "not_configured",
+      ui: "api",
+      message: `${embeddingModels.length} 个 embedding 模型可见；文件检索 UI 后续补齐。`
+    },
+    {
+      group: "OpenAI",
+      title: "Image generation",
+      route: "POST /v1/images/generations",
+      status: multimodal(["image", "stable-diffusion"])?.status ?? "not_configured",
+      ui: "artifact",
+      message: "后端已接入；Web 先通过会话产物展示，独立生成面板后续补齐。"
+    },
+    {
+      group: "OpenAI",
+      title: "Audio transcription",
+      route: "POST /v1/audio/transcriptions",
+      status: multimodal(["asr", "whisper"])?.status ?? "not_configured",
+      ui: "chat",
+      message: "语音回合已复用 ASR；独立转写面板后续补齐。"
+    },
+    {
+      group: "OpenAI",
+      title: "Audio speech",
+      route: "POST /v1/audio/speech",
+      status: multimodal(["tts", "audio-output"])?.status ?? "not_configured",
+      ui: "chat",
+      message: "回复朗读和语音回合 TTS 已接入。"
+    },
+    {
+      group: "Multimodal",
+      title: "Vision analyze",
+      route: "POST /api/vision/analyze",
+      status: multimodal(["vision", "vlm"])?.status ?? "not_configured",
+      ui: "chat",
+      message: "图片附件会进入会话编排；独立 Vision 面板后续补齐。"
+    },
+    {
+      group: "Multimodal",
+      title: "OCR analyze",
+      route: "POST /api/ocr/analyze",
+      status: multimodal(["ocr"])?.status ?? "not_configured",
+      ui: "chat",
+      message: "图片或文件相关诊断会回填到 Chat。"
+    },
+    {
+      group: "Ollama",
+      title: "Tags",
+      route: "GET /api/tags",
+      status: models.length > 0 ? "ok" : "not_configured",
+      ui: "api",
+      message: "Ollama 兼容模型列表。"
+    },
+    {
+      group: "Ollama",
+      title: "Generate / Chat / Show",
+      route: "POST /api/generate, POST /api/chat, POST /api/show",
+      status: generationReady,
+      ui: "api",
+      message: "后端兼容接口已接入；Web 当前默认走 OpenAI/Conversations。"
+    },
+    {
+      group: "Agents",
+      title: "Agent runtime",
+      route: "GET /api/agents/runtime",
+      status: agentRuntime?.status ?? "checking",
+      ui: "settings",
+      message: agentRuntime?.orchestration.message ?? "Agent runtime 状态。"
+    },
+    {
+      group: "Agents",
+      title: "Agent chat",
+      route: "POST /api/agents/chat",
+      status: agentRuntime?.chat_client.status ?? agentRuntime?.status ?? "checking",
+      ui: "planned",
+      message: "后端已接入 Agent Framework chat；Web 受控 Agent 对话入口后续补齐。"
+    },
+    {
+      group: "Agents",
+      title: "Read-only workflow",
+      route: "POST /api/agents/workflows/read-only",
+      status: agentRuntime?.orchestration.status ?? agentRuntime?.status ?? "checking",
+      ui: "planned",
+      message: "后端已接入受控只读 workflow；Web 调用入口后续补齐。"
+    },
+    {
+      group: "Agents",
+      title: "Tool map",
+      route: "GET /api/agents/tools",
+      status: agentTools?.status ?? "checking",
+      ui: "settings",
+      message: `${agentTools?.tools.length ?? 0} 个工具；只读工具 Web 调用入口后续补齐。`
+    },
+    {
+      group: "Agents",
+      title: "Tool bindings",
+      route: "GET /api/agents/tool-bindings",
+      status: agentRuntime?.agent_framework.status ?? agentRuntime?.status ?? "checking",
+      ui: "settings",
+      message: "只读 AITool 与受控声明工具已在 Agents 分组展示。"
+    },
+    {
+      group: "Agents",
+      title: "Read-only diagnostics tools",
+      route: "POST /api/agents/tools/invoke",
+      status: agentTool("runtime.diagnose")?.status ?? agentRuntime?.status ?? "checking",
+      ui: "action",
+      message: "runtime.diagnose、tools.inspect 与 files.search 已提供只读 Web 调用。"
+    },
+    {
+      group: "Agents",
+      title: "Events and telemetry",
+      route: "GET /api/agents/events, GET /api/agents/telemetry",
+      status: agentRuntime ? "ok" : "checking",
+      ui: "settings",
+      message: "事件和 telemetry 边界已聚合到 Agents 分组。"
+    }
+  ];
+}
+
+function findMultimodalBackend(
+  multimodalStatus: MultimodalRuntimeStatus | undefined,
+  keywords: string[]
+) {
+  const normalized = keywords.map((keyword) => keyword.toLowerCase());
+  return multimodalStatus?.backends.find((backend) => {
+    const value = [
+      backend.id,
+      backend.display_name,
+      backend.capability,
+      backend.native_component_id,
+      backend.model_requirement
+    ].join(" ").toLowerCase();
+    return normalized.some((keyword) => value.includes(keyword));
+  });
+}
+
+function formatJsonPreview(value: unknown) {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
 function ActionBlock({
   title,
   description,
@@ -2265,11 +3251,43 @@ function MessageFooter({
 }) {
   const diagnostics = message.diagnostics ?? [];
   const artifacts = message.artifacts ?? [];
+  const previewArtifacts = artifacts.filter((artifact) =>
+    artifact.media_type?.startsWith("image/") ||
+    artifact.media_type?.startsWith("text/") ||
+    artifact.type === "image" ||
+    artifact.type === "file"
+  );
 
   return (
     <div className="message-footer">
       {message.audioUrl && (
         <audio className="message-audio" controls src={message.audioUrl} aria-label="助手语音回复" />
+      )}
+      {previewArtifacts.length > 0 && (
+        <div className="artifact-preview-grid">
+          {previewArtifacts.slice(0, 4).map((artifact) => {
+            const url = getConversationArtifactContentUrl(artifact.conversation_id, artifact.id);
+            const isImage =
+              artifact.media_type?.startsWith("image/") ||
+              artifact.type === "image";
+            return (
+              <a
+                key={artifact.id}
+                className={isImage ? "artifact-preview artifact-preview-image" : "artifact-preview"}
+                href={url}
+                target="_blank"
+                rel="noreferrer"
+                title={artifact.path ?? artifact.source ?? artifact.id}
+              >
+                {isImage ? (
+                  <img src={url} alt={artifact.path ?? artifact.type} loading="lazy" />
+                ) : (
+                  <span>{artifact.type}</span>
+                )}
+              </a>
+            );
+          })}
+        </div>
       )}
       {(diagnostics.length > 0 || artifacts.length > 0) && (
         <Space size={6} wrap className="message-meta">
@@ -2288,6 +3306,16 @@ function MessageFooter({
             <Tooltip key={artifact.id} title={artifact.path ?? artifact.source ?? artifact.id}>
               <Tag color={tagColor(artifact.status)}>{artifact.type}</Tag>
             </Tooltip>
+          ))}
+          {artifacts.slice(0, 3).map((artifact) => (
+            <Typography.Link
+              key={`${artifact.id}-open`}
+              href={getConversationArtifactContentUrl(artifact.conversation_id, artifact.id)}
+              target="_blank"
+              rel="noreferrer"
+            >
+              <Download size={12} /> 打开
+            </Typography.Link>
           ))}
         </Space>
       )}
@@ -2529,6 +3557,16 @@ function replaceTurnMessages(
   return replaced ? result : [...messages, ...replacements];
 }
 
+function findLastUserMessageIndex(messages: ChatMessage[]) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index].role === "user") {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
 function createArtifactMap(artifacts: ConversationArtifactRecord[]) {
   return new Map(artifacts.map((artifact) => [artifact.id, artifact]));
 }
@@ -2544,6 +3582,75 @@ function normalizeRole(role: string): ChatMessage["role"] {
 function summarizeDiagnostics(diagnostics: ConversationDiagnosticRecord[]) {
   const diagnostic = diagnostics.find((item) => item.status === "error") ?? diagnostics.at(0);
   return diagnostic?.message ?? "";
+}
+
+function resolvePromptText(
+  key: string,
+  context: {
+    runtimeStatus?: RuntimeStatusResponse;
+    models: OpenAiModel[];
+    installedModels?: InstalledModelsResponse;
+    catalog?: ModelCatalogResponse;
+    multimodalStatus?: MultimodalRuntimeStatus;
+    agentRuntime?: AgentRuntimeStatus;
+    agentTools?: AgentToolMapResponse;
+  }
+) {
+  const snapshot = buildLocalContextSnapshot(context);
+  switch (key) {
+    case "runtime":
+      return `请根据下面的 Tomur 本地状态摘要，说明哪些能力已经可用，哪些还需要准备。\n\n${snapshot}`;
+    case "models":
+      return `请根据下面的 Tomur 本地模型和 catalog 摘要，列出当前可见模型，并推荐一个适合用于 Chat 的模型。\n\n${snapshot}`;
+    case "setup":
+      return `请根据下面的 Tomur 本地状态摘要，给我一个可以开始使用本地 Chat 和多模态能力的最小准备步骤。\n\n${snapshot}`;
+    default:
+      return undefined;
+  }
+}
+
+function buildLocalContextSnapshot({
+  runtimeStatus,
+  models,
+  installedModels,
+  catalog,
+  multimodalStatus,
+  agentRuntime,
+  agentTools
+}: {
+  runtimeStatus?: RuntimeStatusResponse;
+  models: OpenAiModel[];
+  installedModels?: InstalledModelsResponse;
+  catalog?: ModelCatalogResponse;
+  multimodalStatus?: MultimodalRuntimeStatus;
+  agentRuntime?: AgentRuntimeStatus;
+  agentTools?: AgentToolMapResponse;
+}) {
+  const visibleModels = installedModels?.visible_models ?? [];
+  const diagnostics = runtimeStatus?.diagnostics
+    .filter((item) => item.severity !== "info" || item.status !== "ok")
+    .slice(0, 5)
+    .map((item) => `${item.name}: ${item.status} - ${item.message}`) ?? [];
+  const multimodal = multimodalStatus?.backends
+    .map((backend) => `${backend.capability}: ${backend.status} - ${backend.message}`)
+    .slice(0, 8) ?? [];
+  const tools = agentTools?.tools
+    .map((tool) => `${tool.name}: ${tool.status}${tool.requires_confirmation ? " / confirm" : ""} - ${tool.message}`)
+    .slice(0, 10) ?? [];
+
+  return [
+    "Tomur 本地状态摘要：",
+    `- Runtime: ${runtimeStatus?.status ?? "unknown"} / ${runtimeStatus?.runtime.message ?? "未加载"}`,
+    `- Native bundle: ${runtimeStatus?.native_bundle.status ?? "unknown"} / ${runtimeStatus?.native_bundle.message ?? "未加载"}`,
+    `- Chat models: ${models.filter(isChatModel).map((model) => model.id).join(", ") || "none"}`,
+    `- Visible models: ${visibleModels.map((model) => model.id).join(", ") || "none"}`,
+    `- Installed packages: ${installedModels?.packages.length ?? 0}`,
+    `- Catalog packages: ${catalog?.packages.length ?? 0}`,
+    `- Agent runtime: ${agentRuntime?.status ?? "unknown"} / ${agentRuntime?.orchestration.message ?? "未加载"}`,
+    diagnostics.length ? `- Diagnostics:\n  - ${diagnostics.join("\n  - ")}` : "- Diagnostics: none",
+    multimodal.length ? `- Multimodal:\n  - ${multimodal.join("\n  - ")}` : "- Multimodal: none",
+    tools.length ? `- Agent tools:\n  - ${tools.join("\n  - ")}` : "- Agent tools: none"
+  ].join("\n");
 }
 
 function resolveSettingsSectionFromDiagnostic(

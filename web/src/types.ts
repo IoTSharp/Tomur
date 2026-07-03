@@ -580,3 +580,182 @@ export interface MultimodalBackendStatus {
   message: string;
   actions: string[];
 }
+
+export interface AgentRuntimeStatus {
+  status: string;
+  checked_at: string;
+  chat_client: AgentChatClientStatus;
+  agent_framework: AgentFrameworkStatus;
+  orchestration: AgentOrchestrationStatus;
+  tools: AgentToolStatus[];
+  notes: string[];
+}
+
+export interface AgentChatClientStatus {
+  status: string;
+  provider: string;
+  default_model?: string | null;
+  message: string;
+}
+
+export interface AgentFrameworkStatus {
+  status: string;
+  runtime: string;
+  message: string;
+  actions: string[];
+}
+
+export interface AgentOrchestrationStatus {
+  status: string;
+  agent_type: string;
+  endpoint: string;
+  message: string;
+}
+
+export interface AgentToolStatus {
+  name: string;
+  display_name: string;
+  status: string;
+  backend: string;
+  model?: string | null;
+  route?: string | null;
+  input_schema: string;
+  side_effect: string;
+  callable: boolean;
+  requires_confirmation: boolean;
+  invocation_modes: string[];
+  message: string;
+  actions: string[];
+}
+
+export interface AgentToolMapResponse {
+  status: string;
+  checked_at: string;
+  tools: AgentToolDescriptor[];
+}
+
+export interface AgentToolDescriptor {
+  name: string;
+  display_name: string;
+  status: string;
+  backend: string;
+  model?: string | null;
+  route?: string | null;
+  input_schema: string;
+  side_effect: string;
+  callable: boolean;
+  requires_confirmation: boolean;
+  invocation_modes: string[];
+  message: string;
+  actions: string[];
+}
+
+export interface AgentFrameworkToolBindingResponse {
+  status: string;
+  checked_at: string;
+  tool_type: string;
+  safe_tools: AgentFrameworkToolBinding[];
+  declaration_tools: AgentFrameworkToolBinding[];
+  notes: string[];
+}
+
+export interface AgentFrameworkToolBinding {
+  name: string;
+  description: string;
+  implementation: string;
+  status: string;
+  route?: string | null;
+  input_schema: string;
+  side_effect: string;
+  callable: boolean;
+  requires_confirmation: boolean;
+  invocation_modes: string[];
+}
+
+export interface AgentEventLogRecentResponse {
+  status: string;
+  path: string;
+  count: number;
+  events: AgentEventLogEntry[];
+}
+
+export interface AgentEventLogEntry {
+  id: string;
+  recorded_at: string;
+  event: string;
+  status: string;
+  mode?: string | null;
+  tool?: string | null;
+  runtime?: string | null;
+  model?: string | null;
+  elapsed_ms: number;
+  blocked: boolean;
+  side_effect?: string | null;
+  requires_confirmation?: boolean | null;
+  tool_rounds?: number | null;
+  step_count?: number | null;
+  diagnostics: string[];
+  actions: string[];
+}
+
+export interface AgentTelemetryStatus {
+  status: string;
+  checked_at: string;
+  source_name: string;
+  instrumentation: string;
+  exporter: AgentTelemetryExporterStatus;
+  local_event_log?: string | null;
+  spans: AgentTelemetrySpanDescriptor[];
+  attributes: AgentTelemetryAttributeDescriptor[];
+  notes: string[];
+}
+
+export interface AgentTelemetryExporterStatus {
+  status: string;
+  exporter: string;
+  endpoint?: string | null;
+  headers_configured: boolean;
+  message: string;
+  actions: string[];
+}
+
+export interface AgentTelemetrySpanDescriptor {
+  name: string;
+  event: string;
+  description: string;
+  attributes: string[];
+}
+
+export interface AgentTelemetryAttributeDescriptor {
+  name: string;
+  type: string;
+  cardinality: string;
+  description: string;
+}
+
+export interface AgentToolInvokeRequest {
+  tool?: string | null;
+  arguments?: Record<string, unknown> | null;
+  mode?: string | null;
+  confirm?: boolean | null;
+}
+
+export interface AgentToolInvokeResponse {
+  status: string;
+  tool: string;
+  tool_type: string;
+  implementation: string;
+  input_schema: string;
+  elapsed_ms: number;
+  result?: unknown;
+  diagnostics: string[];
+  audit: AgentToolInvokeAudit;
+}
+
+export interface AgentToolInvokeAudit {
+  invoked_at: string;
+  mode: string;
+  side_effect: string;
+  requires_confirmation: boolean;
+  actions: string[];
+}

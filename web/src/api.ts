@@ -1,5 +1,12 @@
 import { XStream } from "@ant-design/x-sdk";
 import type {
+  AgentEventLogRecentResponse,
+  AgentFrameworkToolBindingResponse,
+  AgentRuntimeStatus,
+  AgentTelemetryStatus,
+  AgentToolInvokeRequest,
+  AgentToolInvokeResponse,
+  AgentToolMapResponse,
   ChatMessage,
   ConversationAppendMessageRequest,
   ConversationAppendMessageResponse,
@@ -48,6 +55,46 @@ export async function getModelCatalog(signal?: AbortSignal): Promise<ModelCatalo
 
 export async function getMultimodalStatus(signal?: AbortSignal): Promise<MultimodalRuntimeStatus> {
   return getJson<MultimodalRuntimeStatus>("/api/runtime/multimodal", signal);
+}
+
+export async function getAgentRuntime(signal?: AbortSignal): Promise<AgentRuntimeStatus> {
+  return getJson<AgentRuntimeStatus>("/api/agents/runtime", signal);
+}
+
+export async function getAgentTools(signal?: AbortSignal): Promise<AgentToolMapResponse> {
+  return getJson<AgentToolMapResponse>("/api/agents/tools", signal);
+}
+
+export async function getAgentToolBindings(
+  signal?: AbortSignal
+): Promise<AgentFrameworkToolBindingResponse> {
+  return getJson<AgentFrameworkToolBindingResponse>("/api/agents/tool-bindings", signal);
+}
+
+export async function getAgentEvents(signal?: AbortSignal): Promise<AgentEventLogRecentResponse> {
+  return getJson<AgentEventLogRecentResponse>("/api/agents/events?limit=20", signal);
+}
+
+export async function getAgentTelemetry(signal?: AbortSignal): Promise<AgentTelemetryStatus> {
+  return getJson<AgentTelemetryStatus>("/api/agents/telemetry", signal);
+}
+
+export async function invokeAgentTool(
+  request: AgentToolInvokeRequest,
+  signal?: AbortSignal
+): Promise<AgentToolInvokeResponse> {
+  const response = await fetch("/api/agents/tools/invoke", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(request),
+    signal
+  });
+
+  if (!response.ok && response.status !== 409) {
+    throw await createApiError(response);
+  }
+
+  return (await response.json()) as AgentToolInvokeResponse;
 }
 
 export async function prepareNativeRuntime(signal?: AbortSignal): Promise<NativeBundlePrepareResult> {
