@@ -1,0 +1,4 @@
+interface:
+  display_name: "Tomur Docs Governance"
+  short_description: "Keep Tomur docs and roadmap aligned"
+  default_prompt: "Use $tomur-doc-roadmap-governance to update Tomur README, ROADMAP, and CHANGELOG consistently."

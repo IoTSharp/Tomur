@@ -1,0 +1,4 @@
+interface:
+  display_name: "Tomur Release Smoke"
+  short_description: "Produce Tomur release and smoke evidence"
+  default_prompt: "Use $tomur-release-smoke-evidence to run or document a Tomur release smoke pass."

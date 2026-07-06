@@ -1,0 +1,4 @@
+interface:
+  display_name: "Tomur Native Runtime"
+  short_description: "Wire Tomur native backend diagnostics"
+  default_prompt: "Use $tomur-native-runtime-backend to add or audit a Tomur native backend."
