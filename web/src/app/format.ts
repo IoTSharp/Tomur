@@ -56,6 +56,7 @@ export function tagColor(status: string) {
     status === "ready" ||
     status === "installed" ||
     status === "available" ||
+    status === "accelerated" ||
     status === "prepared" ||
     status === "unchanged"
   ) {

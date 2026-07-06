@@ -28,6 +28,8 @@ public static class ApiRouteExtensions
 {
     public static void MapApiRoutes(this WebApplication app)
     {
+        app.Use(SuppressRequestAbortExceptions);
+
         app.MapHealthChecks("/health", HealthEndpoint.Options);
 
         app.MapGet("/api/version", static async (HttpContext context, VersionProvider versionProvider) =>
@@ -3384,6 +3386,18 @@ public static class ApiRouteExtensions
 
     private static bool IsNativeRuntimeException(Exception exception)
         => exception is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException;
+
+    private static async Task SuppressRequestAbortExceptions(HttpContext context, Func<Task> next)
+    {
+        try
+        {
+            await next();
+        }
+        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+        {
+            // The client has already gone away, so there is no response left to write.
+        }
+    }
 
     private static bool IsInvalidRequestInferenceException(InferenceException exception)
         => exception.Code is

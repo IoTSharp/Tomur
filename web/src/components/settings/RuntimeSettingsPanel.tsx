@@ -1,12 +1,13 @@
 import type { ReactNode } from "react";
-import { Alert, Button, Card, List, Space, Tag, Typography } from "antd";
+import { Alert, Button, Card, Descriptions, List, Space, Tag, Typography } from "antd";
 import { Copy, RefreshCcw, Trash2, Wrench } from "lucide-react";
 import type {
+  AccelerationPlan,
   DiagnosticItem,
   NativeBundlePrepareResult,
   RuntimeStatusResponse
 } from "../../types";
-import { tagColor } from "../../app/format";
+import { formatBytes, tagColor } from "../../app/format";
 import type { CopyTextHandler } from "../../app/viewTypes";
 
 export function RuntimeSettingsPanel({
@@ -117,6 +118,14 @@ export function RuntimeSettingsPanel({
 
       <Card
         size="small"
+        title="显卡与加速"
+        extra={<Tag color={tagColor(runtimeStatus?.acceleration.status ?? "checking")}>{runtimeStatus?.acceleration.status ?? "checking"}</Tag>}
+      >
+        <AccelerationStatus acceleration={runtimeStatus?.acceleration} />
+      </Card>
+
+      <Card
+        size="small"
         title="Session"
         extra={<Tag color={tagColor(runtimeStatus?.runtime.status ?? "checking")}>{runtimeStatus?.runtime.status ?? "checking"}</Tag>}
       >
@@ -212,6 +221,77 @@ export function RuntimeSettingsPanel({
                 </Space>
               }
               description={item.message}
+            />
+          </List.Item>
+        )}
+      />
+    </Space>
+  );
+}
+
+function AccelerationStatus({ acceleration }: { acceleration?: AccelerationPlan }) {
+  const selected = acceleration?.selected_accelerator;
+  const devices = acceleration?.devices ?? [];
+  const backends = acceleration?.backends ?? [];
+
+  return (
+    <Space direction="vertical" size={12} className="drawer-stack">
+      <Descriptions column={1} size="small" bordered>
+        <Descriptions.Item label="当前后端">
+          {acceleration?.effective_backend ?? "-"}
+        </Descriptions.Item>
+        <Descriptions.Item label="当前设备">
+          {selected ? `${selected.kind} / ${selected.name}` : "CPU"}
+        </Descriptions.Item>
+        <Descriptions.Item label="显存">
+          {selected ? formatBytes(selected.memory_bytes) : "-"}
+        </Descriptions.Item>
+        <Descriptions.Item label="GPU layers">
+          {acceleration?.effective_gpu_layers ?? 0}
+        </Descriptions.Item>
+        <Descriptions.Item label="选择键">
+          {acceleration?.selected_accelerator_key ?? "-"}
+        </Descriptions.Item>
+      </Descriptions>
+
+      <List
+        size="small"
+        header={`探测到的设备 ${devices.length}`}
+        dataSource={devices}
+        locale={{ emptyText: "当前未探测到可用于 llama.cpp 的 GPU 或 NPU 设备" }}
+        renderItem={(device) => (
+          <List.Item>
+            <List.Item.Meta
+              title={
+                <Space wrap>
+                  <Tag color={device.selection_key === acceleration?.selected_accelerator_key ? "green" : "default"}>
+                    {device.selection_key === acceleration?.selected_accelerator_key ? "selected" : device.backend}
+                  </Tag>
+                  <Typography.Text>{device.name}</Typography.Text>
+                  {device.integrated && <Tag>integrated</Tag>}
+                </Space>
+              }
+              description={`${device.kind} / ${device.backend} / ${formatBytes(device.memory_bytes)} / ${device.selection_key}`}
+            />
+          </List.Item>
+        )}
+      />
+
+      <List
+        size="small"
+        header="加速后端"
+        dataSource={backends}
+        locale={{ emptyText: "暂无加速后端状态" }}
+        renderItem={(backend) => (
+          <List.Item>
+            <List.Item.Meta
+              title={
+                <Space wrap>
+                  <Tag color={tagColor(backend.status)}>{backend.status}</Tag>
+                  {backend.display_name}
+                </Space>
+              }
+              description={backend.message}
             />
           </List.Item>
         )}
