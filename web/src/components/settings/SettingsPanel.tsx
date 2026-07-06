@@ -143,6 +143,9 @@ export function SettingsPanel({
             <Descriptions.Item label="Default backend">
               {runtimeStatus?.configuration.configuration.runtime.default_backend ?? "-"}
             </Descriptions.Item>
+            <Descriptions.Item label="Accelerator preference">
+              {runtimeStatus?.configuration.configuration.runtime.accelerator?.preference ?? "auto"}
+            </Descriptions.Item>
             <Descriptions.Item label="Data directory">
               {runtimeStatus?.paths.data_directory ?? "-"}
             </Descriptions.Item>
@@ -623,4 +626,3 @@ export function SettingsPanel({
     </Space>
   );
 }
-

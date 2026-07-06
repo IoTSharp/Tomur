@@ -11,6 +11,11 @@ public sealed record AccelerationPlan(
     [property: JsonPropertyName("recommended_gpu_layers")] int RecommendedGpuLayers,
     [property: JsonPropertyName("selected_accelerator_key")] string? SelectedAcceleratorKey,
     [property: JsonPropertyName("selected_accelerator")] AcceleratorDevice? SelectedAccelerator,
+    [property: JsonPropertyName("configured_accelerator_key")] string? ConfiguredAcceleratorKey,
+    [property: JsonPropertyName("openvino_device")] string? OpenVinoDevice,
+    [property: JsonPropertyName("allow_npu")] bool AllowNpu,
+    [property: JsonPropertyName("npu_prefill_chunk")] int? NpuPrefillChunk,
+    [property: JsonPropertyName("fallback_reason")] string? FallbackReason,
     [property: JsonPropertyName("devices")] IReadOnlyList<AcceleratorDevice> Devices,
     [property: JsonPropertyName("backends")] IReadOnlyList<AccelerationBackendStatus> Backends,
     [property: JsonPropertyName("actions")] IReadOnlyList<string> Actions);

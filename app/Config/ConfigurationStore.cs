@@ -31,28 +31,26 @@ public sealed class ConfigurationStore
             }
 
             var configuration = ReadConfiguration();
-            if (configuration.SchemaVersion == Defaults.ConfigurationSchemaVersion)
+            var normalized = NormalizeConfiguration(configuration);
+            if (configuration.SchemaVersion == Defaults.ConfigurationSchemaVersion &&
+                configuration == normalized)
             {
                 return new ConfigurationState(
                     "ok",
                     paths.ConfigPath,
                     "Configuration file is readable.",
                     null,
-                    configuration);
+                    normalized);
             }
 
-            var upgraded = configuration with
-            {
-                SchemaVersion = Defaults.ConfigurationSchemaVersion
-            };
-            WriteConfiguration(upgraded);
+            WriteConfiguration(normalized);
 
             return new ConfigurationState(
                 "upgraded",
                 paths.ConfigPath,
                 "Configuration schema version was updated to the current version.",
                 null,
-                upgraded);
+                normalized);
         }
         catch (JsonException)
         {
@@ -138,6 +136,15 @@ public sealed class ConfigurationStore
 
         ValidateConfiguration(configuration);
         return configuration;
+    }
+
+    private static LocalConfiguration NormalizeConfiguration(LocalConfiguration configuration)
+    {
+        return configuration with
+        {
+            SchemaVersion = Defaults.ConfigurationSchemaVersion,
+            Runtime = configuration.Runtime.Normalize()
+        };
     }
 
     private static void ValidateConfiguration(LocalConfiguration configuration)

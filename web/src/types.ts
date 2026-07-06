@@ -300,7 +300,17 @@ export interface LocalConfiguration {
   paths: PathConfiguration;
   runtime: {
     default_backend: string;
+    accelerator?: RuntimeAcceleratorConfiguration | null;
   };
+}
+
+export interface RuntimeAcceleratorConfiguration {
+  preference: string;
+  device_selection_key?: string | null;
+  gpu_layers?: number | null;
+  openvino_device?: string | null;
+  allow_npu: boolean;
+  npu_prefill_chunk?: number | null;
 }
 
 export interface DirectoryState {
@@ -419,6 +429,11 @@ export interface AccelerationPlan {
   recommended_gpu_layers: number;
   selected_accelerator_key?: string | null;
   selected_accelerator?: AcceleratorDevice | null;
+  configured_accelerator_key?: string | null;
+  openvino_device?: string | null;
+  allow_npu: boolean;
+  npu_prefill_chunk?: number | null;
+  fallback_reason?: string | null;
   devices: AcceleratorDevice[];
   backends: AccelerationBackendStatus[];
   actions: string[];
@@ -442,6 +457,7 @@ export interface AccelerationBackendStatus {
   status: string;
   path?: string | null;
   message: string;
+  actions: string[];
 }
 
 export interface DiagnosticItem {

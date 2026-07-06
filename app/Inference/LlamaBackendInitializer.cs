@@ -1,3 +1,4 @@
+using Tomur.Config;
 using Tomur.Native;
 
 namespace Tomur.Inference;
@@ -9,11 +10,16 @@ public sealed class LlamaBackendInitializer
 
     private readonly LlamaImportResolver importResolver;
     private readonly INativeLibraryResolver libraryResolver;
+    private readonly ConfigurationStore? configurationStore;
 
-    public LlamaBackendInitializer(LlamaImportResolver importResolver, INativeLibraryResolver libraryResolver)
+    public LlamaBackendInitializer(
+        LlamaImportResolver importResolver,
+        INativeLibraryResolver libraryResolver,
+        ConfigurationStore? configurationStore = null)
     {
         this.importResolver = importResolver;
         this.libraryResolver = libraryResolver;
+        this.configurationStore = configurationStore;
     }
 
     public void EnsureInitialized()
@@ -29,6 +35,7 @@ public sealed class LlamaBackendInitializer
 
             try
             {
+                ConfigureBackendEnvironment();
                 TryLoadDynamicBackends();
                 LlamaNativeMethods.BackendInit();
             }
@@ -47,6 +54,45 @@ public sealed class LlamaBackendInitializer
             backendInitialized = true;
         }
     }
+
+    private void ConfigureBackendEnvironment()
+    {
+        var configuration = configurationStore?.EnsureConfiguration().Configuration;
+        var accelerator = RuntimeAcceleratorConfiguration.Normalize(configuration?.Runtime?.Accelerator);
+        var openVinoDevice = ResolveOpenVinoDevice(accelerator);
+        if (!string.IsNullOrWhiteSpace(openVinoDevice))
+        {
+            Environment.SetEnvironmentVariable("GGML_OPENVINO_DEVICE", openVinoDevice);
+        }
+
+        if (accelerator.NpuPrefillChunk is { } npuPrefillChunk &&
+            IsOpenVinoNpuDevice(openVinoDevice))
+        {
+            Environment.SetEnvironmentVariable(
+                "GGML_OPENVINO_PREFILL_CHUNK_SIZE",
+                npuPrefillChunk.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+    }
+
+    private static string? ResolveOpenVinoDevice(RuntimeAcceleratorConfiguration accelerator)
+    {
+        if (!string.IsNullOrWhiteSpace(accelerator.OpenVinoDevice))
+        {
+            if (IsOpenVinoNpuDevice(accelerator.OpenVinoDevice) &&
+                !accelerator.AllowNpu)
+            {
+                return null;
+            }
+
+            return accelerator.OpenVinoDevice;
+        }
+
+        return accelerator.Preference == "openvino" ? "GPU" : null;
+    }
+
+    private static bool IsOpenVinoNpuDevice(string? value)
+        => !string.IsNullOrWhiteSpace(value) &&
+            value.Trim().StartsWith("NPU", StringComparison.OrdinalIgnoreCase);
 
     private void TryLoadDynamicBackends()
     {

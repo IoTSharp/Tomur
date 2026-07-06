@@ -171,6 +171,7 @@ namespace Tomur.Serialization;
 [JsonSerializable(typeof(ServerConfiguration))]
 [JsonSerializable(typeof(PathConfiguration))]
 [JsonSerializable(typeof(RuntimeConfiguration))]
+[JsonSerializable(typeof(RuntimeAcceleratorConfiguration))]
 [JsonSerializable(typeof(ConfigurationState))]
 [JsonSerializable(typeof(ServerOptions))]
 [JsonSerializable(typeof(RuntimeDiagnostic))]

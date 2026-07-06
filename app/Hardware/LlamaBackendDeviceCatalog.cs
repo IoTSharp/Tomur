@@ -203,7 +203,7 @@ internal static class LlamaBackendDeviceCatalog
         return $"{normalizedBackend}:index-{deviceIndex}";
     }
 
-    private static bool MatchesSelectionKey(LlamaBackendDeviceDescriptor device, string selectionKey)
+    internal static bool MatchesSelectionKey(LlamaBackendDeviceDescriptor device, string selectionKey)
     {
         var normalized = selectionKey.Trim();
         if (string.Equals(device.SelectionKey, normalized, StringComparison.OrdinalIgnoreCase))

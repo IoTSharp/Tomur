@@ -252,6 +252,11 @@ public sealed class RuntimeDiagnosticsProvider
             0,
             null,
             null,
+            null,
+            null,
+            false,
+            null,
+            cpuReady ? null : "The required CPU backend is missing.",
             [],
             backends,
             cpuReady
@@ -488,6 +493,11 @@ public sealed class RuntimeDiagnosticsProvider
         if (acceleration.SelectedAccelerator is not null)
         {
             return $"Selected {acceleration.SelectedAccelerator.Kind} accelerator '{acceleration.SelectedAccelerator.Name}' with {acceleration.EffectiveGpuLayers} GPU layers.";
+        }
+
+        if (!string.IsNullOrWhiteSpace(acceleration.FallbackReason))
+        {
+            return $"{acceleration.FallbackReason} Tomur will use CPU inference.";
         }
 
         return acceleration.Status == "cpu"

@@ -19,7 +19,7 @@ public sealed record LocalConfiguration(
                 paths.RuntimeDirectory,
                 paths.LogsDirectory,
                 paths.DatabasePath),
-            new RuntimeConfiguration("not_configured"));
+            RuntimeConfiguration.CreateDefault());
     }
 }
 
@@ -34,4 +34,103 @@ public sealed record PathConfiguration(
     [property: JsonPropertyName("database_path")] string DatabasePath);
 
 public sealed record RuntimeConfiguration(
-    [property: JsonPropertyName("default_backend")] string DefaultBackend);
+    [property: JsonPropertyName("default_backend")] string DefaultBackend,
+    [property: JsonPropertyName("accelerator")] RuntimeAcceleratorConfiguration Accelerator)
+{
+    public static RuntimeConfiguration CreateDefault()
+        => new("not_configured", RuntimeAcceleratorConfiguration.CreateDefault());
+
+    public RuntimeConfiguration Normalize()
+        => new(
+            string.IsNullOrWhiteSpace(DefaultBackend) ? "not_configured" : DefaultBackend.Trim(),
+            RuntimeAcceleratorConfiguration.Normalize(Accelerator));
+}
+
+public sealed record RuntimeAcceleratorConfiguration(
+    [property: JsonPropertyName("preference")] string Preference,
+    [property: JsonPropertyName("device_selection_key")] string? DeviceSelectionKey,
+    [property: JsonPropertyName("gpu_layers")] int? GpuLayers,
+    [property: JsonPropertyName("openvino_device")] string? OpenVinoDevice,
+    [property: JsonPropertyName("allow_npu")] bool AllowNpu,
+    [property: JsonPropertyName("npu_prefill_chunk")] int? NpuPrefillChunk)
+{
+    private static readonly string[] SupportedPreferences =
+    [
+        "auto",
+        "cpu",
+        "cuda",
+        "vulkan",
+        "sycl",
+        "openvino"
+    ];
+
+    public static RuntimeAcceleratorConfiguration CreateDefault()
+        => new("auto", null, null, null, false, null);
+
+    public static RuntimeAcceleratorConfiguration Normalize(RuntimeAcceleratorConfiguration? accelerator)
+    {
+        if (accelerator is null)
+        {
+            return CreateDefault();
+        }
+
+        var preference = NormalizePreference(accelerator.Preference);
+        return new RuntimeAcceleratorConfiguration(
+            preference,
+            NormalizeOptional(accelerator.DeviceSelectionKey),
+            NormalizeGpuLayers(accelerator.GpuLayers),
+            NormalizeOpenVinoDevice(accelerator.OpenVinoDevice),
+            accelerator.AllowNpu,
+            NormalizePrefillChunk(accelerator.NpuPrefillChunk));
+    }
+
+    private static string NormalizePreference(string? value)
+    {
+        var normalized = string.IsNullOrWhiteSpace(value)
+            ? "auto"
+            : value.Trim().ToLowerInvariant();
+
+        return SupportedPreferences.Contains(normalized, StringComparer.OrdinalIgnoreCase)
+            ? normalized
+            : "auto";
+    }
+
+    private static string? NormalizeOptional(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static int? NormalizeGpuLayers(int? value)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        return Math.Clamp(value.Value, 0, 999);
+    }
+
+    private static string? NormalizeOpenVinoDevice(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var normalized = value.Trim().ToUpperInvariant();
+        return normalized.All(static character =>
+            character is >= 'A' and <= 'Z' ||
+            character is >= '0' and <= '9' ||
+            character is '.' or '_' or '-')
+            ? normalized
+            : null;
+    }
+
+    private static int? NormalizePrefillChunk(int? value)
+    {
+        if (value is null || value.Value <= 0)
+        {
+            return null;
+        }
+
+        return Math.Clamp(value.Value, 1, 4096);
+    }
+}

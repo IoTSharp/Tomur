@@ -8,4 +8,5 @@ public sealed record AccelerationBackendStatus(
     [property: JsonPropertyName("library_name")] string LibraryName,
     [property: JsonPropertyName("status")] string Status,
     [property: JsonPropertyName("path")] string? Path,
-    [property: JsonPropertyName("message")] string Message);
+    [property: JsonPropertyName("message")] string Message,
+    [property: JsonPropertyName("actions")] IReadOnlyList<string> Actions);

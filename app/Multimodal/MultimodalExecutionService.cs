@@ -701,6 +701,11 @@ public sealed class MultimodalExecutionService
                 0,
                 null,
                 null,
+                null,
+                null,
+                false,
+                null,
+                "Acceleration service is not available in this execution context.",
                 [],
                 [],
                 ["Acceleration service is not available in this execution context; CPU runtime variant is used."]);

@@ -17,6 +17,71 @@
       "wrapper_path": "native/llama.native",
       "backend": "shared",
       "runtime_path": ".",
+      "variants": [
+        {
+          "id": "cuda13",
+          "display_name": "llama.cpp CUDA 13",
+          "backend": "cuda",
+          "runtime_path": ".",
+          "priority": 100,
+          "required_backends": [ "ggml-cuda" ],
+          "diagnostic": "CUDA is optional; CPU inference remains available when this backend is absent.",
+          "actions": [
+            "Run tomur native build --rid win-x64 --backend cuda13, then run tomur native prepare."
+          ]
+        },
+        {
+          "id": "sycl",
+          "display_name": "llama.cpp Intel SYCL",
+          "backend": "sycl",
+          "runtime_path": ".",
+          "priority": 90,
+          "required_backends": [ "ggml-sycl" ],
+          "diagnostic": "SYCL is the preferred Intel GPU backend when the Intel runtime and driver can enumerate a GPU device.",
+          "actions": [
+            "Run tomur native build --rid win-x64 --backend sycl, then run tomur native prepare.",
+            "Use tomur doctor or /api/runtime/status to inspect device enumeration and CPU fallback."
+          ]
+        },
+        {
+          "id": "openvino",
+          "display_name": "llama.cpp OpenVINO GPU/NPU",
+          "backend": "openvino",
+          "runtime_path": ".",
+          "priority": 80,
+          "required_backends": [ "ggml-openvino" ],
+          "diagnostic": "OpenVINO is used for Intel GPU/NPU experiments; NPU selection is opt-in through runtime.accelerator.allow_npu.",
+          "actions": [
+            "Run tomur native build --rid win-x64 --backend openvino, then run tomur native prepare.",
+            "Set runtime.accelerator.openvino_device to GPU, GPU.0 or NPU as needed."
+          ]
+        },
+        {
+          "id": "vulkan",
+          "display_name": "llama.cpp Vulkan",
+          "backend": "vulkan",
+          "runtime_path": ".",
+          "priority": 70,
+          "required_backends": [ "ggml-vulkan" ],
+          "diagnostic": "Vulkan is the generic GPU fallback when CUDA, SYCL or OpenVINO are not selected.",
+          "actions": [
+            "Run tomur native build --rid win-x64 --backend vulkan, then run tomur native prepare.",
+            "Install a GPU driver with Vulkan runtime support if devices are not enumerated."
+          ]
+        },
+        {
+          "id": "cpu",
+          "display_name": "llama.cpp CPU",
+          "backend": "cpu",
+          "runtime_path": ".",
+          "priority": 10,
+          "required_backends": [],
+          "diagnostic": "CPU is the required fallback backend and remains available when optional accelerator libraries are missing.",
+          "actions": [
+            "Run tomur native prepare to repair the managed runtime bundle if the CPU backend is missing."
+          ]
+        }
+      ],
       "publisher": true,
       "libraries": [
         { "name": "llama", "required": true },

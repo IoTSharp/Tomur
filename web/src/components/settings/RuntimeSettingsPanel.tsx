@@ -240,6 +240,9 @@ function AccelerationStatus({ acceleration }: { acceleration?: AccelerationPlan 
         <Descriptions.Item label="当前后端">
           {acceleration?.effective_backend ?? "-"}
         </Descriptions.Item>
+        <Descriptions.Item label="偏好">
+          {acceleration?.preferred_backend ?? "auto"}
+        </Descriptions.Item>
         <Descriptions.Item label="当前设备">
           {selected ? `${selected.kind} / ${selected.name}` : "CPU"}
         </Descriptions.Item>
@@ -249,8 +252,23 @@ function AccelerationStatus({ acceleration }: { acceleration?: AccelerationPlan 
         <Descriptions.Item label="GPU layers">
           {acceleration?.effective_gpu_layers ?? 0}
         </Descriptions.Item>
+        <Descriptions.Item label="OpenVINO device">
+          {acceleration?.openvino_device ?? "-"}
+        </Descriptions.Item>
+        <Descriptions.Item label="NPU opt-in">
+          {acceleration?.allow_npu ? "enabled" : "disabled"}
+        </Descriptions.Item>
+        <Descriptions.Item label="NPU prefill">
+          {acceleration?.npu_prefill_chunk ?? "-"}
+        </Descriptions.Item>
         <Descriptions.Item label="选择键">
           {acceleration?.selected_accelerator_key ?? "-"}
+        </Descriptions.Item>
+        <Descriptions.Item label="配置选择键">
+          {acceleration?.configured_accelerator_key ?? "-"}
+        </Descriptions.Item>
+        <Descriptions.Item label="Fallback">
+          {acceleration?.fallback_reason ?? "-"}
         </Descriptions.Item>
       </Descriptions>
 
@@ -291,7 +309,11 @@ function AccelerationStatus({ acceleration }: { acceleration?: AccelerationPlan 
                   {backend.display_name}
                 </Space>
               }
-              description={backend.message}
+              description={
+                backend.actions?.length > 0
+                  ? `${backend.library_name} / ${backend.message} / ${backend.actions[0]}`
+                  : `${backend.library_name} / ${backend.message}`
+              }
             />
           </List.Item>
         )}

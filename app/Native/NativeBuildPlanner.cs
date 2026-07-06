@@ -21,11 +21,15 @@ public static class NativeBuildPlanner
         }
 
         var presetRid = ToPresetRid(normalizedRid);
-        var steps = normalizedBackend == "all"
-            ? CreateAllSteps(presetRid)
-            : BuildOrder
+        NativeBuildStep[] steps = normalizedBackend switch
+        {
+            "all" => CreateAllSteps(presetRid),
+            "intel" => CreateIntelSteps(presetRid),
+            "vulkan" or "openvino" or "sycl" => [CreateStep("llama", presetRid, normalizedBackend)],
+            _ => BuildOrder
                 .Select(component => CreateStep(component, presetRid, normalizedBackend))
-                .ToArray();
+                .ToArray()
+        };
 
         return new NativeBuildPlan(normalizedRid, normalizedBackend, clean, steps);
     }
@@ -41,6 +45,16 @@ public static class NativeBuildPlanner
             CreateStep("llama", rid, "cuda13"),
             .. leafComponents.Select(component => CreateStep(component, rid, "cpu")),
             .. leafComponents.Select(component => CreateStep(component, rid, "cuda13"))
+        ];
+    }
+
+    private static NativeBuildStep[] CreateIntelSteps(string rid)
+    {
+        return
+        [
+            CreateStep("llama", rid, "sycl"),
+            CreateStep("llama", rid, "openvino"),
+            CreateStep("llama", rid, "vulkan")
         ];
     }
 
@@ -84,8 +98,12 @@ public static class NativeBuildPlanner
             "cuda" or "cu13" or "cuda-13" => "cuda13",
             "cpu" => "cpu",
             "cuda13" => "cuda13",
+            "vk" or "vulkan" => "vulkan",
+            "ov" or "openvino" => "openvino",
+            "sycl" or "oneapi" => "sycl",
+            "intel" => "intel",
             "all" or "both" => "all",
-            _ => throw new ArgumentException("Backend must be 'cuda13', 'cpu', or 'all'.", nameof(backend))
+            _ => throw new ArgumentException("Backend must be 'all', 'cpu', 'cuda13', 'vulkan', 'openvino', 'sycl', or 'intel'.", nameof(backend))
         };
     }
 }

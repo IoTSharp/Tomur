@@ -238,11 +238,12 @@ internal static class NativeCommand
 
 Usage:
   tomur native prepare [--data-dir <path>]
-  tomur native build [--rid win-x64] [--backend all|cuda13|cpu] [--clean]
+  tomur native build [--rid win-x64] [--backend all|cpu|cuda13|vulkan|openvino|sycl|intel] [--clean]
 
 Commands:
   prepare    Extract or repair the versioned native runtime bundle.
   build      Build native runtime assets with CMake and install them into native/runtimes.
+             Intel builds target llama.cpp dynamic backends; use --backend intel for sycl + openvino + vulkan.
 """);
     }
 }

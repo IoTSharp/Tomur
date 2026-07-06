@@ -82,7 +82,7 @@ Usage:
   tomur service status [--user]
   tomur doctor [--data-dir <path>]
   tomur native prepare [--data-dir <path>]
-  tomur native build [--rid win-x64] [--backend all|cuda13|cpu] [--clean]
+  tomur native build [--rid win-x64] [--backend all|cpu|cuda13|vulkan|openvino|sycl|intel] [--clean]
   tomur pull [recommended|optional|all|<package-id>...] [--data-dir <path>] [--proxy <url>] [--force]
   tomur list [--catalog|--recommended] [--data-dir <path>]
   tomur ps [--data-dir <path>]

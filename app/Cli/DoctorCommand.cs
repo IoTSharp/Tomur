@@ -23,13 +23,14 @@ internal static class DoctorCommand
         }
 
         var paths = new DataPaths(pathOptions);
+        var configurationStore = new ConfigurationStore(paths);
         var nativeBundleProbe = new NativeBundleProbe(paths);
         var libraryResolver = new NativeLibraryResolver(nativeBundleProbe);
         var importResolver = new LlamaImportResolver(libraryResolver);
-        var backendInitializer = new LlamaBackendInitializer(importResolver, libraryResolver);
-        var accelerationService = new HardwareAccelerationService(backendInitializer, nativeBundleProbe);
+        var backendInitializer = new LlamaBackendInitializer(importResolver, libraryResolver, configurationStore);
+        var accelerationService = new HardwareAccelerationService(backendInitializer, nativeBundleProbe, configurationStore);
         var diagnostics = new RuntimeDiagnosticsProvider(
-            new ConfigurationStore(paths),
+            configurationStore,
             paths,
             nativeBundleProbe,
             accelerationService: accelerationService).GetDoctorReport();
@@ -62,6 +63,23 @@ internal static class DoctorCommand
         Console.WriteLine($"  Port: {diagnostics.Details.Port.Status} ({diagnostics.Details.Port.Url})");
         Console.WriteLine($"  API keys: {diagnostics.Details.ApiKeys.Status} ({diagnostics.Details.ApiKeys.ActiveKeyCount} active)");
         Console.WriteLine($"  Acceleration: {diagnostics.Details.Acceleration.Status} ({diagnostics.Details.Acceleration.EffectiveBackend})");
+        Console.WriteLine($"  Acceleration preference: {diagnostics.Details.Acceleration.PreferredBackend}");
+        if (!string.IsNullOrWhiteSpace(diagnostics.Details.Acceleration.OpenVinoDevice))
+        {
+            Console.WriteLine($"  OpenVINO device: {diagnostics.Details.Acceleration.OpenVinoDevice}");
+        }
+
+        Console.WriteLine($"  NPU opt-in: {diagnostics.Details.Acceleration.AllowNpu}");
+        if (diagnostics.Details.Acceleration.NpuPrefillChunk is not null)
+        {
+            Console.WriteLine($"  NPU prefill chunk: {diagnostics.Details.Acceleration.NpuPrefillChunk}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(diagnostics.Details.Acceleration.FallbackReason))
+        {
+            Console.WriteLine($"  Acceleration fallback: {diagnostics.Details.Acceleration.FallbackReason}");
+        }
+
         if (diagnostics.Details.Acceleration.SelectedAccelerator is not null)
         {
             var accelerator = diagnostics.Details.Acceleration.SelectedAccelerator;
@@ -69,6 +87,16 @@ internal static class DoctorCommand
             Console.WriteLine($"  Accelerator key: {accelerator.SelectionKey}");
             Console.WriteLine($"  Accelerator memory: {CommandLineHelpers.FormatNullableBytes(accelerator.MemoryBytes is null ? null : (long)accelerator.MemoryBytes.Value)}");
             Console.WriteLine($"  GPU layers: {diagnostics.Details.Acceleration.EffectiveGpuLayers}");
+        }
+
+        foreach (var backend in diagnostics.Details.Acceleration.Backends
+                     .Where(static backend => backend.Id is "sycl" or "openvino" or "vulkan"))
+        {
+            Console.WriteLine($"  Backend {backend.Id}: {backend.Status} ({backend.LibraryName})");
+            foreach (var action in backend.Actions.Take(2))
+            {
+                Console.WriteLine($"      Action: {action}");
+            }
         }
 
         Console.WriteLine($"  Native bundle: {diagnostics.NativeBundle.Status} ({diagnostics.NativeBundle.Rid})");

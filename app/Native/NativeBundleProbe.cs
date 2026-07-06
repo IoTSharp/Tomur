@@ -120,7 +120,10 @@ public sealed class NativeBundleProbe : INativeBundleProbe
         var status = selected.Status == "ok" && (requiredUnverified || optionalIssue)
             ? "warning"
             : selected.Status;
-        var message = status switch
+        var variantDiagnostic = string.IsNullOrWhiteSpace(selected.Variant.Diagnostic)
+            ? string.Empty
+            : $" {selected.Variant.Diagnostic}";
+        var message = (status switch
         {
             "ok" => selected.Variant.Id == "default"
                 ? "Required native libraries are present; optional accelerator libraries may be absent."
@@ -131,7 +134,7 @@ public sealed class NativeBundleProbe : INativeBundleProbe
             _ => selected.Variant.Id == "default"
                 ? "A required native library is missing or failed checksum verification."
                 : $"A required native library is missing or damaged for preferred variant '{selected.Variant.Id}'."
-        };
+        }) + variantDiagnostic;
 
         return new NativeComponentProbeResult(
             component.Id,

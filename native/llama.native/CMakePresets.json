@@ -120,6 +120,16 @@
       }
     },
     {
+      "name": "windows-x64-sycl",
+      "displayName": "Windows x64 (SYCL / Intel Release)",
+      "inherits": ["windows-x64", "gpu-base"],
+      "cacheVariables": {
+        "GGML_SYCL": "ON",
+        "GGML_SYCL_TARGET": "INTEL",
+        "GGML_SYCL_F16": "ON"
+      }
+    },
+    {
       "name": "windows-x64-cuda-vulkan-openvino",
       "displayName": "Windows x64 (CUDA + Vulkan + OpenVINO Release)",
       "inherits": ["windows-x64", "gpu-base"],
@@ -171,6 +181,11 @@
     {
       "name": "windows-x64-openvino",
       "configurePreset": "windows-x64-openvino",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-x64-sycl",
+      "configurePreset": "windows-x64-sycl",
       "configuration": "Release"
     },
     {

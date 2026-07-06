@@ -5,6 +5,8 @@ namespace Tomur.Inference;
 
 public sealed class SessionManager : IDisposable
 {
+    private const int DefaultNpuContextLimit = 4096;
+
     private readonly LlamaBackendInitializer backendInitializer;
     private readonly HardwareAccelerationService accelerationService;
     private readonly object gate = new();
@@ -62,6 +64,7 @@ public sealed class SessionManager : IDisposable
         var effectiveContextSize = Math.Clamp(contextSize, 512, 131072);
 
         var accelerationPlan = accelerationService.ResolvePlan(model);
+        EnsureAccelerationPlanCanExecute(accelerationPlan, model, effectiveContextSize);
         if (currentSession is not null &&
             string.Equals(currentModelId, model.Id, StringComparison.OrdinalIgnoreCase) &&
             string.Equals(currentModelPath, model.AbsolutePath, StringComparison.OrdinalIgnoreCase) &&
@@ -91,6 +94,8 @@ public sealed class SessionManager : IDisposable
                 contextSize: effectiveContextSize,
                 gpuLayers: accelerationPlan.EffectiveGpuLayers,
                 acceleratorKey: accelerationPlan.SelectedAcceleratorKey,
+                accelerator: accelerationPlan.SelectedAccelerator,
+                npuRequested: IsNpuRequested(accelerationPlan),
                 embeddings: embeddings);
         }
         catch (Exception exception) when (exception is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
@@ -113,6 +118,46 @@ public sealed class SessionManager : IDisposable
         currentAcceleratorKey = accelerationPlan.SelectedAcceleratorKey;
         return currentSession;
     }
+
+    private static void EnsureAccelerationPlanCanExecute(
+        AccelerationPlan accelerationPlan,
+        LocalModelDescriptor model,
+        int contextSize)
+    {
+        if (!IsNpuRequested(accelerationPlan) || contextSize <= DefaultNpuContextLimit)
+        {
+            return;
+        }
+
+        var selected = accelerationPlan.SelectedAccelerator;
+        var selectedSummary = selected is null
+            ? accelerationPlan.OpenVinoDevice ?? "OpenVINO NPU"
+            : $"{selected.Name} ({selected.Backend}, {selected.SelectionKey})";
+
+        throw new InferenceException(
+            "npu_context_not_supported",
+            $"The selected Intel NPU accelerator is limited to {DefaultNpuContextLimit} context tokens in the current Tomur safety profile, but this request asked for {contextSize}.",
+            [
+                $"Selected accelerator: {selectedSummary}.",
+                $"Model: {model.Id} ({model.QuantizationLevel}, {model.SizeBytes} bytes).",
+                "Reduce num_ctx or the request context before retrying on Intel NPU.",
+                "Use runtime.accelerator.preference=cpu, sycl, vulkan or OpenVINO GPU when this model requires a larger context.",
+                "Set runtime.accelerator.openvino_device to NPU only for models and context windows that have real smoke evidence."
+            ]);
+    }
+
+    private static bool IsNpuRequested(AccelerationPlan accelerationPlan)
+        => accelerationPlan.SelectedAccelerator is not null &&
+            (IsNpuSelected(accelerationPlan.SelectedAccelerator) ||
+             IsNpuDeviceName(accelerationPlan.OpenVinoDevice));
+
+    private static bool IsNpuSelected(AcceleratorDevice? accelerator)
+        => accelerator is not null &&
+            string.Equals(accelerator.Kind, AcceleratorKind.Npu.ToString(), StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsNpuDeviceName(string? value)
+        => !string.IsNullOrWhiteSpace(value) &&
+            value.Trim().StartsWith("NPU", StringComparison.OrdinalIgnoreCase);
 
     public void Unload()
     {

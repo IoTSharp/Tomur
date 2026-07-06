@@ -75,12 +75,13 @@ internal static class InternalCommand
             var resolver = new NativeLibraryResolver(nativeProbe);
             var runtimePreference = new NativeRuntimePreference();
             var importResolver = new LlamaImportResolver(resolver, runtimePreference);
-            var backendInitializer = new LlamaBackendInitializer(importResolver, resolver);
-            var accelerationService = new HardwareAccelerationService(backendInitializer, nativeProbe);
+            var configurationStore = new ConfigurationStore(paths);
+            var backendInitializer = new LlamaBackendInitializer(importResolver, resolver, configurationStore);
+            var accelerationService = new HardwareAccelerationService(backendInitializer, nativeProbe, configurationStore);
             var execution = new MultimodalExecutionService(
                 new MultimodalRuntimeService(nativeProbe, modelCatalog),
                 new RuntimeDiagnosticsProvider(
-                    new ConfigurationStore(paths),
+                    configurationStore,
                     paths,
                     nativeProbe,
                     accelerationService: accelerationService),

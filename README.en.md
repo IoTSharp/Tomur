@@ -120,7 +120,7 @@ tomur list --catalog
 
 ## 🚧 Current Status
 
-Tomur has completed the main R1-R11 loops, is converging the R12 Native AOT / self-contained release matrix, and is continuing the R13 web capability aggregation loop.
+Tomur has completed the main R1-R11 loops, is converging the R12 Native AOT / self-contained release matrix, continuing the R13 web capability aggregation loop, and implementing R14 Intel GPU / NPU acceleration support. Completed history is tracked in [CHANGELOG.md](./CHANGELOG.md).
 
 | Stage | Status |
 | --- | --- |
@@ -131,10 +131,11 @@ Tomur has completed the main R1-R11 loops, is converging the R12 Native AOT / se
 | R11 | React + Ant Design X Chat-first web workspace is connected and served by Tomur through `app/wwwroot`. |
 | R12 | Native AOT publishing currently passes without warnings; Linux/macOS release logs, macOS native bundle assets, and real-machine service smoke remain in progress. |
 | R13 | Web capability aggregation has connected Agent / Capabilities views, read-only Agent tool calls, explicit side-effect tool confirmation, protocol capability maps, and Claude Code / Anthropic Messages compatibility; visual download queue and editable Settings remain in progress. |
+| R14 | Intel GPU / NPU support is being connected through the existing ggml dynamic backend path; `vulkan`, `sycl`, `openvino`, and `intel` native build entries, runtime accelerator preferences, OpenVINO / NPU environment setup, CPU fallback diagnostics, NPU incompatibility errors, Web Runtime display, and the smoke evidence entry are in place. Real Intel GPU / NPU smoke still needs machine evidence. |
 
-Planned follow-up work includes a visual download queue, editable Settings, model deletion, VAD / interruption, streaming voice turns, multi-model residency, Linux/macOS release records, and real-machine service smoke.
+Planned follow-up work includes Intel GPU / NPU real smoke (tracked through `docs/r14-intel-acceleration-smoke.md`), a visual download queue, editable Settings, model deletion, VAD / interruption, streaming voice turns, multi-model residency, Linux/macOS release records, and real-machine service smoke.
 
-See [ROADMAP.md](./ROADMAP.md) for detailed stage plans and acceptance boundaries.
+See [ROADMAP.md](./ROADMAP.md) for detailed stage plans and acceptance boundaries, and [CHANGELOG.md](./CHANGELOG.md) for completed history.
 
 ## 🏗️ Architecture Overview
 
@@ -144,6 +145,7 @@ The initial engineering shape remains a single C# project:
 Tomur/
   README.md
   README.en.md
+  CHANGELOG.md
   ROADMAP.md
   app/
     Tomur.csproj
@@ -206,10 +208,14 @@ Windows x64 native build entry point:
 
 ```powershell
 tomur native build --rid win-x64 --backend all
+tomur native build --rid win-x64 --backend vulkan
+tomur native build --rid win-x64 --backend sycl
+tomur native build --rid win-x64 --backend openvino
+tomur native build --rid win-x64 --backend intel
 ```
 
-Use `--backend cpu` or `--backend cuda13` to build a single variant. CUDA, NPU, Metal, Vulkan, SYCL, OpenVINO, and other accelerator backends enter the offload strategy based on visibility and native runtime support; missing accelerator backends should fall back to CPU.
+Use `--backend cpu` or `--backend cuda13` to build a single variant. `--backend intel` builds the llama.cpp `sycl`, `openvino`, and `vulkan` dynamic backend entries. When an Intel backend is missing or no device can be enumerated, Tomur keeps CPU fallback and reports the reason through `tomur doctor`, `/api/runtime/status`, and the Web Runtime panel.
 
 ## 🗺️ Roadmap
 
-Long-term stage plans, completion scope, and follow-up work are maintained in [ROADMAP.md](./ROADMAP.md). This README keeps the project positioning, usage path, and current boundaries concise.
+Long-term stage plans, completion scope, and follow-up work are maintained in [ROADMAP.md](./ROADMAP.md); completed history is maintained in [CHANGELOG.md](./CHANGELOG.md). This README keeps the project positioning, usage path, and current boundaries concise.

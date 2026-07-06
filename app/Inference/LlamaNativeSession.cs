@@ -16,6 +16,8 @@ internal sealed class LlamaNativeSession : IDisposable
     private readonly int contextSize;
     private readonly int gpuLayers;
     private readonly string? acceleratorKey;
+    private readonly AcceleratorDevice? accelerator;
+    private readonly bool npuRequested;
     private readonly bool embeddings;
     private readonly LlamaModelHandle modelHandle;
     private readonly LlamaContextHandle contextHandle;
@@ -25,13 +27,23 @@ internal sealed class LlamaNativeSession : IDisposable
     private long promptTokens;
     private long completionTokens;
 
-    public LlamaNativeSession(string modelId, string modelPath, int contextSize, int gpuLayers, string? acceleratorKey, bool embeddings)
+    public LlamaNativeSession(
+        string modelId,
+        string modelPath,
+        int contextSize,
+        int gpuLayers,
+        string? acceleratorKey,
+        AcceleratorDevice? accelerator,
+        bool npuRequested,
+        bool embeddings)
     {
         this.modelId = modelId;
         this.modelPath = modelPath;
         this.contextSize = Math.Max(512, contextSize);
         this.gpuLayers = Math.Max(0, gpuLayers);
         this.acceleratorKey = string.IsNullOrWhiteSpace(acceleratorKey) ? null : acceleratorKey.Trim();
+        this.accelerator = accelerator;
+        this.npuRequested = npuRequested;
         this.embeddings = embeddings;
 
         var modelParams = LlamaNativeMethods.ModelDefaultParams();
@@ -46,14 +58,23 @@ internal sealed class LlamaNativeSession : IDisposable
         var rawModelHandle = LlamaNativeMethods.ModelLoadFromFile(modelPath, modelParams);
         if (rawModelHandle == nint.Zero)
         {
-            throw new InferenceException(
-                "model_load_failed",
-                "The local llama model could not be loaded.",
-                [
-                    "Verify the GGUF file is complete and not corrupted.",
-                    "Run tomur pull with --force if the model was installed by Tomur.",
-                    "Run tomur doctor to inspect native runtime status."
-                ]);
+            throw IsNpuSelected()
+                ? CreateNpuException(
+                    "npu_model_load_failed",
+                    "The selected Intel NPU / OpenVINO accelerator could not load the local llama model.",
+                    [
+                        "Use a GGUF model that has known llama.cpp OpenVINO NPU compatibility.",
+                        "Retry with runtime.accelerator.preference=cpu, sycl, vulkan or OpenVINO GPU to separate model corruption from NPU compatibility.",
+                        "Run tomur doctor or GET /api/runtime/status to capture backend visibility and device enumeration before retrying."
+                    ])
+                : new InferenceException(
+                    "model_load_failed",
+                    "The local llama model could not be loaded.",
+                    [
+                        "Verify the GGUF file is complete and not corrupted.",
+                        "Run tomur pull with --force if the model was installed by Tomur.",
+                        "Run tomur doctor to inspect native runtime status."
+                    ]);
         }
 
         modelHandle = new LlamaModelHandle(rawModelHandle);
@@ -75,14 +96,23 @@ internal sealed class LlamaNativeSession : IDisposable
         if (rawContextHandle == nint.Zero)
         {
             modelHandle.Dispose();
-            throw new InferenceException(
-                "context_init_failed",
-                "The local llama context could not be initialized.",
-                [
-                    "Lower the context size or unload other memory-heavy applications.",
-                    "Use a smaller quantized model on low-memory machines.",
-                    "Run tomur doctor to inspect local memory and runtime state."
-                ]);
+            throw IsNpuSelected()
+                ? CreateNpuException(
+                    "npu_context_init_failed",
+                    $"The selected Intel NPU / OpenVINO accelerator could not initialize a llama context with {this.contextSize} tokens and {this.gpuLayers} offload layers.",
+                    [
+                        "Reduce num_ctx or choose a smaller quantized GGUF model before retrying on Intel NPU.",
+                        "Set runtime.accelerator.npu_prefill_chunk to a conservative value such as 512 or 1024 when using GGML_OPENVINO_DEVICE=NPU.",
+                        "Switch runtime.accelerator.preference to cpu, sycl, vulkan or OpenVINO GPU if the model requires a larger context."
+                    ])
+                : new InferenceException(
+                    "context_init_failed",
+                    "The local llama context could not be initialized.",
+                    [
+                        "Lower the context size or unload other memory-heavy applications.",
+                        "Use a smaller quantized model on low-memory machines.",
+                        "Run tomur doctor to inspect local memory and runtime state."
+                    ]);
         }
 
         contextHandle = new LlamaContextHandle(rawContextHandle);
@@ -135,10 +165,18 @@ internal sealed class LlamaNativeSession : IDisposable
 
             if (tokens.Length >= contextSize)
             {
-                throw new InferenceException(
-                    "context_length_exceeded",
-                    $"The request uses {tokens.Length} prompt tokens, which exceeds the configured context size {contextSize}.",
-                    ["Reduce the prompt or start Tomur with a larger context configuration when available."]);
+                throw IsNpuSelected()
+                    ? CreateNpuException(
+                        "npu_context_length_exceeded",
+                        $"The request uses {tokens.Length} prompt tokens, which exceeds the configured Intel NPU context size {contextSize}.",
+                        [
+                            "Reduce the prompt or num_ctx before retrying on Intel NPU.",
+                            "Use CPU, SYCL, Vulkan or OpenVINO GPU for larger-context requests."
+                        ])
+                    : new InferenceException(
+                        "context_length_exceeded",
+                        $"The request uses {tokens.Length} prompt tokens, which exceeds the configured context size {contextSize}.",
+                        ["Reduce the prompt or start Tomur with a larger context configuration when available."]);
             }
 
             using var sampler = CreateSampler(options);
@@ -156,15 +194,9 @@ internal sealed class LlamaNativeSession : IDisposable
                 text,
                 new TokenUsage(tokens.Length, generatedTokenCount, tokens.Length + generatedTokenCount),
                 stopwatch.Elapsed,
-                [
-                    $"model-id: {modelId}",
-                    $"model-path: {modelPath}",
-                    $"context-size: {contextSize}",
-                    $"gpu-layers: {gpuLayers}",
-                    $"accelerator: {acceleratorKey ?? "auto-or-cpu"}",
+                BuildSessionDiagnostics(
                     $"prompt-tokens: {tokens.Length}",
-                    $"completion-tokens: {generatedTokenCount}"
-                ]);
+                    $"completion-tokens: {generatedTokenCount}"));
         }
     }
 
@@ -197,10 +229,18 @@ internal sealed class LlamaNativeSession : IDisposable
 
             if (tokens.Length >= contextSize)
             {
-                throw new InferenceException(
-                    "context_length_exceeded",
-                    $"The embedding input uses {tokens.Length} tokens, which exceeds the configured context size {contextSize}.",
-                    ["Reduce the embedding input or choose a larger context configuration when available."]);
+                throw IsNpuSelected()
+                    ? CreateNpuException(
+                        "npu_context_length_exceeded",
+                        $"The embedding input uses {tokens.Length} tokens, which exceeds the configured Intel NPU context size {contextSize}.",
+                        [
+                            "Reduce the embedding input or num_ctx before retrying on Intel NPU.",
+                            "Use CPU, SYCL, Vulkan or OpenVINO GPU for larger-context requests."
+                        ])
+                    : new InferenceException(
+                        "context_length_exceeded",
+                        $"The embedding input uses {tokens.Length} tokens, which exceeds the configured context size {contextSize}.",
+                        ["Reduce the embedding input or choose a larger context configuration when available."]);
             }
 
             LlamaNativeMethods.ClearMemory(contextHandle.DangerousGetHandle());
@@ -208,10 +248,18 @@ internal sealed class LlamaNativeSession : IDisposable
             var decodeResult = LlamaNativeMethods.Decode(contextHandle.DangerousGetHandle(), batch.Batch);
             if (decodeResult != 0)
             {
-                throw new InferenceException(
-                    "embedding_decode_failed",
-                    $"The embedding decode step failed with native return code {decodeResult}.",
-                    ["Use an embedding-capable GGUF model for /v1/embeddings."]);
+                throw IsNpuSelected()
+                    ? CreateNpuException(
+                        "npu_embedding_decode_failed",
+                        $"The embedding decode step failed on the selected Intel NPU / OpenVINO accelerator with native return code {decodeResult}.",
+                        [
+                            "Use an embedding-capable GGUF model with known OpenVINO NPU compatibility.",
+                            "Retry on CPU, SYCL, Vulkan or OpenVINO GPU to confirm whether the model itself is valid."
+                        ])
+                    : new InferenceException(
+                        "embedding_decode_failed",
+                        $"The embedding decode step failed with native return code {decodeResult}.",
+                        ["Use an embedding-capable GGUF model for /v1/embeddings."]);
             }
 
             var embeddingPtr = ResolveEmbeddingPointer(tokens.Length);
@@ -235,15 +283,9 @@ internal sealed class LlamaNativeSession : IDisposable
                 vector,
                 new TokenUsage(tokens.Length, 0, tokens.Length),
                 stopwatch.Elapsed,
-                [
-                    $"model-id: {modelId}",
-                    $"model-path: {modelPath}",
-                    $"context-size: {contextSize}",
-                    $"gpu-layers: {gpuLayers}",
-                    $"accelerator: {acceleratorKey ?? "auto-or-cpu"}",
+                BuildSessionDiagnostics(
                     $"input-tokens: {tokens.Length}",
-                    $"embedding-size: {vector.Length}"
-                ]);
+                    $"embedding-size: {vector.Length}"));
         }
     }
 
@@ -258,14 +300,7 @@ internal sealed class LlamaNativeSession : IDisposable
             RequestCount: Interlocked.Read(ref requestCount),
             PromptTokens: Interlocked.Read(ref promptTokens),
             CompletionTokens: Interlocked.Read(ref completionTokens),
-            Diagnostics:
-            [
-                $"context-size: {contextSize}",
-                $"mode: {(embeddings ? "embeddings" : "generation")}",
-                $"gpu-layers: {gpuLayers}",
-                $"accelerator: {acceleratorKey ?? "auto-or-cpu"}",
-                $"model-path: {modelPath}"
-            ]);
+            Diagnostics: BuildSessionDiagnostics($"mode: {(embeddings ? "embeddings" : "generation")}"));
     }
 
     public void Dispose()
@@ -331,10 +366,18 @@ internal sealed class LlamaNativeSession : IDisposable
                 var prefillResult = LlamaNativeMethods.Decode(contextHandle.DangerousGetHandle(), prefill);
                 if (prefillResult != 0)
                 {
-                    throw new InferenceException(
-                        "prompt_decode_failed",
-                        $"The prompt decode step failed with native return code {prefillResult}.",
-                        ["Reduce the prompt length or use a different GGUF model."]);
+                    throw IsNpuSelected()
+                        ? CreateNpuException(
+                            "npu_prompt_decode_failed",
+                            $"The prompt prefill step failed on the selected Intel NPU / OpenVINO accelerator with native return code {prefillResult}.",
+                            [
+                                "Reduce the prompt length, num_ctx or runtime.accelerator.npu_prefill_chunk before retrying on Intel NPU.",
+                                "Retry on CPU, SYCL, Vulkan or OpenVINO GPU to confirm whether the model and prompt are otherwise valid."
+                            ])
+                        : new InferenceException(
+                            "prompt_decode_failed",
+                            $"The prompt decode step failed with native return code {prefillResult}.",
+                            ["Reduce the prompt length or use a different GGUF model."]);
                 }
             }
         }
@@ -378,10 +421,19 @@ internal sealed class LlamaNativeSession : IDisposable
                 var decodeResult = LlamaNativeMethods.Decode(contextHandle.DangerousGetHandle(), nextBatch);
                 if (decodeResult != 0)
                 {
-                    throw new InferenceException(
-                        "generation_decode_failed",
-                        $"The generation decode step failed with native return code {decodeResult}.",
-                        ["Try a lower max_tokens value or reload the model."]);
+                    throw IsNpuSelected()
+                        ? CreateNpuException(
+                            "npu_generation_decode_failed",
+                            $"The generation decode step failed on the selected Intel NPU / OpenVINO accelerator with native return code {decodeResult}.",
+                            [
+                                "Try a lower max_tokens value before retrying on Intel NPU.",
+                                "Retry on CPU, SYCL, Vulkan or OpenVINO GPU to confirm whether the model can complete the request.",
+                                "Keep the failed response as smoke evidence when validating NPU model compatibility."
+                            ])
+                        : new InferenceException(
+                            "generation_decode_failed",
+                            $"The generation decode step failed with native return code {decodeResult}.",
+                            ["Try a lower max_tokens value or reload the model."]);
                 }
             }
         }
@@ -499,6 +551,59 @@ internal sealed class LlamaNativeSession : IDisposable
         return outputSize > 0
             ? outputSize
             : LlamaNativeMethods.ModelNEmbd(modelHandle.DangerousGetHandle());
+    }
+
+    private IReadOnlyList<string> BuildSessionDiagnostics(params string[] entries)
+    {
+        var diagnostics = new List<string>
+        {
+            $"model-id: {modelId}",
+            $"model-path: {modelPath}",
+            $"context-size: {contextSize}",
+            $"gpu-layers: {gpuLayers}",
+            $"accelerator: {ResolveAcceleratorSummary()}"
+        };
+
+        if (accelerator is not null)
+        {
+            diagnostics.Add($"accelerator-kind: {accelerator.Kind}");
+            diagnostics.Add($"accelerator-backend: {accelerator.Backend}");
+            diagnostics.Add($"accelerator-device: {accelerator.Name}");
+            diagnostics.Add($"accelerator-key: {accelerator.SelectionKey}");
+        }
+
+        diagnostics.AddRange(entries);
+        return diagnostics;
+    }
+
+    private bool IsNpuSelected()
+        => npuRequested ||
+            accelerator is not null &&
+            string.Equals(accelerator.Kind, AcceleratorKind.Npu.ToString(), StringComparison.OrdinalIgnoreCase);
+
+    private string ResolveAcceleratorSummary()
+    {
+        if (accelerator is null)
+        {
+            return acceleratorKey ?? "auto-or-cpu";
+        }
+
+        return $"{accelerator.Kind}:{accelerator.Name} ({accelerator.Backend}, {accelerator.SelectionKey})";
+    }
+
+    private InferenceException CreateNpuException(
+        string code,
+        string message,
+        IReadOnlyList<string> actions)
+    {
+        var enrichedActions = new List<string>(actions)
+        {
+            $"Selected accelerator: {ResolveAcceleratorSummary()}.",
+            $"Context size: {contextSize}; GPU layers: {gpuLayers}.",
+            "Tomur does not synthesize an inference result when the selected Intel NPU path cannot execute the request."
+        };
+
+        return new InferenceException(code, message, enrichedActions);
     }
 
     private static void AddSampler(nint chainHandle, nint samplerHandle)
