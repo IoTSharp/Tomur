@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Tomur.Config;
 using Tomur.Native;
 
@@ -6,6 +7,7 @@ namespace Tomur.Inference;
 public sealed class LlamaBackendInitializer
 {
     private static readonly object BackendGate = new();
+    private static readonly List<nint> RegisteredBackendLibraryHandles = [];
     private static bool backendInitialized;
 
     private readonly LlamaImportResolver importResolver;
@@ -132,7 +134,56 @@ public sealed class LlamaBackendInitializer
             return;
         }
 
-        _ = LlamaNativeMethods.GgmlBackendLoad(path);
+        var backendRegHandle = LlamaNativeMethods.GgmlBackendLoad(path);
+        if (backendRegHandle != nint.Zero)
+        {
+            return;
+        }
+
+        TryRegisterBackendFromKnownExport(libraryName, path);
+    }
+
+    private static void TryRegisterBackendFromKnownExport(string libraryName, string path)
+    {
+        var registrationExport = libraryName switch
+        {
+            "ggml-openvino" => "ggml_backend_openvino_reg",
+            _ => null
+        };
+
+        if (registrationExport is null)
+        {
+            return;
+        }
+
+        nint libraryHandle = nint.Zero;
+        try
+        {
+            libraryHandle = NativeLibrary.Load(path);
+            var registrationHandle = NativeLibrary.GetExport(libraryHandle, registrationExport);
+            var registrationFactory =
+                Marshal.GetDelegateForFunctionPointer<BackendRegistrationFactory>(registrationHandle);
+            var backendRegHandle = registrationFactory();
+            if (backendRegHandle == nint.Zero)
+            {
+                NativeLibrary.Free(libraryHandle);
+                return;
+            }
+
+            LlamaNativeMethods.GgmlBackendRegister(backendRegHandle);
+            RegisteredBackendLibraryHandles.Add(libraryHandle);
+        }
+        catch (Exception exception) when (
+            exception is DllNotFoundException or
+                EntryPointNotFoundException or
+                BadImageFormatException or
+                ArgumentException)
+        {
+            if (libraryHandle != nint.Zero)
+            {
+                NativeLibrary.Free(libraryHandle);
+            }
+        }
     }
 
     private static void TryLoadCpuBackend(string runtimeRoot)
@@ -157,4 +208,7 @@ public sealed class LlamaBackendInitializer
             return;
         }
     }
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate nint BackendRegistrationFactory();
 }

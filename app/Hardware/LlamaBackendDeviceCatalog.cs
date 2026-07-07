@@ -33,7 +33,7 @@ internal static class LlamaBackendDeviceCatalog
             var props = LlamaNativeMethods.GetBackendDeviceProperties(deviceHandle);
             var kind = MapKind(backendName, deviceType, props);
             var isIntegrated = deviceType == GgmlBackendDeviceType.IntegratedGpu;
-            var displayName = BuildDisplayName(kind, props.Description, props.Name, deviceIndex);
+            var displayName = BuildDisplayName(kind, backendName, props.Description, props.Name, deviceIndex);
             var selectionKey = BuildSelectionKey(backendName, props.DeviceId, deviceIndex);
 
             rawDevices.Add(new LlamaBackendDeviceDescriptor(
@@ -174,8 +174,22 @@ internal static class LlamaBackendDeviceCatalog
             && (value.Contains("npu", StringComparison.OrdinalIgnoreCase) ||
                 value.Contains("neural", StringComparison.OrdinalIgnoreCase)));
 
-    private static string BuildDisplayName(AcceleratorKind kind, string? description, string? name, int deviceIndex)
+    private static string BuildDisplayName(
+        AcceleratorKind kind,
+        string backendName,
+        string? description,
+        string? name,
+        int deviceIndex)
     {
+        if (backendName.Contains("openvino", StringComparison.OrdinalIgnoreCase))
+        {
+            var openVinoDevice = Environment.GetEnvironmentVariable("GGML_OPENVINO_DEVICE");
+            if (!string.IsNullOrWhiteSpace(openVinoDevice))
+            {
+                return $"OpenVINO {openVinoDevice.Trim()}";
+            }
+        }
+
         if (!string.IsNullOrWhiteSpace(description))
         {
             return description;

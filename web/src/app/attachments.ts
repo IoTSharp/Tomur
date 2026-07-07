@@ -29,7 +29,7 @@ export async function createLocalAttachment(file: File): Promise<ConversationAtt
 
 export function toAttachmentItem(attachment: ConversationAttachment) {
   const mediaType = attachment.media_type ?? "";
-  const cardType = mediaType.startsWith("image/")
+  const cardType: "image" | "audio" | "file" = mediaType.startsWith("image/")
     ? "image"
     : mediaType.startsWith("audio/")
       ? "audio"

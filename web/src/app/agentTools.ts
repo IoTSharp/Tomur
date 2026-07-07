@@ -1,6 +1,8 @@
 import type { AgentToolMapResponse } from "../types";
 import { formatJsonPreview } from "./format";
 
+export { formatJsonPreview } from "./format";
+
 export function isSideEffectAgentTool(tool: AgentToolMapResponse["tools"][number]) {
   const sideEffect = tool.side_effect.trim().toLowerCase();
   return tool.requires_confirmation || (sideEffect !== "" && sideEffect !== "read" && sideEffect !== "none");

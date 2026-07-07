@@ -26,7 +26,7 @@ import type {
   OpenAiModel,
   RuntimeStatusResponse
 } from "../../types";
-import { formatRelativeTime, tagColor } from "../../app/format";
+import { formatBytes, formatRelativeTime, tagColor } from "../../app/format";
 import type { CopyTextHandler, SettingsSection } from "../../app/viewTypes";
 import { AgentSettingsPanel } from "./AgentSettingsPanel";
 import { CapabilitiesPanel } from "./CapabilitiesPanel";
@@ -104,6 +104,12 @@ export function SettingsPanel({
   const installedPackages = installedModels?.packages ?? [];
   const recommendedPackages = (catalog?.packages ?? []).filter((item) => item.recommended);
   const downloadablePackages = (catalog?.packages ?? []).filter((item) => !item.installed);
+  const selectedAccelerator = runtimeStatus?.acceleration.selected_accelerator;
+  const currentDeviceName = selectedAccelerator
+    ? `${selectedAccelerator.name}${selectedAccelerator.integrated ? " (integrated)" : ""}`
+    : runtimeStatus?.acceleration.effective_backend?.toLowerCase() === "cpu"
+      ? "CPU"
+      : "-";
 
   return (
     <Space direction="vertical" size={16} className="drawer-stack">
@@ -142,6 +148,25 @@ export function SettingsPanel({
             </Descriptions.Item>
             <Descriptions.Item label="Default backend">
               {runtimeStatus?.configuration.configuration.runtime.default_backend ?? "-"}
+            </Descriptions.Item>
+            <Descriptions.Item label="Current acceleration">
+              <Space wrap>
+                <Tag color={tagColor(runtimeStatus?.acceleration.status ?? "checking")}>
+                  {runtimeStatus?.acceleration.status ?? "checking"}
+                </Tag>
+                {runtimeStatus?.acceleration.effective_gpu_layers
+                  ? `${runtimeStatus.acceleration.effective_gpu_layers} layers`
+                  : "0 layers"}
+              </Space>
+            </Descriptions.Item>
+            <Descriptions.Item label="Current backend">
+              {runtimeStatus?.acceleration.effective_backend ?? "-"}
+            </Descriptions.Item>
+            <Descriptions.Item label="Current device">
+              {currentDeviceName}
+            </Descriptions.Item>
+            <Descriptions.Item label="Device memory">
+              {formatBytes(selectedAccelerator?.memory_bytes)}
             </Descriptions.Item>
             <Descriptions.Item label="Accelerator preference">
               {runtimeStatus?.configuration.configuration.runtime.accelerator?.preference ?? "auto"}

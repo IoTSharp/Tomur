@@ -40,6 +40,8 @@ export function RuntimeSettingsPanel({
 
   return (
     <Space direction="vertical" size={16} className="drawer-stack">
+      <AccelerationSummary acceleration={runtimeStatus?.acceleration} />
+
       <Alert
         type={runtimeStatus?.status === "ok" ? "success" : "warning"}
         showIcon
@@ -226,6 +228,54 @@ export function RuntimeSettingsPanel({
         )}
       />
     </Space>
+  );
+}
+
+function AccelerationSummary({ acceleration }: { acceleration?: AccelerationPlan }) {
+  const selected = acceleration?.selected_accelerator;
+  const activeLabel =
+    acceleration?.status === "accelerated" && selected
+      ? selected.kind
+      : acceleration?.status === "cpu"
+        ? "CPU"
+        : acceleration?.status ?? "checking";
+  const deviceLabel = selected
+    ? `${selected.name}${selected.integrated ? " (integrated)" : ""}`
+    : acceleration?.effective_backend?.toLowerCase() === "cpu"
+      ? "CPU"
+      : acceleration?.fallback_reason
+        ? "CPU fallback"
+        : "-";
+
+  return (
+    <Card
+      size="small"
+      title="当前加速"
+      extra={<Tag color={tagColor(acceleration?.status ?? "checking")}>{acceleration?.status ?? "checking"}</Tag>}
+    >
+      <div className="acceleration-summary-grid">
+        <SummaryMetric label="加速" value={activeLabel} />
+        <SummaryMetric label="后端" value={acceleration?.effective_backend ?? "-"} />
+        <SummaryMetric label="显卡 / 设备" value={deviceLabel} />
+        <SummaryMetric label="OpenVINO device" value={acceleration?.openvino_device ?? "-"} />
+        <SummaryMetric label="GPU layers" value={String(acceleration?.effective_gpu_layers ?? 0)} />
+        <SummaryMetric label="选择键" value={acceleration?.selected_accelerator_key ?? "-"} />
+      </div>
+      {acceleration?.fallback_reason && (
+        <Typography.Text className="acceleration-summary-fallback" type="secondary">
+          {acceleration.fallback_reason}
+        </Typography.Text>
+      )}
+    </Card>
+  );
+}
+
+function SummaryMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="acceleration-summary-item">
+      <span className="acceleration-summary-label">{label}</span>
+      <span className="acceleration-summary-value">{value}</span>
+    </div>
   );
 }
 
