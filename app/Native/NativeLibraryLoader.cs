@@ -1,15 +1,21 @@
 using System.Runtime.InteropServices;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Tomur.Config;
 
 namespace Tomur.Native;
 
-public sealed class NativeLibraryLoader(INativeLibraryResolver resolver) : INativeLibraryLoader
+public sealed class NativeLibraryLoader(
+    INativeLibraryResolver resolver,
+    ILogger<NativeLibraryLoader>? logger = null) : INativeLibraryLoader
 {
     private const uint LoadLibrarySearchDllLoadDir = 0x00000100;
     private const uint LoadLibrarySearchDefaultDirs = 0x00001000;
 
     private static readonly object SearchPathLock = new();
     private static readonly HashSet<string> RegisteredSearchPaths = new(StringComparer.OrdinalIgnoreCase);
+
+    private readonly ILogger<NativeLibraryLoader> log = logger ?? NullLogger<NativeLibraryLoader>.Instance;
 
     public NativeLibraryLoader(DataPaths paths)
         : this(new NativeLibraryResolver(paths))
@@ -30,6 +36,7 @@ public sealed class NativeLibraryLoader(INativeLibraryResolver resolver) : INati
 
         if (string.Equals(resolution.ComponentStatus, "error", StringComparison.OrdinalIgnoreCase))
         {
+            log.ComponentNotReady(componentId, "component not ready");
             return new NativeLibraryLoadResult(
                 resolution,
                 false,
@@ -39,6 +46,7 @@ public sealed class NativeLibraryLoader(INativeLibraryResolver resolver) : INati
 
         if (resolution.ChecksumStatus == "mismatch")
         {
+            log.ComponentNotReady(componentId, "checksum mismatch");
             return new NativeLibraryLoadResult(
                 resolution,
                 false,
@@ -52,6 +60,7 @@ public sealed class NativeLibraryLoader(INativeLibraryResolver resolver) : INati
         try
         {
             var handle = LoadNativeLibrary(resolution.Path);
+            log.LibraryLoaded(componentId, libraryName);
             return new NativeLibraryLoadResult(
                 resolution,
                 true,
@@ -60,10 +69,12 @@ public sealed class NativeLibraryLoader(INativeLibraryResolver resolver) : INati
         }
         catch (DllNotFoundException exception)
         {
+            log.LibraryLoadFailed(componentId, libraryName, exception.Message);
             return LoadFailed(resolution, exception.Message);
         }
         catch (BadImageFormatException exception)
         {
+            log.LibraryLoadFailed(componentId, libraryName, exception.Message);
             return LoadFailed(resolution, exception.Message);
         }
     }

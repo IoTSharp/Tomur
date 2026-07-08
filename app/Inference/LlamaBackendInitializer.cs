@@ -1,4 +1,6 @@
 using System.Runtime.InteropServices;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Tomur.Config;
 using Tomur.Native;
 
@@ -13,15 +15,18 @@ public sealed class LlamaBackendInitializer
     private readonly LlamaImportResolver importResolver;
     private readonly INativeLibraryResolver libraryResolver;
     private readonly ConfigurationStore? configurationStore;
+    private readonly ILogger<LlamaBackendInitializer> logger;
 
     public LlamaBackendInitializer(
         LlamaImportResolver importResolver,
         INativeLibraryResolver libraryResolver,
-        ConfigurationStore? configurationStore = null)
+        ConfigurationStore? configurationStore = null,
+        ILogger<LlamaBackendInitializer>? logger = null)
     {
         this.importResolver = importResolver;
         this.libraryResolver = libraryResolver;
         this.configurationStore = configurationStore;
+        this.logger = logger ?? NullLogger<LlamaBackendInitializer>.Instance;
     }
 
     public void EnsureInitialized()
@@ -43,6 +48,7 @@ public sealed class LlamaBackendInitializer
             }
             catch (Exception exception) when (exception is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
             {
+                logger.BackendInitializationFailed(exception);
                 throw new InferenceException(
                     "native_runtime_unavailable",
                     $"The llama.cpp native runtime could not be initialized: {exception.Message}",
@@ -54,6 +60,7 @@ public sealed class LlamaBackendInitializer
             }
 
             backendInitialized = true;
+            logger.BackendInitialized();
         }
     }
 
@@ -117,12 +124,15 @@ public sealed class LlamaBackendInitializer
             TryLoadBackendIfPresent("ggml-cann", resolution.RuntimeRoot);
             TryLoadCpuBackend(resolution.RuntimeRoot);
             LlamaNativeMethods.GgmlBackendLoadAllFromPath(resolution.RuntimeRoot);
+            logger.DynamicBackendsLoaded(resolution.RuntimeRoot);
         }
-        catch (EntryPointNotFoundException)
+        catch (EntryPointNotFoundException exception)
         {
+            logger.DynamicBackendProbeSkipped(exception.Message);
         }
-        catch (DllNotFoundException)
+        catch (DllNotFoundException exception)
         {
+            logger.DynamicBackendProbeSkipped(exception.Message);
         }
     }
 

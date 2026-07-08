@@ -7,6 +7,7 @@ using Tomur.Api.Ollama;
 using Tomur.Agents;
 using Tomur.Config;
 using Tomur.Conversations;
+using Tomur.Diagnostics;
 using Tomur.Hardware;
 using Tomur.Multimodal;
 using Tomur.Native;
@@ -201,6 +202,9 @@ namespace Tomur.Serialization;
 [JsonSerializable(typeof(LocalDatabaseState))]
 [JsonSerializable(typeof(ApiKeyStoreState))]
 [JsonSerializable(typeof(ApiKeyRecord))]
+[JsonSerializable(typeof(LogStreamEntry))]
+[JsonSerializable(typeof(LogRecentResponse))]
+[JsonSerializable(typeof(LogClearResponse))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,

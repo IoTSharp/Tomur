@@ -20,6 +20,7 @@ public static class Defaults
     public const string DatabaseFileName = "tomur.db";
     public const string ModelInstallManifestFileName = "models.manifest.json";
     public const string DownloadCacheDirectoryName = "_downloads";
+    public const int LogBufferCapacity = 2000;
 
     public static string Version { get; } = ResolveVersion();
 

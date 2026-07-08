@@ -1,5 +1,7 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Tomur.Config;
 using Tomur.Serialization;
 
@@ -8,10 +10,12 @@ namespace Tomur.Native;
 public sealed class NativeBundlePreparer : INativeBundlePreparer
 {
     private readonly DataPaths paths;
+    private readonly ILogger<NativeBundlePreparer> logger;
 
-    public NativeBundlePreparer(DataPaths paths)
+    public NativeBundlePreparer(DataPaths paths, ILogger<NativeBundlePreparer>? logger = null)
     {
         this.paths = paths;
+        this.logger = logger ?? NullLogger<NativeBundlePreparer>.Instance;
     }
 
     public NativeBundlePrepareResult Prepare()
@@ -42,6 +46,7 @@ public sealed class NativeBundlePreparer : INativeBundlePreparer
         }
         catch (IOException exception)
         {
+            logger.BundleManifestInvalid(exception.Message);
             return Error(
                 NativeBundlePaths.ResolveRid(),
                 string.Empty,
@@ -53,6 +58,7 @@ public sealed class NativeBundlePreparer : INativeBundlePreparer
         }
         catch (JsonException exception)
         {
+            logger.BundleManifestInvalid(exception.Message);
             return Error(
                 NativeBundlePaths.ResolveRid(),
                 string.Empty,
@@ -128,6 +134,10 @@ public sealed class NativeBundlePreparer : INativeBundlePreparer
             _ => "Native runtime bundle could not be fully prepared."
         };
 
+        var changedFiles = files.Count(static file =>
+            file.Status is "copied" or "repaired" or "aliased" or "error");
+        logger.BundlePrepared(changedFiles, status);
+
         return new NativeBundlePrepareResult(
             status,
             DateTimeOffset.UtcNow,
@@ -141,7 +151,7 @@ public sealed class NativeBundlePreparer : INativeBundlePreparer
             message);
     }
 
-    private static NativeBundleFilePrepareResult PrepareFile(
+    private NativeBundleFilePrepareResult PrepareFile(
         string sourceRuntimeRoot,
         string managedRuntimeRoot,
         string sourcePath,
@@ -195,8 +205,9 @@ public sealed class NativeBundlePreparer : INativeBundlePreparer
         }
     }
 
-    private static NativeBundleFilePrepareResult PrepareError(string sourcePath, string destinationPath, string message)
+    private NativeBundleFilePrepareResult PrepareError(string sourcePath, string destinationPath, string message)
     {
+        logger.BundleFilePrepareFailed(destinationPath, message);
         return new NativeBundleFilePrepareResult(
             sourcePath,
             destinationPath,

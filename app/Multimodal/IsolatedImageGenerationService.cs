@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Reflection;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using Tomur.Config;
 using Tomur.Inference;
 using Tomur.Runtime;
@@ -14,10 +15,12 @@ public sealed class IsolatedImageGenerationService
     private static readonly TimeSpan WorkerTimeout = TimeSpan.FromMinutes(30);
 
     private readonly DataPaths paths;
+    private readonly ILogger<IsolatedImageGenerationService> logger;
 
-    public IsolatedImageGenerationService(DataPaths paths)
+    public IsolatedImageGenerationService(DataPaths paths, ILogger<IsolatedImageGenerationService> logger)
     {
         this.paths = paths;
+        this.logger = logger;
     }
 
     public async Task<NativeImageResult> GenerateImageAsync(
@@ -127,6 +130,7 @@ public sealed class IsolatedImageGenerationService
         {
             if (!process.Start())
             {
+                logger.ImageWorkerStartFailed("process did not start");
                 throw new InferenceException(
                     "image_generation_worker_failed",
                     "The image generation worker process could not be started.",
@@ -135,6 +139,7 @@ public sealed class IsolatedImageGenerationService
         }
         catch (Exception exception) when (exception is Win32Exception or IOException or UnauthorizedAccessException)
         {
+            logger.ImageWorkerStartFailed(exception.Message);
             throw new InferenceException(
                 "image_generation_worker_failed",
                 $"The image generation worker process could not be started: {exception.Message}",
@@ -161,6 +166,7 @@ public sealed class IsolatedImageGenerationService
             TryKill(process);
             var timeoutStdout = await ReadWorkerOutputAsync(stdoutTask).ConfigureAwait(false);
             var timeoutStderr = await ReadWorkerOutputAsync(stderrTask).ConfigureAwait(false);
+            logger.ImageWorkerTimedOut((int)WorkerTimeout.TotalSeconds);
             throw new InferenceException(
                 "image_generation_worker_timeout",
                 $"The image generation worker exceeded the {WorkerTimeout.TotalMinutes:0}-minute timeout.",
@@ -171,16 +177,18 @@ public sealed class IsolatedImageGenerationService
 
         var stdout = await stdoutTask.ConfigureAwait(false);
         var stderr = await stderrTask.ConfigureAwait(false);
+        logger.ImageWorkerExited(process.ExitCode);
         return new WorkerRunResult(process.ExitCode, stdout, stderr);
     }
 
-    private static async Task<ImageGenerationWorkerResponse> ReadResponseAsync(
+    private async Task<ImageGenerationWorkerResponse> ReadResponseAsync(
         string responsePath,
         WorkerRunResult run,
         CancellationToken cancellationToken)
     {
         if (!File.Exists(responsePath))
         {
+            logger.ImageWorkerInvalidResponse($"no response file (exit code {run.ExitCode})");
             throw new InferenceException(
                 "image_generation_worker_failed",
                 $"The image generation worker exited with code {run.ExitCode} before writing a response.",
@@ -199,6 +207,7 @@ public sealed class IsolatedImageGenerationService
         }
         catch (JsonException exception)
         {
+            logger.ImageWorkerInvalidResponse(exception.Message);
             throw new InferenceException(
                 "image_generation_worker_failed",
                 $"The image generation worker wrote an invalid response: {exception.Message}",

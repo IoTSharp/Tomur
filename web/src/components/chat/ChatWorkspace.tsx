@@ -17,7 +17,6 @@ import type {
 import { ChatPane } from "./ChatPane";
 import { ComposerBar } from "./ComposerBar";
 import { InlineDiagnostics } from "../layout/InlineDiagnostics";
-import { StatusStrip } from "../layout/StatusStrip";
 import { WorkspaceHeader } from "../layout/WorkspaceHeader";
 
 type ModelOption = {
@@ -53,7 +52,6 @@ export function ChatWorkspace({
   onRefreshStatus,
   onOpenStatus,
   onOpenSettings,
-  onOpenSettingsDrawer,
   onInputChange,
   onAddPendingAttachment,
   onRemovePendingAttachment,
@@ -91,7 +89,6 @@ export function ChatWorkspace({
   onRefreshStatus: () => void | Promise<void>;
   onOpenStatus: () => void;
   onOpenSettings: (section: SettingsSection) => void;
-  onOpenSettingsDrawer: () => void;
   onInputChange: (value: string) => void;
   onAddPendingAttachment: (file: File) => void | Promise<void>;
   onRemovePendingAttachment: (id: string) => void;
@@ -109,21 +106,10 @@ export function ChatWorkspace({
         visibleChatModels={visibleChatModels}
         chatModelCount={chatModels.length}
         loadingStatus={loadingStatus}
+        runtimeOk={runtimeOk}
         onModelChange={onSelectedModelChange}
         onRefreshStatus={() => void onRefreshStatus()}
         onOpenStatus={onOpenStatus}
-        onOpenSettings={onOpenSettingsDrawer}
-      />
-
-      <StatusStrip
-        runtimeStatus={runtimeStatus}
-        runtimeOk={runtimeOk}
-        chatModelCount={chatModels.length}
-        installedDownloadCount={catalog?.packages.filter((item) => item.installed).length ?? 0}
-        multimodalStatus={multimodalStatus}
-        agentRuntime={agentRuntime}
-        onOpenStatus={onOpenStatus}
-        onOpenSettings={onOpenSettings}
       />
 
       <InlineDiagnostics

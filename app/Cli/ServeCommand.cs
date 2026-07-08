@@ -4,17 +4,20 @@ using System.Reflection;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.HttpLogging;
 using Microsoft.AspNetCore.SpaServices;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Hosting.WindowsServices;
+using Microsoft.Extensions.Logging;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Tomur.Api;
 using Tomur.Agents;
 using Tomur.Config;
 using Tomur.Conversations;
+using Tomur.Diagnostics;
 using Tomur.Hardware;
 using Tomur.Inference;
 using Tomur.Multimodal;
@@ -128,6 +131,31 @@ internal static class ServeCommand
             });
         }
 
+        // Capture host logs into a bounded ring buffer and fan them out to SSE subscribers.
+        // Registered the idiomatic way: the buffer is a DI singleton and the provider is a
+        // DI-composed ILoggerProvider (the LoggerFactory discovers and owns it). Both are
+        // available before builder.Build() drives the logging pipeline.
+        builder.Services.AddSingleton(_ => new LogBroadcastService(capacity: Defaults.LogBufferCapacity));
+        builder.Services.AddSingleton<ILoggerProvider>(sp =>
+            new RingBufferLoggerProvider(sp.GetRequiredService<LogBroadcastService>()));
+
+        // Structured request logging via the standard middleware (added to the pipeline below).
+        builder.Services.AddHttpLogging(options =>
+        {
+            options.LoggingFields =
+                HttpLoggingFields.RequestMethod |
+                HttpLoggingFields.RequestPath |
+                HttpLoggingFields.ResponseStatusCode |
+                HttpLoggingFields.Duration;
+        });
+
+        // Shape what the ring buffer captures: keep first-party (Tomur.*) and lifetime/request
+        // logs, but hold the rest of the ASP.NET framework at Warning so routing/static-file
+        // noise stays out. HttpLogging is the single source of per-request lines.
+        builder.Logging.AddFilter<RingBufferLoggerProvider>("Microsoft.AspNetCore", LogLevel.Warning);
+        builder.Logging.AddFilter<RingBufferLoggerProvider>("Microsoft.AspNetCore.HttpLogging", LogLevel.Information);
+        builder.Logging.AddFilter<RingBufferLoggerProvider>("Microsoft.Hosting.Lifetime", LogLevel.Information);
+
         builder.Services.AddHealthChecks();
         builder.Services.AddSingleton(state.Paths);
         builder.Services.AddSingleton(state.ServerOptions);
@@ -140,7 +168,9 @@ internal static class ServeCommand
         builder.Services.AddSingleton<INativeLibraryResolver>(provider =>
             new NativeLibraryResolver(provider.GetRequiredService<INativeBundleProbe>()));
         builder.Services.AddSingleton<INativeLibraryLoader>(provider =>
-            new NativeLibraryLoader(provider.GetRequiredService<INativeLibraryResolver>()));
+            new NativeLibraryLoader(
+                provider.GetRequiredService<INativeLibraryResolver>(),
+                provider.GetRequiredService<ILogger<NativeLibraryLoader>>()));
         builder.Services.AddSingleton<NativeRuntimePreference>();
         builder.Services.AddSingleton<LlamaImportResolver>();
         builder.Services.AddSingleton<LlamaBackendInitializer>();
@@ -173,6 +203,7 @@ internal static class ServeCommand
         builder.WebHost.UseUrls(state.ServerOptions.Urls);
 
         var app = builder.Build();
+        app.UseHttpLogging();
         app.MapApiRoutes();
         app.MapWhen(ShouldUseSpa, spaApp =>
         {

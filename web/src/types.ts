@@ -775,3 +775,29 @@ export interface AgentToolInvokeAudit {
   requires_confirmation: boolean;
   actions: string[];
 }
+
+export type LogLevel = "Trace" | "Debug" | "Information" | "Warning" | "Error" | "Critical";
+
+export interface LogStreamEntry {
+  seq: number;
+  timestamp: string;
+  level: string;
+  category: string;
+  event_id: number;
+  event_name?: string | null;
+  message: string;
+  exception?: string | null;
+}
+
+export interface LogRecentResponse {
+  status: string;
+  count: number;
+  capacity: number;
+  dropped: number;
+  entries: LogStreamEntry[];
+}
+
+export interface LogClearResponse {
+  status: string;
+  cleared: number;
+}

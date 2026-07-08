@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Tomur.Hardware;
 
 namespace Tomur.Inference;
@@ -19,6 +21,7 @@ internal sealed class LlamaNativeSession : IDisposable
     private readonly AcceleratorDevice? accelerator;
     private readonly bool npuRequested;
     private readonly bool embeddings;
+    private readonly ILogger logger;
     private readonly LlamaModelHandle modelHandle;
     private readonly LlamaContextHandle contextHandle;
     private readonly nint vocabHandle;
@@ -35,7 +38,8 @@ internal sealed class LlamaNativeSession : IDisposable
         string? acceleratorKey,
         AcceleratorDevice? accelerator,
         bool npuRequested,
-        bool embeddings)
+        bool embeddings,
+        ILogger? logger = null)
     {
         this.modelId = modelId;
         this.modelPath = modelPath;
@@ -45,6 +49,7 @@ internal sealed class LlamaNativeSession : IDisposable
         this.accelerator = accelerator;
         this.npuRequested = npuRequested;
         this.embeddings = embeddings;
+        this.logger = logger ?? NullLogger.Instance;
 
         var modelParams = LlamaNativeMethods.ModelDefaultParams();
         modelParams.n_gpu_layers = this.gpuLayers;
@@ -58,6 +63,7 @@ internal sealed class LlamaNativeSession : IDisposable
         var rawModelHandle = LlamaNativeMethods.ModelLoadFromFile(modelPath, modelParams);
         if (rawModelHandle == nint.Zero)
         {
+            this.logger.ModelLoadFailed(modelId, modelPath);
             throw IsNpuSelected()
                 ? CreateNpuException(
                     "npu_model_load_failed",
@@ -96,6 +102,7 @@ internal sealed class LlamaNativeSession : IDisposable
         if (rawContextHandle == nint.Zero)
         {
             modelHandle.Dispose();
+            this.logger.ContextInitFailed(modelId);
             throw IsNpuSelected()
                 ? CreateNpuException(
                     "npu_context_init_failed",
@@ -190,6 +197,8 @@ internal sealed class LlamaNativeSession : IDisposable
             Interlocked.Add(ref promptTokens, tokens.Length);
             Interlocked.Add(ref completionTokens, generatedTokenCount);
 
+            logger.GenerationCompleted(modelId, tokens.Length, generatedTokenCount, stopwatch.ElapsedMilliseconds);
+
             return new CompletionResult(
                 text,
                 new TokenUsage(tokens.Length, generatedTokenCount, tokens.Length + generatedTokenCount),
@@ -248,6 +257,7 @@ internal sealed class LlamaNativeSession : IDisposable
             var decodeResult = LlamaNativeMethods.Decode(contextHandle.DangerousGetHandle(), batch.Batch);
             if (decodeResult != 0)
             {
+                logger.DecodeFailed("embedding", decodeResult);
                 throw IsNpuSelected()
                     ? CreateNpuException(
                         "npu_embedding_decode_failed",
@@ -366,6 +376,7 @@ internal sealed class LlamaNativeSession : IDisposable
                 var prefillResult = LlamaNativeMethods.Decode(contextHandle.DangerousGetHandle(), prefill);
                 if (prefillResult != 0)
                 {
+                    logger.DecodeFailed("prompt", prefillResult);
                     throw IsNpuSelected()
                         ? CreateNpuException(
                             "npu_prompt_decode_failed",
@@ -421,6 +432,7 @@ internal sealed class LlamaNativeSession : IDisposable
                 var decodeResult = LlamaNativeMethods.Decode(contextHandle.DangerousGetHandle(), nextBatch);
                 if (decodeResult != 0)
                 {
+                    logger.DecodeFailed("generation", decodeResult);
                     throw IsNpuSelected()
                         ? CreateNpuException(
                             "npu_generation_decode_failed",

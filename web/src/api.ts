@@ -22,6 +22,8 @@ import type {
   ModelCatalogResponse,
   MultimodalRuntimeStatus,
   NativeBundlePrepareResult,
+  LogClearResponse,
+  LogRecentResponse,
   OpenAiChatCompletionResponse,
   OpenAiErrorResponse,
   OpenAiModelListResponse,
@@ -77,6 +79,45 @@ export async function getAgentEvents(signal?: AbortSignal): Promise<AgentEventLo
 
 export async function getAgentTelemetry(signal?: AbortSignal): Promise<AgentTelemetryStatus> {
   return getJson<AgentTelemetryStatus>("/api/agents/telemetry", signal);
+}
+
+export function buildLogStreamUrl(params?: { level?: string; category?: string }): string {
+  const query = new URLSearchParams();
+  if (params?.level) {
+    query.set("level", params.level);
+  }
+  if (params?.category) {
+    query.set("category", params.category);
+  }
+  const suffix = query.toString();
+  return suffix ? `/api/logs/stream?${suffix}` : "/api/logs/stream";
+}
+
+export async function getRecentLogs(
+  params?: { limit?: number; level?: string; category?: string },
+  signal?: AbortSignal
+): Promise<LogRecentResponse> {
+  const query = new URLSearchParams();
+  if (params?.limit) {
+    query.set("limit", String(params.limit));
+  }
+  if (params?.level) {
+    query.set("level", params.level);
+  }
+  if (params?.category) {
+    query.set("category", params.category);
+  }
+  const suffix = query.toString();
+  return getJson<LogRecentResponse>(`/api/logs/recent${suffix ? `?${suffix}` : ""}`, signal);
+}
+
+export async function clearLogs(signal?: AbortSignal): Promise<LogClearResponse> {
+  const response = await fetch("/api/logs", { method: "DELETE", signal });
+  if (!response.ok) {
+    throw await createApiError(response);
+  }
+
+  return (await response.json()) as LogClearResponse;
 }
 
 export async function invokeAgentTool(

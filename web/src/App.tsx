@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { App as AntApp, Drawer } from "antd";
+import { App as AntApp } from "antd";
 import type { BubbleItemType } from "@ant-design/x";
 import {
   getAgentEvents,
@@ -55,15 +55,18 @@ import {
 import { resolveSettingsSectionFromDiagnostic } from "./app/diagnostics";
 import { createTitle } from "./app/format";
 import { isChatModel } from "./app/models";
-import type { SettingsSection } from "./app/viewTypes";
+import type { AppView, SettingsSection } from "./app/viewTypes";
+import type { ThemeMode } from "./app/theme";
 import { ChatWorkspace } from "./components/chat/ChatWorkspace";
 import {
   hasMessageFooterContent,
   MessageFooter
 } from "./components/chat/MessageFooter";
 import { AppSidebar } from "./components/layout/AppSidebar";
+import { NavRail } from "./components/layout/NavRail";
 import { SettingsPanel } from "./components/settings/SettingsPanel";
-import { StatusPanel } from "./components/status/StatusPanel";
+import { StatusView } from "./components/status/StatusView";
+import { LogsView } from "./components/logs/LogsView";
 import type {
   AgentEventLogRecentResponse,
   AgentFrameworkToolBindingResponse,
@@ -86,7 +89,13 @@ import type {
   VersionResponse
 } from "./types";
 
-function App() {
+function App({
+  themeMode,
+  onToggleTheme
+}: {
+  themeMode: ThemeMode;
+  onToggleTheme: () => void;
+}) {
   const { message } = AntApp.useApp();
   const [conversations, setConversations] = useState<Conversation[]>(initialConversations);
   const [activeConversationId, setActiveConversationId] = useState(initialConversationId);
@@ -111,9 +120,8 @@ function App() {
     createDefaultControlledToolArguments("runtime.repair")
   );
   const [controlledToolConfirmed, setControlledToolConfirmed] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsSection, setSettingsSection] = useState<SettingsSection>("runtime");
-  const [statusDrawerOpen, setStatusDrawerOpen] = useState(false);
+  const [activeView, setActiveView] = useState<AppView>("chat");
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
   const [loadingStatus, setLoadingStatus] = useState(false);
   const [runtimeAction, setRuntimeAction] = useState<"prepare" | "unload" | null>(null);
   const [prepareResult, setPrepareResult] = useState<NativeBundlePrepareResult>();
@@ -456,7 +464,7 @@ function App() {
 
   const openSettings = useCallback((section: SettingsSection) => {
     setSettingsSection(section);
-    setSettingsOpen(true);
+    setActiveView("settings");
   }, []);
 
   const openDiagnosticContext = useCallback((diagnostic: ConversationDiagnosticRecord) => {
@@ -1117,114 +1125,126 @@ function App() {
 
   return (
     <div className="app-shell">
-      <AppSidebar
+      <NavRail
+        activeView={activeView}
+        onChangeView={setActiveView}
+        themeMode={themeMode}
+        onToggleTheme={onToggleTheme}
         version={version?.version}
         runtimeOk={runtimeOk}
-        runtimeSeverity={runtimeSeverity}
-        runtimeMessage={runtimeStatus?.runtime.message}
-        loadingConversations={loadingConversations}
-        conversations={conversations}
-        activeConversation={activeConversation}
-        onStartConversation={startConversation}
-        onOpenStatus={() => setStatusDrawerOpen(true)}
-        onOpenConversation={(conversationId) => void openConversation(conversationId)}
-        onRemoveConversation={(conversationId) => void removeConversation(conversationId)}
       />
 
-      <ChatWorkspace
-        activeConversation={activeConversation}
-        bubbleItems={bubbleItems}
-        chatModels={chatModels}
-        selectedModelLabel={selectedModelLabel}
-        visibleChatModels={visibleChatModels}
-        chatReady={chatReady}
-        runtimeOk={runtimeOk}
-        runtimeStatus={runtimeStatus}
-        warningDiagnostics={warningDiagnostics}
-        catalog={catalog}
-        multimodalStatus={multimodalStatus}
-        agentRuntime={agentRuntime}
-        models={models}
-        installedModels={installedModels}
-        agentTools={agentTools}
-        loadingStatus={loadingStatus}
-        input={input}
-        pendingAttachments={pendingAttachments}
-        sending={sending}
-        recording={recording}
-        uploadingAttachment={uploadingAttachment}
-        speechEnabled={speechEnabled}
-        inputPlaceholder={inputPlaceholder}
-        onSelectedModelChange={setSelectedModel}
-        onRefreshStatus={() => void refreshStatus()}
-        onOpenStatus={() => setStatusDrawerOpen(true)}
-        onOpenSettings={openSettings}
-        onOpenSettingsDrawer={() => setSettingsOpen(true)}
-        onInputChange={setInput}
-        onAddPendingAttachment={(file) => void addPendingAttachment(file)}
-        onRemovePendingAttachment={removePendingAttachment}
-        onStartVoiceRecording={() => void startVoiceRecording()}
-        onStopVoiceRecording={stopVoiceRecording}
-        onToggleSpeech={() => setSpeechEnabled((current) => !current)}
-        onSubmitMessage={(value) => void submitMessage(value)}
-        onStopGeneration={stopGeneration}
-        onRegenerate={() => void regenerate()}
-      />
+      <div className="app-content">
+        {activeView === "chat" && (
+          <div className="chat-layout">
+            <AppSidebar
+              version={version?.version}
+              runtimeOk={runtimeOk}
+              runtimeSeverity={runtimeSeverity}
+              runtimeMessage={runtimeStatus?.runtime.message}
+              loadingConversations={loadingConversations}
+              conversations={conversations}
+              activeConversation={activeConversation}
+              onStartConversation={startConversation}
+              onOpenStatus={() => setActiveView("status")}
+              onOpenConversation={(conversationId) => void openConversation(conversationId)}
+              onRemoveConversation={(conversationId) => void removeConversation(conversationId)}
+            />
 
-      <Drawer
-        title="状态"
-        width={420}
-        open={statusDrawerOpen}
-        onClose={() => setStatusDrawerOpen(false)}
-      >
-        <StatusPanel
-          runtimeStatus={runtimeStatus}
-          multimodalStatus={multimodalStatus}
-          agentRuntime={agentRuntime}
-          loading={loadingStatus}
-          onOpenSettings={openSettings}
-        />
-      </Drawer>
+            <ChatWorkspace
+              activeConversation={activeConversation}
+              bubbleItems={bubbleItems}
+              chatModels={chatModels}
+              selectedModelLabel={selectedModelLabel}
+              visibleChatModels={visibleChatModels}
+              chatReady={chatReady}
+              runtimeOk={runtimeOk}
+              runtimeStatus={runtimeStatus}
+              warningDiagnostics={warningDiagnostics}
+              catalog={catalog}
+              multimodalStatus={multimodalStatus}
+              agentRuntime={agentRuntime}
+              models={models}
+              installedModels={installedModels}
+              agentTools={agentTools}
+              loadingStatus={loadingStatus}
+              input={input}
+              pendingAttachments={pendingAttachments}
+              sending={sending}
+              recording={recording}
+              uploadingAttachment={uploadingAttachment}
+              speechEnabled={speechEnabled}
+              inputPlaceholder={inputPlaceholder}
+              onSelectedModelChange={setSelectedModel}
+              onRefreshStatus={() => void refreshStatus()}
+              onOpenStatus={() => setActiveView("status")}
+              onOpenSettings={openSettings}
+              onInputChange={setInput}
+              onAddPendingAttachment={(file) => void addPendingAttachment(file)}
+              onRemovePendingAttachment={removePendingAttachment}
+              onStartVoiceRecording={() => void startVoiceRecording()}
+              onStopVoiceRecording={stopVoiceRecording}
+              onToggleSpeech={() => setSpeechEnabled((current) => !current)}
+              onSubmitMessage={(value) => void submitMessage(value)}
+              onStopGeneration={stopGeneration}
+              onRegenerate={() => void regenerate()}
+            />
+          </div>
+        )}
 
-      <Drawer
-        title="Settings"
-        width={560}
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-      >
-        <SettingsPanel
-          section={settingsSection}
-          onSectionChange={setSettingsSection}
-          runtimeStatus={runtimeStatus}
-          models={models}
-          installedModels={installedModels}
-          catalog={catalog}
-          multimodalStatus={multimodalStatus}
-          agentRuntime={agentRuntime}
-          agentTools={agentTools}
-          agentToolBindings={agentToolBindings}
-          agentEvents={agentEvents}
-          agentTelemetry={agentTelemetry}
-          agentToolInvokeAction={agentToolInvokeAction}
-          agentToolInvokeResult={agentToolInvokeResult}
-          fileSearchQuery={fileSearchQuery}
-          controlledToolName={controlledToolName}
-          controlledToolArguments={controlledToolArguments}
-          controlledToolConfirmed={controlledToolConfirmed}
-          runtimeAction={runtimeAction}
-          prepareResult={prepareResult}
-          onCopyText={copyText}
-          onPrepareNativeRuntime={runNativePrepare}
-          onUnloadRuntimeSession={runSessionUnload}
-          onRunReadOnlyAgentTool={runReadOnlyAgentTool}
-          onFileSearchQueryChange={setFileSearchQuery}
-          onRunFileSearch={runFileSearch}
-          onControlledToolChange={selectControlledAgentTool}
-          onControlledToolArgumentsChange={setControlledToolArguments}
-          onControlledToolConfirmedChange={setControlledToolConfirmed}
-          onRunControlledAgentTool={runControlledAgentTool}
-        />
-      </Drawer>
+        {activeView === "status" && (
+          <StatusView
+            runtimeStatus={runtimeStatus}
+            multimodalStatus={multimodalStatus}
+            agentRuntime={agentRuntime}
+            models={models}
+            catalog={catalog}
+            agentTools={agentTools}
+            loading={loadingStatus}
+            onRefreshStatus={() => void refreshStatus()}
+            onOpenSettings={openSettings}
+          />
+        )}
+
+        {activeView === "logs" && <LogsView />}
+
+        {activeView === "settings" && (
+          <SettingsPanel
+            section={settingsSection}
+            onSectionChange={setSettingsSection}
+            themeMode={themeMode}
+            onToggleTheme={onToggleTheme}
+            runtimeStatus={runtimeStatus}
+            models={models}
+            installedModels={installedModels}
+            catalog={catalog}
+            multimodalStatus={multimodalStatus}
+            agentRuntime={agentRuntime}
+            agentTools={agentTools}
+            agentToolBindings={agentToolBindings}
+            agentEvents={agentEvents}
+            agentTelemetry={agentTelemetry}
+            agentToolInvokeAction={agentToolInvokeAction}
+            agentToolInvokeResult={agentToolInvokeResult}
+            fileSearchQuery={fileSearchQuery}
+            controlledToolName={controlledToolName}
+            controlledToolArguments={controlledToolArguments}
+            controlledToolConfirmed={controlledToolConfirmed}
+            runtimeAction={runtimeAction}
+            prepareResult={prepareResult}
+            onCopyText={copyText}
+            onPrepareNativeRuntime={runNativePrepare}
+            onUnloadRuntimeSession={runSessionUnload}
+            onRunReadOnlyAgentTool={runReadOnlyAgentTool}
+            onFileSearchQueryChange={setFileSearchQuery}
+            onRunFileSearch={runFileSearch}
+            onControlledToolChange={selectControlledAgentTool}
+            onControlledToolArgumentsChange={setControlledToolArguments}
+            onControlledToolConfirmedChange={setControlledToolConfirmed}
+            onRunControlledAgentTool={runControlledAgentTool}
+          />
+        )}
+      </div>
     </div>
   );
 }

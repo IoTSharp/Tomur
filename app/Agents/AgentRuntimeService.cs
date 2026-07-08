@@ -1,7 +1,7 @@
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging;
 using System.Text.Json;
 using Tomur.Inference;
 using Tomur.Multimodal;
@@ -23,6 +23,7 @@ public sealed class AgentRuntimeService
     private readonly AgentEventLog eventLog;
     private readonly AgentTelemetry telemetry;
     private readonly IServiceProvider services;
+    private readonly ILoggerFactory loggerFactory;
 
     public AgentRuntimeService(
         LocalModelCatalog modelCatalog,
@@ -30,7 +31,8 @@ public sealed class AgentRuntimeService
         LocalChatClient chatClient,
         AgentEventLog eventLog,
         AgentTelemetry telemetry,
-        IServiceProvider services)
+        IServiceProvider services,
+        ILoggerFactory loggerFactory)
     {
         this.modelCatalog = modelCatalog;
         this.multimodalRuntime = multimodalRuntime;
@@ -38,6 +40,7 @@ public sealed class AgentRuntimeService
         this.eventLog = eventLog;
         this.telemetry = telemetry;
         this.services = services;
+        this.loggerFactory = loggerFactory;
     }
 
     public AgentRuntimeStatus GetStatus()
@@ -357,7 +360,7 @@ public sealed class AgentRuntimeService
                 },
                 UseProvidedChatClientAsIs = true
             },
-            NullLoggerFactory.Instance,
+            loggerFactory,
             services);
     }
 

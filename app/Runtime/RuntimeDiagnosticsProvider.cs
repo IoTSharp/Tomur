@@ -1,5 +1,7 @@
 using System.Globalization;
 using System.Runtime.InteropServices;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Tomur.Config;
 using Tomur.Hardware;
 using Tomur.Inference;
@@ -19,6 +21,7 @@ public sealed class RuntimeDiagnosticsProvider
     private readonly ServerOptions serverOptions;
     private readonly LocalInferenceService? inferenceService;
     private readonly HardwareAccelerationService? accelerationService;
+    private readonly ILogger<RuntimeDiagnosticsProvider> logger;
 
     public RuntimeDiagnosticsProvider(
         ConfigurationStore configurationStore,
@@ -26,7 +29,8 @@ public sealed class RuntimeDiagnosticsProvider
         INativeBundleProbe? nativeBundleProbe = null,
         ServerOptions? serverOptions = null,
         LocalInferenceService? inferenceService = null,
-        HardwareAccelerationService? accelerationService = null)
+        HardwareAccelerationService? accelerationService = null,
+        ILogger<RuntimeDiagnosticsProvider>? logger = null)
     {
         this.configurationStore = configurationStore;
         this.basePaths = basePaths;
@@ -34,6 +38,7 @@ public sealed class RuntimeDiagnosticsProvider
         this.serverOptions = serverOptions ?? new ServerOptions();
         this.inferenceService = inferenceService;
         this.accelerationService = accelerationService;
+        this.logger = logger ?? NullLogger<RuntimeDiagnosticsProvider>.Instance;
     }
 
     public RuntimeDiagnostic GetRuntimeUnavailable(string? model)
@@ -275,7 +280,7 @@ public sealed class RuntimeDiagnosticsProvider
             GetTotalMemoryBytes());
     }
 
-    private static IReadOnlyList<DirectoryState> EnsureDirectories(DataPaths paths)
+    private IReadOnlyList<DirectoryState> EnsureDirectories(DataPaths paths)
     {
         return
         [
@@ -287,7 +292,7 @@ public sealed class RuntimeDiagnosticsProvider
         ];
     }
 
-    private static DirectoryState EnsureDirectory(string name, string path)
+    private DirectoryState EnsureDirectory(string name, string path)
     {
         try
         {
@@ -302,6 +307,7 @@ public sealed class RuntimeDiagnosticsProvider
         }
         catch (IOException exception)
         {
+            logger.DirectoryUnavailable(name, path, exception.Message);
             return new DirectoryState(
                 name,
                 path,
@@ -310,6 +316,7 @@ public sealed class RuntimeDiagnosticsProvider
         }
         catch (UnauthorizedAccessException exception)
         {
+            logger.DirectoryUnavailable(name, path, exception.Message);
             return new DirectoryState(
                 name,
                 path,

@@ -13,6 +13,7 @@ using Tomur.Api.Ollama;
 using Tomur.Api.OpenAI;
 using Tomur.Config;
 using Tomur.Conversations;
+using Tomur.Diagnostics;
 using Tomur.Hardware;
 using Tomur.Inference;
 using Tomur.Models;
@@ -109,6 +110,78 @@ public static class ApiRouteExtensions
         app.MapPost("/api/agents/chat", HandleAgentChatAsync);
         app.MapPost("/api/agents/workflows/read-only", HandleAgentReadOnlyWorkflowAsync);
         app.MapPost("/api/agents/tools/invoke", HandleAgentToolInvokeAsync);
+
+        app.MapGet("/api/logs/recent", static async (HttpContext context, LogBroadcastService logs) =>
+        {
+            int? limit = null;
+            if (context.Request.Query.TryGetValue("limit", out var limitValues) &&
+                int.TryParse(limitValues.FirstOrDefault(), out var parsedLimit))
+            {
+                limit = parsedLimit;
+            }
+
+            var minLevel = TryParseLogLevel(context.Request.Query["level"].FirstOrDefault());
+            var category = NormalizeLogCategory(context.Request.Query["category"].FirstOrDefault());
+
+            var response = logs.GetRecent(limit, minLevel, category);
+            await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.LogRecentResponse);
+        });
+
+        app.MapGet("/api/logs/stream", static async (HttpContext context, LogBroadcastService logs) =>
+        {
+            context.Response.StatusCode = StatusCodes.Status200OK;
+            context.Response.ContentType = "text/event-stream; charset=utf-8";
+            context.Response.Headers.CacheControl = "no-cache";
+            context.Response.Headers["X-Accel-Buffering"] = "no";
+
+            var minLevel = TryParseLogLevel(context.Request.Query["level"].FirstOrDefault());
+            var category = NormalizeLogCategory(context.Request.Query["category"].FirstOrDefault());
+
+            using var subscription = logs.Subscribe(backlogLimit: 200, minLevel, category);
+
+            foreach (var entry in subscription.Backlog)
+            {
+                await WriteLogEventAsync(context, entry);
+            }
+
+            var reader = subscription.Reader;
+            while (!context.RequestAborted.IsCancellationRequested)
+            {
+                using var heartbeat = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
+                heartbeat.CancelAfter(TimeSpan.FromSeconds(15));
+
+                try
+                {
+                    if (!await reader.WaitToReadAsync(heartbeat.Token))
+                    {
+                        break;
+                    }
+
+                    while (reader.TryRead(out var entry))
+                    {
+                        await WriteLogEventAsync(context, entry);
+                    }
+                }
+                catch (OperationCanceledException) when (!context.RequestAborted.IsCancellationRequested)
+                {
+                    await context.Response.WriteAsync(": keep-alive\n\n", context.RequestAborted);
+                    await context.Response.Body.FlushAsync(context.RequestAborted);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+            }
+        });
+
+        app.MapDelete("/api/logs", static async (HttpContext context, LogBroadcastService logs) =>
+        {
+            var cleared = logs.Clear();
+            await JsonHttpResponse.WriteAsync(
+                context,
+                new LogClearResponse("ok", cleared),
+                AppJsonSerializerContext.Default.LogClearResponse);
+        });
 
         app.MapGet("/api/conversations", static async (HttpContext context, ConversationStore conversations) =>
         {
@@ -3188,6 +3261,26 @@ public static class ApiRouteExtensions
         context.Response.ContentType = "text/event-stream; charset=utf-8";
         context.Response.Headers.CacheControl = "no-cache";
     }
+
+    private static async Task WriteLogEventAsync(HttpContext context, LogStreamEntry entry)
+    {
+        await context.Response.WriteAsync("data: ", context.RequestAborted);
+        await JsonSerializer.SerializeAsync(
+            context.Response.Body,
+            entry,
+            AppJsonSerializerContext.Default.LogStreamEntry,
+            context.RequestAborted);
+        await context.Response.WriteAsync("\n\n", context.RequestAborted);
+        await context.Response.Body.FlushAsync(context.RequestAborted);
+    }
+
+    private static Microsoft.Extensions.Logging.LogLevel? TryParseLogLevel(string? value)
+        => Enum.TryParse<Microsoft.Extensions.Logging.LogLevel>(value, ignoreCase: true, out var level)
+            ? level
+            : null;
+
+    private static string? NormalizeLogCategory(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private static void StartAnthropicStream(HttpContext context)
     {

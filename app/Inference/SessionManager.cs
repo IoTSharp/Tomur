@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using Microsoft.Extensions.Logging;
 using Tomur.Runtime;
 using Tomur.Hardware;
 
@@ -9,6 +11,7 @@ public sealed class SessionManager : IDisposable
 
     private readonly LlamaBackendInitializer backendInitializer;
     private readonly HardwareAccelerationService accelerationService;
+    private readonly ILogger<SessionManager> logger;
     private readonly object gate = new();
     private LlamaNativeSession? currentSession;
     private string? currentModelId;
@@ -19,10 +22,14 @@ public sealed class SessionManager : IDisposable
     private string? currentAcceleratorKey;
     private bool disposed;
 
-    public SessionManager(LlamaBackendInitializer backendInitializer, HardwareAccelerationService accelerationService)
+    public SessionManager(
+        LlamaBackendInitializer backendInitializer,
+        HardwareAccelerationService accelerationService,
+        ILogger<SessionManager> logger)
     {
         this.backendInitializer = backendInitializer;
         this.accelerationService = accelerationService;
+        this.logger = logger;
     }
 
     internal CompletionResult Generate(
@@ -86,6 +93,11 @@ public sealed class SessionManager : IDisposable
         currentAcceleratorKey = null;
 
         backendInitializer.EnsureInitialized();
+        var acceleratorLabel = accelerationPlan.SelectedAcceleratorKey
+            ?? accelerationPlan.EffectiveBackend
+            ?? "cpu";
+        logger.SessionLoading(model.Id, effectiveContextSize, accelerationPlan.EffectiveGpuLayers, acceleratorLabel);
+        var stopwatch = Stopwatch.StartNew();
         try
         {
             currentSession = new LlamaNativeSession(
@@ -96,10 +108,12 @@ public sealed class SessionManager : IDisposable
                 acceleratorKey: accelerationPlan.SelectedAcceleratorKey,
                 accelerator: accelerationPlan.SelectedAccelerator,
                 npuRequested: IsNpuRequested(accelerationPlan),
-                embeddings: embeddings);
+                embeddings: embeddings,
+                logger: logger);
         }
         catch (Exception exception) when (exception is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
         {
+            logger.SessionLoadFailed(model.Id, exception);
             throw new InferenceException(
                 "native_runtime_unavailable",
                 $"The llama.cpp native runtime could not be loaded: {exception.Message}",
@@ -110,6 +124,8 @@ public sealed class SessionManager : IDisposable
                 exception);
         }
 
+        stopwatch.Stop();
+        logger.SessionLoaded(model.Id, stopwatch.ElapsedMilliseconds);
         currentModelId = model.Id;
         currentModelPath = model.AbsolutePath;
         currentContextSize = effectiveContextSize;
@@ -163,6 +179,11 @@ public sealed class SessionManager : IDisposable
     {
         lock (gate)
         {
+            if (currentSession is not null)
+            {
+                logger.SessionUnloaded(currentModelId ?? "unknown");
+            }
+
             currentSession?.Dispose();
             currentSession = null;
             currentModelId = null;

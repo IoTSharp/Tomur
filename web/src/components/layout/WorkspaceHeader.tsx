@@ -1,5 +1,5 @@
 import { Button, Select, Tooltip, Typography } from "antd";
-import { PanelRightOpen, RefreshCcw, Settings } from "lucide-react";
+import { Activity, RefreshCcw } from "lucide-react";
 
 export interface ModelOption {
   value: string;
@@ -11,26 +11,26 @@ export function WorkspaceHeader({
   visibleChatModels,
   chatModelCount,
   loadingStatus,
+  runtimeOk,
   onModelChange,
   onRefreshStatus,
-  onOpenStatus,
-  onOpenSettings
+  onOpenStatus
 }: {
   selectedModelLabel?: string;
   visibleChatModels: ModelOption[];
   chatModelCount: number;
   loadingStatus: boolean;
+  runtimeOk: boolean;
   onModelChange: (value: string) => void;
   onRefreshStatus: () => void;
   onOpenStatus: () => void;
-  onOpenSettings: () => void;
 }) {
   return (
     <header className="topbar">
       <div className="topbar-copy">
-        <Typography.Title level={3}>Chat-first 本地工作台</Typography.Title>
+        <Typography.Title level={4}>本地对话</Typography.Title>
         <Typography.Text type="secondary">
-          默认入口直接进入对话区，模型、下载、Runtime 和文件能力通过状态抽屉与 Settings 收敛。
+          直接与本地模型对话，模型与运行时状态在左侧导航切换查看。
         </Typography.Text>
       </div>
 
@@ -42,6 +42,8 @@ export function WorkspaceHeader({
           options={visibleChatModels}
           onChange={onModelChange}
           disabled={chatModelCount === 0}
+          showSearch
+          optionFilterProp="label"
         />
         <Tooltip title="刷新状态">
           <Button
@@ -50,14 +52,17 @@ export function WorkspaceHeader({
             onClick={onRefreshStatus}
           />
         </Tooltip>
-        <Tooltip title="状态抽屉">
-          <Button icon={<PanelRightOpen size={16} />} onClick={onOpenStatus} />
-        </Tooltip>
-        <Tooltip title="Settings">
-          <Button icon={<Settings size={16} />} onClick={onOpenSettings} />
+        <Tooltip title={runtimeOk ? "本地 runtime 就绪，查看状态" : "runtime 待处理，查看状态"}>
+          <button
+            type="button"
+            className={`runtime-chip ${runtimeOk ? "is-ok" : "is-warn"}`}
+            onClick={onOpenStatus}
+          >
+            <Activity size={14} />
+            <span>{runtimeOk ? "就绪" : "待处理"}</span>
+          </button>
         </Tooltip>
       </div>
     </header>
   );
 }
-

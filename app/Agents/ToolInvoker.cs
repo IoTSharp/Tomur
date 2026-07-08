@@ -1,4 +1,5 @@
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
 using Tomur.Inference;
 using Tomur.Runtime;
 
@@ -11,19 +12,22 @@ public sealed class ToolInvoker
     private readonly ToolExecutionService toolExecution;
     private readonly AgentEventLog eventLog;
     private readonly AgentTelemetry telemetry;
+    private readonly ILogger<ToolInvoker> logger;
 
     public ToolInvoker(
         AgentRuntimeService agentRuntime,
         ToolFactory toolFactory,
         ToolExecutionService toolExecution,
         AgentEventLog eventLog,
-        AgentTelemetry telemetry)
+        AgentTelemetry telemetry,
+        ILogger<ToolInvoker> logger)
     {
         this.agentRuntime = agentRuntime;
         this.toolFactory = toolFactory;
         this.toolExecution = toolExecution;
         this.eventLog = eventLog;
         this.telemetry = telemetry;
+        this.logger = logger;
     }
 
     public async Task<AgentToolInvokeResponse> InvokeAsync(
@@ -110,6 +114,7 @@ public sealed class ToolInvoker
             }
             catch (InferenceException exception)
             {
+                logger.ToolInvocationFailed(descriptor.Name, exception);
                 result = CreateControlledFailureResult(descriptor, exception);
             }
 

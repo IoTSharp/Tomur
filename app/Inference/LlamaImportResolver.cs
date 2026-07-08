@@ -1,5 +1,7 @@
 using System.Reflection;
 using System.Runtime.InteropServices;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Tomur.Native;
 
 namespace Tomur.Inference;
@@ -11,11 +13,16 @@ public sealed class LlamaImportResolver
 
     private readonly INativeLibraryResolver resolver;
     private readonly NativeRuntimePreference runtimePreference;
+    private readonly ILogger<LlamaImportResolver> logger;
 
-    public LlamaImportResolver(INativeLibraryResolver resolver, NativeRuntimePreference? runtimePreference = null)
+    public LlamaImportResolver(
+        INativeLibraryResolver resolver,
+        NativeRuntimePreference? runtimePreference = null,
+        ILogger<LlamaImportResolver>? logger = null)
     {
         this.resolver = resolver;
         this.runtimePreference = runtimePreference ?? new NativeRuntimePreference();
+        this.logger = logger ?? NullLogger<LlamaImportResolver>.Instance;
     }
 
     public void Register()
@@ -58,10 +65,12 @@ public sealed class LlamaImportResolver
         }
         catch (DllNotFoundException)
         {
+            logger.ImportResolverFallback(normalized);
             return IntPtr.Zero;
         }
         catch (BadImageFormatException)
         {
+            logger.ImportResolverFallback(normalized);
             return IntPtr.Zero;
         }
     }

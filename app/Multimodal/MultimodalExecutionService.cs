@@ -1,6 +1,8 @@
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Tomur.Config;
 using Tomur.Hardware;
 using Tomur.Inference;
@@ -20,6 +22,7 @@ public sealed class MultimodalExecutionService
     private readonly INativeLibraryResolver libraryResolver;
     private readonly HardwareAccelerationService? accelerationService;
     private readonly NativeRuntimePreference runtimePreference;
+    private readonly ILogger<MultimodalExecutionService> logger;
 
     public MultimodalExecutionService(
         MultimodalRuntimeService runtimeService,
@@ -28,7 +31,8 @@ public sealed class MultimodalExecutionService
         LlamaImportResolver importResolver,
         INativeLibraryResolver libraryResolver,
         HardwareAccelerationService? accelerationService = null,
-        NativeRuntimePreference? runtimePreference = null)
+        NativeRuntimePreference? runtimePreference = null,
+        ILogger<MultimodalExecutionService>? logger = null)
     {
         this.runtimeService = runtimeService;
         this.diagnosticsProvider = diagnosticsProvider;
@@ -37,6 +41,7 @@ public sealed class MultimodalExecutionService
         this.libraryResolver = libraryResolver;
         this.accelerationService = accelerationService;
         this.runtimePreference = runtimePreference ?? new NativeRuntimePreference();
+        this.logger = logger ?? NullLogger<MultimodalExecutionService>.Instance;
     }
 
     public MultimodalBackendStatus GetBackendStatus(string backendId)
@@ -680,6 +685,7 @@ public sealed class MultimodalExecutionService
             _ => null
         };
         var detail = resolution is null ? exception.Message : $"{exception.Message} ({resolution.Message})";
+        logger.NativeRuntimeUnavailable(backendId, exception);
         return new InferenceException(
             "native_runtime_unavailable",
             $"The {backendId} native runtime could not be used: {detail}",

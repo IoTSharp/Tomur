@@ -3,6 +3,8 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Tomur.Config;
 
 namespace Tomur.Models;
@@ -13,12 +15,18 @@ public sealed class ModelInstallService
     private readonly InstallManifestStore manifestStore;
     private readonly ProxySettings proxySettings;
     private readonly TextWriter output;
+    private readonly ILogger<ModelInstallService> logger;
 
-    public ModelInstallService(DataPaths paths, ProxySettings proxySettings, TextWriter output)
+    public ModelInstallService(
+        DataPaths paths,
+        ProxySettings proxySettings,
+        TextWriter output,
+        ILogger<ModelInstallService>? logger = null)
     {
         this.paths = paths;
         this.proxySettings = proxySettings;
         this.output = output;
+        this.logger = logger ?? NullLogger<ModelInstallService>.Instance;
         manifestStore = new InstallManifestStore(paths);
     }
 
@@ -106,6 +114,7 @@ public sealed class ModelInstallService
             installedAt);
 
         manifestStore.Upsert(installedPackage);
+        logger.PackageInstalled(package.Id, installedPackage.Status);
         output.WriteLine($"  wrote {Defaults.ModelInstallManifestFileName}");
         output.WriteLine();
     }
@@ -123,10 +132,12 @@ public sealed class ModelInstallService
             }
             catch (Exception exception) when (exception is HttpRequestException or IOException or TaskCanceledException or InvalidOperationException)
             {
+                logger.DownloadSourceFailed(url.ToString(), exception.Message);
                 errors.Add($"{url}: {exception.Message}");
             }
         }
 
+        logger.DownloadFailed(ToModelsRelativePath(targetPath));
         throw new InvalidOperationException($"Failed to download {ToModelsRelativePath(targetPath)}. {string.Join(" | ", errors)}");
     }
 
@@ -265,7 +276,7 @@ public sealed class ModelInstallService
         return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
-    private static bool VerifySha256(string? expectedSha256, string actualSha256, string targetPath)
+    private bool VerifySha256(string? expectedSha256, string actualSha256, string targetPath)
     {
         if (string.IsNullOrWhiteSpace(expectedSha256))
         {
@@ -279,6 +290,7 @@ public sealed class ModelInstallService
         }
 
         File.Delete(targetPath);
+        logger.ChecksumMismatch(ToModelsRelativePath(targetPath), normalizedExpected, actualSha256);
         throw new InvalidOperationException($"SHA256 mismatch for {targetPath}. Expected {normalizedExpected}, got {actualSha256}.");
     }
 

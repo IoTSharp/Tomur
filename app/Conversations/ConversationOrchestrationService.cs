@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using Tomur.Config;
 using Tomur.Agents;
 using Tomur.Api;
@@ -28,6 +29,7 @@ public sealed class ConversationOrchestrationService
     private readonly LocalModelCatalog modelCatalog;
     private readonly MultimodalExecutionService multimodalExecution;
     private readonly DataPaths paths;
+    private readonly ILogger<ConversationOrchestrationService> logger;
 
     public ConversationOrchestrationService(
         ConversationStore conversations,
@@ -37,7 +39,8 @@ public sealed class ConversationOrchestrationService
         AgentEventLog eventLog,
         LocalModelCatalog modelCatalog,
         MultimodalExecutionService multimodalExecution,
-        DataPaths paths)
+        DataPaths paths,
+        ILogger<ConversationOrchestrationService> logger)
     {
         this.conversations = conversations;
         this.agentRuntime = agentRuntime;
@@ -47,6 +50,7 @@ public sealed class ConversationOrchestrationService
         this.modelCatalog = modelCatalog;
         this.multimodalExecution = multimodalExecution;
         this.paths = paths;
+        this.logger = logger;
     }
 
     public async Task<ConversationTurnResult> RunTurnAsync(
@@ -315,6 +319,7 @@ public sealed class ConversationOrchestrationService
         }
         catch (Exception exception) when (IsNativeRuntimeException(exception))
         {
+            logger.TurnNativeRuntimeUnavailable(exception);
             var runtimeException = new InferenceException(
                 "native_runtime_unavailable",
                 $"The llama.cpp native runtime could not be used: {exception.Message}",
@@ -423,6 +428,7 @@ public sealed class ConversationOrchestrationService
         }
         catch (Exception exception) when (IsNativeRuntimeException(exception))
         {
+            logger.TurnNativeRuntimeUnavailable(exception);
             var runtimeException = new InferenceException(
                 "native_runtime_unavailable",
                 $"The ASR native runtime could not be used: {exception.Message}",
@@ -632,6 +638,7 @@ public sealed class ConversationOrchestrationService
         }
         catch (Exception exception) when (IsNativeRuntimeException(exception))
         {
+            logger.TurnNativeRuntimeUnavailable(exception);
             var runtimeException = new InferenceException(
                 "native_runtime_unavailable",
                 $"The TTS native runtime could not be used: {exception.Message}",
@@ -800,6 +807,7 @@ public sealed class ConversationOrchestrationService
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
+            logger.TurnFileOperationFailed(exception.Message);
             var conversation = conversations.Get(conversationId, 1).Conversation;
             var diagnostic = new RuntimeDiagnostic(
                 "error",
@@ -1295,6 +1303,7 @@ public sealed class ConversationOrchestrationService
         }
         catch (Exception exception) when (IsNativeRuntimeException(exception))
         {
+            logger.TurnNativeRuntimeUnavailable(exception);
             var runtimeException = new InferenceException(
                 "native_runtime_unavailable",
                 $"The TTS native runtime could not be used: {exception.Message}",
@@ -1426,6 +1435,7 @@ public sealed class ConversationOrchestrationService
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
+            logger.TurnFileOperationFailed(exception.Message);
             diagnostic = new RuntimeDiagnostic(
                 "error",
                 "artifact_write_failed",
@@ -1436,7 +1446,7 @@ public sealed class ConversationOrchestrationService
         }
     }
 
-    private static bool TryResolveAttachmentBytes(
+    private bool TryResolveAttachmentBytes(
         ConversationAttachment attachment,
         string fallbackMediaType,
         long maxBytes,
@@ -1521,6 +1531,7 @@ public sealed class ConversationOrchestrationService
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
+            logger.TurnFileOperationFailed(exception.Message);
             diagnostic = new RuntimeDiagnostic(
                 "warning",
                 "attachment_read_failed",
