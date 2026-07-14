@@ -121,7 +121,7 @@ tomur list --catalog
 
 ## 🚧 Current Status
 
-Tomur has completed the main R1-R11 loops, is converging the R12 Native AOT / self-contained release matrix, continuing the R13 web capability aggregation loop, implementing R14 Intel GPU / NPU acceleration, and starting the R15 pure C# GLM / MoE provider experiment. Completed history is tracked in [CHANGELOG.md](./CHANGELOG.md).
+Tomur has completed the main R1-R11 loops, is converging the R12 Native AOT / self-contained release matrix, continuing the R13 web capability aggregation loop, implementing R14 Intel GPU / NPU acceleration, and advancing the R15 pure C# GLM / MoE provider experiment. Completed history is tracked in [CHANGELOG.md](./CHANGELOG.md).
 
 | Stage | Status |
 | --- | --- |
@@ -133,7 +133,7 @@ Tomur has completed the main R1-R11 loops, is converging the R12 Native AOT / se
 | R12 | Native AOT publishing currently passes without warnings; Linux/macOS release logs, macOS native bundle assets, and real-machine service smoke remain in progress. |
 | R13 | Web capability aggregation has connected Agent / Capabilities views, read-only Agent tool calls, explicit side-effect tool confirmation, protocol capability maps, and Claude Code / Anthropic Messages compatibility; visual download queue and editable Settings remain in progress. |
 | R14 | Intel GPU / NPU support is being connected through the existing ggml dynamic backend path; `vulkan`, `sycl`, `openvino`, and `intel` native build entries, runtime accelerator preferences, OpenVINO / NPU environment setup, CPU fallback diagnostics, NPU incompatibility errors, Web Runtime display, and the smoke evidence entry are in place. Real Intel GPU / NPU smoke still needs machine evidence. |
-| R15 | Work has started on an independent pure C# GLM / MoE provider library, provider selection boundary, model format probing, a fixed-seed tiny fixture/oracle baseline, and the tensor storage/read layer. The existing llama.cpp path remains available and is still the default; stage regression and real forward execution have not been validated yet. |
+| R15 | The M1-M3 foundation code is complete: the independent pure C# GLM / MoE provider library, provider selection boundary, model format probing, fixed-seed tiny fixture/oracle baseline, and tensor storage/read layer are in place; M4 scalar reference kernels are next. Build, regression, oracle alignment, cross-platform, performance, and real-forward validation are deferred to M14. The existing llama.cpp path remains available and is still the default. |
 
 Planned follow-up work includes Intel GPU / NPU real smoke (tracked through `docs/r14-intel-acceleration-smoke.md`), a visual download queue, editable Settings, model deletion, VAD / interruption, streaming voice turns, multi-model residency, Linux/macOS release records, and real-machine service smoke.
 

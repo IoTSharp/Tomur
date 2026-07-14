@@ -4,6 +4,14 @@
 
 ## 未发布
 
+### R15 当前已接入
+
+1. 已建立 `Tomur.Providers.Glm` 独立纯 C# 类库、extend-only provider 契约、非 AOT 动态发现边界与 `SessionManager` 选择路径；未匹配的现有模型继续使用 llama.cpp。
+2. 已建立 `model.tomur.json`、GLM 配置、tokenizer 基础结构和 safetensors header/tensor index 的有界只读探测，并接入 provider discovery、Catalog、doctor、Runtime API 与 Web Runtime 诊断。
+3. 已建立固定 seed 的 tiny F32 fixture、版本化 oracle、tensor manifest、SHA-256 校验、隐藏 generate/verify 入口与 M1-M3 独立测试项目。
+4. 已建立统一 tensor descriptor、只读 shard 随机访问、F32/F16/BF16 resident 转换、int4/int8 量化视图、池化 workspace 与 expert slab 基础层。
+5. managed forward 尚未接通时返回 `managed_forward_not_ready`，不会返回占位 token，也不会影响现有 native provider。
+
 ### R14 当前已接入
 
 1. `tomur native build --backend` 已扩展 `vulkan`、`openvino`、`sycl` 与 `intel` 入口；`intel` 组合构建 llama.cpp 的 SYCL、OpenVINO 与 Vulkan dynamic backend。

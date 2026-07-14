@@ -6,10 +6,12 @@
 
 | 标记 | 含义 |
 | --- | --- |
-| ✅ | 已完成且已有对应代码或文档 |
-| 🚧 | 已开始，但尚未完成要求的验证 |
-| ⏭️ | 下一阶段 |
+| ✅ | 本阶段基础代码已完成；集中测试与验证统一在 M14 执行 |
+| 🚧 | 基础代码实现中 |
+| ⏭️ | 下一基础代码阶段 |
 | ⏳ | 计划中 |
+
+本路线图优先推进 M0-M13 的基础代码。阶段状态按代码落地情况标记，不再因为尚未执行构建、测试或实机验证而长期保持 🚧；所有编译、测试、oracle 对齐、跨平台实跑、性能测量和发布验证统一收敛到 M14。M14 完成前，✅ 只表示对应实现范围已落地，不表示已经 smoke-validated，也不表示 managed GLM provider 已可用于真实聊天。
 
 ## 目标
 
@@ -174,10 +176,10 @@ Disk
 | 顺序 | 阶段 | 状态 | 主题 |
 | --- | --- | --- | --- |
 | 00 | M0 | ✅ | 分支、工程规则与 provider 方向 |
-| 01 | M1 | 🚧 | provider 边界、模型清单与 safetensors probe |
-| 02 | M2 | 🚧 | tiny fixture 与 oracle 验证基线 |
-| 03 | M3 | 🚧 | 张量存储、读取和量化视图 |
-| 04 | M4 | ⏳ | scalar reference kernels |
+| 01 | M1 | ✅ | provider 边界、模型清单与 safetensors probe |
+| 02 | M2 | ✅ | tiny fixture 与 oracle 基线 |
+| 03 | M3 | ✅ | 张量存储、读取和量化视图 |
+| 04 | M4 | ⏭️ | scalar reference kernels |
 | 05 | M5 | ⏳ | tokenizer、prompt 与增量解码 |
 | 06 | M6 | ⏳ | resident dense model 加载 |
 | 07 | M7 | ⏳ | MLA attention 与 compressed KV cache |
@@ -187,7 +189,7 @@ Disk
 | 11 | M11 | ⏳ | SIMD、并行、缓存与 I/O 优化 |
 | 12 | M12 | ⏳ | DSA、MTP、grammar draft 与 KV 持久化 |
 | 13 | M13 | ⏳ | 打包、版本兼容与 Native AOT 策略 |
-| 14 | M14 | ⏳ | 完整模型运行和长期回归证据 |
+| 14 | M14 | ⏳ | 集中测试、完整模型验证与发布证据 |
 
 ## 00. ✅ M0：分支与工程决策
 
@@ -201,16 +203,11 @@ Disk
 4. 确定程序集名 `Tomur.Providers.Glm` 和 provider ID `managed-glm`。
 5. 禁止在代码命名、provider ID、配置键和诊断代码中使用参考项目名称。
 
-验收：
-
-1. 根 README、ROADMAP 和 AGENTS 口径一致。
-2. managed provider 不改变既有 GGUF 与 embedding 路径。
-
-## 01. 🚧 M1：provider 边界与模型 probe
+## 01. ✅ M1：provider 边界与模型 probe
 
 目标：让 Tomur 能发现独立托管程序集，并在不读取完整权重的前提下判断模型目录是否结构完整。
 
-当前代码：
+已完成基础代码：
 
 1. `ITextGenerationProvider` 和 `ITextGenerationSession` 已建立。
 2. `ModelProviderRegistry` 已建立非 AOT 动态程序集发现入口。
@@ -227,54 +224,25 @@ Disk
 13. safetensors probe 已校验受支持 dtype、shape 对应字节数、连续且不重叠的数据范围，并保持只读取文件长度与 header。
 14. M1 测试项目已建立运行时生成的最小合法/非法模型目录 fixture，不在仓库保存模型权重。
 
-仍需完成：
-
-1. 编译主程序、provider 与 M1 测试项目，解决编译器和 analyzer 发现的问题。
-2. 执行 M1 回归测试，确认合法 probe、坏 manifest、越界 tensor offset、缺 tensor、坏 DLL、非法 ID、重复 ID 与缺 provider 诊断。
-3. 实跑 provider DLL 从默认 `providers` 目录和 `TOMUR_PROVIDER_PATH` 加载，并记录两条发现路径的结果。
-4. 实跑 `tomur doctor` 与 `GET /api/runtime/status`，确认 provider 状态、路径和修复动作可见。
-
-验收：
-
-1. llama.cpp 模型仍进入原 session 路径。
-2. managed 模型缺 provider 时返回 `managed_provider_unavailable`。
-3. 非法模型目录不会让整个 Catalog 或服务进程崩溃。
-4. probe 期间不读取 tensor payload，不分配完整模型内存。
-5. 本阶段完成前仍保持 🚧，不得标记为可聊天。
-
-## 02. 🚧 M2：tiny fixture 与 oracle 基线
+## 02. ✅ M2：tiny fixture 与 oracle 基线
 
 目标：先建立可重复的正确性判定，再开始实现算子。
 
-当前代码：
+已完成基础代码：
 
 1. tiny 配置使用真实 GLM / MoE 字段，并把 hidden、layer、head、expert、vocab 和 context 缩小到可逐项检查的范围。
 2. fixture generator 使用版本固定的 SplitMix64 派生 PRNG 与固定 seed 生成 F32 权重，并写出完整 tensor manifest。
 3. oracle 已保存固定文本 token IDs、embedding lookup、RMSNorm、MLA attention、router、MoE、单层输出、teacher-forcing logits 和 greedy decode token 序列。
 4. scalar reference graph 在 F32 边界保存 checkpoint，并使用 double accumulator 固定矩阵乘、归一化、softmax 与路由权重计算顺序。
 5. `fixture.manifest.json` 对配置、tokenizer、safetensors、tensor manifest 和 oracle 记录长度与 SHA-256；校验器同时检查 schema、配置摘要与逐 tensor checksum。
-6. `tomur internal model-fixture generate|verify` 已通过可选 provider 契约接入；M2 独立测试项目覆盖重复生成、oracle checkpoint、篡改拒绝与 managed probe。
+6. `tomur internal model-fixture generate|verify` 已通过可选 provider 契约接入；M2 独立测试项目已包含重复生成、oracle checkpoint、篡改拒绝与 managed probe 用例。
 7. fixture 由 generator 在干净目录按需创建，仓库不提交完整模型权重。
 
-仍需完成：
-
-1. 编译主程序、provider 与 M2 测试项目，处理编译器和 analyzer 结果。
-2. 执行 M2 回归测试，并确认两个干净目录的全部生成文件逐字节一致。
-3. 实跑隐藏 CLI 的 generate 与 verify 路径，记录 checksum 和失败诊断。
-4. 在首个生产 kernel 合入前，用独立实现复核 reference graph 的 attention、router、teacher-forcing 与 greedy 结果。
-
-验收：
-
-1. fixture 可从干净目录重复生成或下载并校验 checksum。
-2. oracle 文件具有 schema version、模型配置摘要和生成工具版本。
-3. 所有后续 kernel 都能单独与 oracle 比较。
-4. greedy 输出必须在固定 seed、固定 kernel path 下可重复。
-
-## 03. 🚧 M3：张量存储和读取层
+## 03. ✅ M3：张量存储和读取层
 
 目标：建立不依赖模型图的安全张量访问层。
 
-当前代码：
+已完成基础代码：
 
 1. `TensorDescriptor` 已统一 safetensors probe 与后续读取所需的 name、dtype、logical shape、physical length、shard 和 offset，并允许量化层在不改变物理范围的前提下指定逻辑 shape。
 2. `TensorDataSource` 已按 shard 持有只读随机访问 handle，提供有界整 tensor、slice 与同 shard 相邻 tensor 合并读取，并在 dispose 时关闭全部 handle。
@@ -282,23 +250,9 @@ Disk
 4. `ResidentTensor<T>` 已使用独占托管数组表达长期驻留所有权；`TensorWorkspace` 使用固定容量池化 activation、quantization 和 output buffer 表达短期 scratch 所有权。
 5. `QuantizedTensorDescriptor` 与 `QuantizedTensorView` 已校验 int8/int4 payload、奇数列 packed int4 长度和 per-row F32 scales，并提供有符号 int8/int4 元素视图。
 6. `ExpertSlab` 已使用固定容量池化 slot 同时容纳 gate/up/down payload 与 scales，并在三个 payload 相邻时合并为一次读取。
-7. M3 独立测试项目已覆盖随机 slice、相邻读取、F32/F16/BF16 转换、int4 奇数列、取消、workspace/resident/expert slab dispose、短文件、溢出和重复 handle 释放。
+7. M3 独立测试项目已包含随机 slice、相邻读取、F32/F16/BF16 转换、int4 奇数列、取消、workspace/resident/expert slab dispose、短文件、溢出和重复 handle 释放用例。
 
-仍需完成：
-
-1. 编译 provider 与 M3 测试项目，处理编译器和 analyzer 结果。
-2. 执行 M3 回归测试，确认随机字节读取、半精度转换、量化 shape 和资源释放行为。
-3. 在 Windows 与 Linux 执行多 shard data source 重复创建/销毁用例，并记录文件句柄释放结果。
-4. 在 M6 model load 与 M8 expert streaming 中复用本阶段 descriptor、data source 和所有权类型，不重新解析 safetensors header。
-
-验收：
-
-1. 随机 tensor slice 与原始文件字节完全一致。
-2. EOF、短读、偏移溢出和 disposed handle 返回明确异常。
-3. 重复 load/unload 不保留打开文件句柄。
-4. probe、resident load 和 expert stream 使用同一 tensor descriptor，不重复解析 header。
-
-## 04. ⏳ M4：scalar reference kernels
+## 04. ⏭️ M4：scalar reference kernels
 
 目标：建立简单、可读、可验证的标量实现，作为所有 SIMD kernel 的正确性基准。
 
@@ -323,13 +277,6 @@ Disk
 4. 每个 kernel 检查 shape、stride 和 buffer 长度。
 5. 性能优化不得删除 scalar path；scalar path 用于诊断和跨平台 fallback。
 
-验收：
-
-1. F32 kernel 与 oracle 达到预定绝对/相对误差。
-2. int8/int4 kernel 与离线解量化结果一致。
-3. 奇数列数、非 SIMD 对齐、空 batch 和最小 shape 有覆盖。
-4. 非法 shape 不得造成越界访问。
-
 ## 05. ⏳ M5：tokenizer、prompt 与增量解码
 
 目标：在模型 forward 前先锁定文本与 token 的双向语义。
@@ -343,13 +290,6 @@ Disk
 5. 建立 GLM chat template，不把通用 llama prompt builder 直接套用到该模型。
 6. decode 维护未完成 UTF-8 尾部，只有完整字符才发送给 streaming callback。
 7. stop sequence 检查保留可能跨 token 的尾部窗口。
-
-验收：
-
-1. 固定中英文、代码、emoji、空白和控制字符输入与 oracle token IDs 一致。
-2. encode/decode 对可逆样本保持 byte roundtrip。
-3. special token 不被普通 BPE 拆分。
-4. streaming 不输出损坏 UTF-8，也不泄漏 stop sequence。
 
 ## 06. ⏳ M6：resident dense model
 
@@ -372,13 +312,7 @@ resident 范围：
 3. 预算超过可用内存时在读取 payload 前失败。
 4. 读取完成后释放临时 conversion buffer。
 5. model 与 session 分离，为后续多 context 共享只读权重保留边界；首批仍只允许一个活动 session。
-
-验收：
-
-1. resident bytes 与实际分配误差在可解释范围内。
-2. 缺失或损坏 dense tensor 时不进入 Loaded 状态。
-3. load cancellation 能停止后续读取并释放已分配资源。
-4. embedding、norm 和 dense MLP 单层输出与 oracle 对齐。
+6. 复用 M3 的 tensor descriptor、data source 和所有权类型，不重新解析 safetensors header。
 
 ## 07. ⏳ M7：MLA attention 与 compressed KV cache
 
@@ -408,13 +342,6 @@ resident 范围：
 2. attention score 计算检查 NaN/Infinity。
 3. cancellation 只在不会留下半写 KV 的安全点生效。
 4. forward 失败时回滚本轮新增 KV 位置。
-
-验收：
-
-1. 单层 attention 中间值与 oracle 对齐。
-2. teacher forcing 的每个位置 logits 对齐。
-3. prefill 后逐 token decode 与纯逐 token 路径一致。
-4. compressed KV 实际字节数与配置公式一致。
 
 ## 08. ⏳ M8：MoE 与 expert streaming
 
@@ -456,14 +383,7 @@ I/O 流水线：
 3. 主线程先执行 resident/shared 工作，再等待缺失 expert。
 4. cancellation 停止未开始的读取；已开始读取完成后归还 slot。
 5. 不允许无界 Task 创建或每 expert 新建线程。
-
-验收：
-
-1. router IDs、权重和单层 MoE 输出与 oracle 对齐。
-2. 冷 cache 与热 cache 输出一致。
-3. cache eviction 不改变 token 结果。
-4. 缺 shard、短读和 checksum 失败返回模型资产诊断。
-5. 内存预算不能因并发 miss 超出上限。
+6. 复用 M3 的 descriptor、data source、量化视图和 expert slab，不在 expert streaming 中重复解析 safetensors header。
 
 ## 09. ⏳ M9：完整 forward 与生成
 
@@ -498,14 +418,6 @@ forward 顺序：
 4. sampling。
 5. streaming callback。
 
-验收：
-
-1. tiny teacher forcing 所有位置达到误差门槛。
-2. tiny greedy token 序列完全一致。
-3. 固定 seed sampling 可重复。
-4. context 超限在写 KV 前失败。
-5. 任何异常都不产生伪造 completion。
-
 ## 10. ⏳ M10：Tomur 集成闭环
 
 目标：让 managed provider 通过现有 OpenAI、Ollama 和 Anthropic Messages 入口工作，不增加另一套 API。
@@ -533,13 +445,6 @@ forward 顺序：
 9. `managed_forward_not_ready`
 10. `managed_inference_failed`
 
-验收：
-
-1. managed 与 llama.cpp 模型能在同一 API 表面被正确路由。
-2. managed provider 失败不影响 llama.cpp 请求。
-3. streaming 断开能够触发取消并回收本轮状态。
-4. 未验证模型在 UI 中不显示为 ready。
-
 ## 11. ⏳ M11：性能优化
 
 目标：在不改变模型语义的前提下提高 CPU、RAM 和磁盘利用率。
@@ -556,32 +461,12 @@ forward 顺序：
 8. 异步预读下一批已知 expert。
 9. 根据 RAM budget 自动计算每层 cache capacity。
 10. 根据 usage histogram pin hot experts。
-11. 只在 benchmark 证明收益后引入内存映射或更复杂的 I/O 策略。
-
-每项优化必须：
-
-1. 与 scalar path 比较中间输出。
-2. 记录 CPU 架构和指令集。
-3. 记录 prompt、context、batch、cache 状态和磁盘状态。
-4. 分别报告 cold 与 warm 结果。
-5. 可通过配置关闭并回退。
-
-性能指标：
-
-1. 模型 probe 时间。
-2. resident load 时间。
-3. prompt tokens/s。
-4. decode tokens/s。
-5. 首 token 延迟。
-6. 每 token expert reads。
-7. 磁盘读取 GB/s 与 foreground wait。
-8. cache hit rate。
-9. RSS、managed heap、pinned bytes 和 pooled bytes。
-10. GC pause 和每 token allocation。
+11. 为内存映射和复杂 I/O 策略保留可切换边界，未经 M14 性能证据不设为默认路径。
+12. 所有优化路径均可通过配置关闭并回退到 scalar path。
 
 ## 12. ⏳ M12：高级能力
 
-前置条件：M9 正确性完成，M11 有稳定基准。
+代码依赖：M9 与 M11 的基础实现完成；正确性和性能门槛统一在 M14 验证。
 
 计划顺序：
 
@@ -594,14 +479,6 @@ forward 顺序：
 7. live expert repin。
 8. compressed KV 持久化和恢复。
 9. isolated KV contexts。
-
-验收：
-
-1. 禁用高级能力时回到已验证基础路径。
-2. DSA 在保留全部 key 时与 dense attention 一致。
-3. speculative decoding 不改变采样分布。
-4. KV 恢复与不中断会话输出一致。
-5. 任一高级能力不能绕过内存预算、取消或模型资产校验。
 
 ## 13. ⏳ M13：发布与兼容
 
@@ -626,16 +503,76 @@ Native AOT 发布：
 3. `model.tomur.json` schema 先扩 reader，再启用 writer。
 4. 诊断 code 一经公开不改名，只增加新 code。
 
-验收：
+## 14. ⏳ M14：集中测试、完整模型验证与发布证据
 
-1. 非 AOT 包可从默认目录发现 provider。
-2. 缺 provider DLL 时主程序和 native providers 正常运行。
-3. AOT 包行为与文档一致。
-4. provider 升级不会破坏旧模型 manifest。
+目标：在 M0-M13 基础代码全部完成后，集中执行编译、analyzer、自动化测试、oracle 对齐、跨平台实跑、性能测量、完整模型推理和发布验证，并形成可复现证据。
 
-## 14. ⏳ M14：完整模型验证
+启动条件：
 
-目标：证明完整模型可以在受控资源下加载并生成真实 token。
+1. M0-M13 的基础代码均已标记为 ✅。
+2. 用户明确要求开始验证。
+3. 验证失败只回退对应实现阶段修复代码，不把未通过能力标记为 ready。
+
+当前状态：⏳ 尚未执行集中验证。
+
+### 14.1 ⏳ 构建与静态检查
+
+1. 编译主程序、provider 和全部 Managed GLM 测试项目。
+2. 逐项处理编译器、nullable、trimming、AOT 和 analyzer 问题，不使用 blanket suppression。
+3. 确认 provider 项目不包含 `DllImport`、`LibraryImport`、`NativeLibrary.Load` 或第三方 native 推理依赖。
+4. 核对根 README、README.en、ROADMAP、AGENTS、provider README 与实现状态一致。
+
+### 14.2 ⏳ M1-M3 基础层验证
+
+1. 执行 M1 回归，覆盖合法 probe、坏 manifest、越界 offset、缺 tensor、坏 DLL、契约缺失、激活失败、非法 ID、重复 ID 和缺 provider 诊断。
+2. 从默认 `providers/` 目录与 `TOMUR_PROVIDER_PATH` 分别实跑 provider discovery，并通过 `tomur doctor`、`GET /api/runtime/status` 和 Web Runtime 核对状态、路径与修复动作。
+3. 确认 llama.cpp 模型仍进入原 session 路径，managed provider 或非法模型失败不会中断 Catalog、服务进程或 native provider。
+4. 确认 probe 只读取文件长度与 safetensors header，不读取 tensor payload，也不分配完整模型内存。
+5. 执行 M2 回归，在两个干净目录生成 fixture 并逐字节比较全部文件；实跑隐藏 CLI 的 generate/verify 成功与篡改失败路径。
+6. 使用独立实现复核 oracle 的 attention、router、teacher-forcing 与 greedy checkpoint，并确认 schema、配置摘要、工具版本和 checksum 完整。
+7. 执行 M3 回归，覆盖随机 slice、相邻读取、F32/F16/BF16 转换、int4 奇数列、量化 shape、取消、短文件、溢出和重复 dispose。
+8. 在 Windows 与 Linux 重复创建/销毁多 shard data source 和 session，确认 EOF、短读、偏移溢出、disposed handle 诊断以及文件句柄释放。
+9. 确认 probe、resident load 与 expert streaming 共用同一 tensor descriptor，不重复解析 safetensors header。
+
+### 14.3 ⏳ M4-M9 正确性验证
+
+1. 对 M4 scalar kernels 执行 F32 oracle 误差、int8/int4 离线解量化一致性、奇数列、非 SIMD 对齐、空 batch、最小 shape 和非法 shape 边界测试。
+2. 对 M5 tokenizer 执行中英文、代码、emoji、空白、控制字符、special token、byte roundtrip、增量 UTF-8 和跨 token stop sequence 测试。
+3. 对 M6 resident model 核对预计与实际内存、损坏 dense tensor、加载取消、资源释放，以及 embedding、norm、dense MLP 单层 oracle 输出。
+4. 对 M7 核对单层 MLA 中间值、teacher forcing logits、prefill 后 decode 与纯逐 token 路径，以及 compressed KV 字节公式。
+5. 对 M8 核对 router ID、路由权重、单层 MoE、shared/routed expert 合并、cold/hot cache 输出、eviction 稳定性、I/O 失败诊断和并发 miss 内存上限。
+6. 对 M9 核对 tiny teacher forcing、greedy token 序列、固定 seed sampling、context 写入前检查、取消与异常路径，确认不产生伪造 completion。
+
+### 14.4 ⏳ M10 集成验证
+
+1. 通过 `/v1/chat/completions`、`/api/chat` 与 `/v1/messages` 验证 managed 与 llama.cpp 模型在同一 API 表面正确路由。
+2. 验证非流式、streaming、客户端断开、取消、unload 与服务重启，并确认 file handle、pooled buffer、KV cache 和 expert cache 被回收。
+3. 核对 `GET /v1/models`、`/api/tags`、`tomur ps`、`tomur doctor`、Runtime API 与 Web UI 的 provider、模型 readiness、内存、缓存、I/O 和诊断状态。
+4. 未通过完整验证的模型不得显示为 ready；managed provider 失败不得影响 llama.cpp 请求。
+5. 覆盖缺模型、缺 provider、坏 manifest、缺 shard、量化不支持、内存不足、上下文超限、磁盘错误和 forward 失败的稳定错误码。
+
+### 14.5 ⏳ M11 性能验证
+
+1. 所有 SIMD、并行、缓存和 I/O 优化均与 scalar path 比较中间输出，并可通过配置关闭和回退。
+2. 记录 CPU 架构、指令集、prompt、context、batch、cache 状态、磁盘状态，以及 cold/warm/hot 三类结果。
+3. 记录 probe、resident load、首 token、prompt tokens/s、decode tokens/s、每 token expert reads、磁盘吞吐、foreground wait 与 cache hit rate。
+4. 记录 RSS、managed heap、pinned bytes、pooled bytes、GC pause 和每 token allocation。
+5. 内存映射或复杂 I/O 路径只有在证据显示收益且不改变输出时才能设为默认。
+
+### 14.6 ⏳ M12 高级能力验证
+
+1. 禁用高级能力时回到基础路径。
+2. DSA 在保留全部 key 时与 dense attention 一致。
+3. speculative decoding 不改变采样分布。
+4. KV 恢复与不中断会话输出一致。
+5. DSA、MTP、grammar、prefetch 和 KV persistence 均不得绕过内存预算、取消或模型资产校验。
+
+### 14.7 ⏳ M13 发布与兼容验证
+
+1. 非 AOT 自包含包可从默认目录发现带 checksum 的 provider DLL。
+2. 缺 provider DLL 或 provider 版本不匹配时，主程序与 native providers 继续运行并返回明确诊断。
+3. Native AOT 包按最终策略静态包含 provider，或返回 `dynamic_managed_providers_unavailable`，行为与文档一致。
+4. 使用旧版 `model.tomur.json` fixture 验证 extend-only contract、manifest schema 和稳定诊断 code。
 
 验证矩阵：
 
@@ -691,7 +628,7 @@ Native AOT 发布：
 | 大数组造成 LOH/GC 压力 | pause、内存峰值 | session 级预分配、buffer pool、零 token-loop 分配 |
 | expert I/O 吞吐不足 | 每 token 等待磁盘 | bounded 并行读取、LRU、hot pin、page-cache 指标 |
 | 量化 rounding 不一致 | token 分叉 | 固定 accumulator 和 tie-breaking，保存 teacher-forcing oracle |
-| tokenizer 不一致 | 所有输出失真 | tokenizer 先于 forward 独立验收 |
+| tokenizer 不一致 | 所有输出失真 | 在 M14 中独立验证 tokenizer 后再开放 forward |
 | 恶意模型元数据 | 越界或内存耗尽 | checked arithmetic、尺寸上限、目录边界和 header 上限 |
 | provider DLL 版本不匹配 | 加载失败 | extend-only contract、版本诊断、隔离失败 |
 | Native AOT 无动态加载 | provider 不可用 | 非 AOT 独立 DLL；AOT 静态引用或明确诊断 |
