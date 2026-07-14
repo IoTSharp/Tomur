@@ -12,7 +12,7 @@ internal static class TinyFixtureBundle
 {
     public const int SchemaVersion = 1;
     public const string FixtureId = "managed-glm-tiny-f32-v1";
-    public const string GeneratorVersion = "1.0.0";
+    public const string GeneratorVersion = "1.1.0";
     public const string Seed = "0x6a09e667f3bcc909";
 
     private const ulong SeedValue = 0x6a09e667f3bcc909UL;
@@ -22,6 +22,7 @@ internal static class TinyFixtureBundle
     private const int RoutedExpertCount = 3;
     private const int ExpertsPerToken = 2;
     private const int MoeIntermediateSize = 3;
+    private const int DenseIntermediateSize = 6;
     private const int VocabularySize = 12;
     private const int ContextSize = 16;
 
@@ -30,6 +31,8 @@ internal static class TinyFixtureBundle
         "embedding.lookup",
         "rms_norm.input",
         "rms_norm.output",
+        "dense_mlp.input",
+        "dense_mlp.output",
         "attention.q_latent",
         "attention.q_normalized",
         "attention.kv_latent",
@@ -228,6 +231,9 @@ internal static class TinyFixtureBundle
         AddRandom(tensors, random, "lm_head.weight", [VocabularySize, HiddenSize], 0.0, 0.30);
         AddRandom(tensors, random, "model.layers.0.input_layernorm.weight", [HiddenSize], 1.0, 0.08);
         AddRandom(tensors, random, "model.layers.0.post_attention_layernorm.weight", [HiddenSize], 1.0, 0.08);
+        AddRandom(tensors, random, "model.layers.0.mlp.gate_proj.weight", [DenseIntermediateSize, HiddenSize], 0.0, 0.28);
+        AddRandom(tensors, random, "model.layers.0.mlp.up_proj.weight", [DenseIntermediateSize, HiddenSize], 0.0, 0.28);
+        AddRandom(tensors, random, "model.layers.0.mlp.down_proj.weight", [HiddenSize, DenseIntermediateSize], 0.0, 0.28);
         AddRandom(tensors, random, "model.layers.0.self_attn.q_a_proj.weight", [2, HiddenSize], 0.0, 0.30);
         AddRandom(tensors, random, "model.layers.0.self_attn.q_a_layernorm.weight", [2], 1.0, 0.08);
         AddRandom(tensors, random, "model.layers.0.self_attn.q_b_proj.weight", [4, 2], 0.0, 0.30);

@@ -181,8 +181,8 @@ Disk
 | 03 | M3 | ✅ | 张量存储、读取和量化视图 |
 | 04 | M4 | ✅ | scalar reference kernels |
 | 05 | M5 | ✅ | tokenizer、prompt 与增量解码 |
-| 06 | M6 | ⏭️ | resident dense model 加载 |
-| 07 | M7 | ⏳ | MLA attention 与 compressed KV cache |
+| 06 | M6 | ✅ | resident dense model 加载 |
+| 07 | M7 | ⏭️ | MLA attention 与 compressed KV cache |
 | 08 | M8 | ⏳ | MoE router、shared expert 与 expert streaming |
 | 09 | M9 | ⏳ | 完整 forward、prefill、decode 与 sampling |
 | 10 | M10 | ⏳ | Tomur API、session、streaming 与诊断闭环 |
@@ -283,7 +283,7 @@ Disk
 8. `ModelDirectoryProbe` 已加载完整 tokenizer 并校验最大 token ID 不超过模型 `vocab_size`；session 诊断显示 tokenizer 词表和 stop token 数量。
 9. M5 独立测试项目已接入 solution，覆盖 tiny oracle、BPE merge、normalization、special token、byte roundtrip、中英文/代码/emoji、增量 UTF-8、跨 token stop 与 GLM role prompt；测试执行统一留在 M14。
 
-## 06. ⏭️ M6：resident dense model
+## 06. ✅ M6：resident dense model
 
 目标：加载每个 token 都需要的 dense 权重，并完成 embedding 到首层输入的基础路径。
 
@@ -297,16 +297,18 @@ resident 范围：
 6. MoE router、router correction bias 和 shared experts。
 7. 可选 DSA/MTP 权重暂不进入首批 ready 条件。
 
-实现：
+已完成基础代码：
 
-1. `ManagedGlmModel` 持有配置、tokenizer、tensor catalog 和 resident weights。
-2. load 前计算预计 resident bytes、KV bytes 和 scratch bytes。
-3. 预算超过可用内存时在读取 payload 前失败。
-4. 读取完成后释放临时 conversion buffer。
-5. model 与 session 分离，为后续多 context 共享只读权重保留边界；首批仍只允许一个活动 session。
-6. 复用 M3 的 tensor descriptor、data source 和所有权类型，不重新解析 safetensors header。
+1. `ManagedGlmModel` 已持有配置、tokenizer、tensor catalog、只读 shard data source 和 resident weights，并与 `ManagedGlmSession` 生命周期分离。
+2. resident layout 已按配置校验 embedding、lm head、norm、MLA projection、dense MLP、router、correction bias 与 shared expert 的精确 shape；routed expert、DSA 和 MTP 权重不进入 M6 resident 集合。
+3. load 前已按 F32 resident 表示计算 resident bytes，按 compressed KV 公式计算 KV bytes，并计算 dense/attention/output scratch bytes；总预算超过进程可用内存时在打开 shard 和读取 payload 前失败。
+4. F32、F16 与 BF16 resident 权重复用 M3 conversion 和所有权类型；未声明 payload/scale 布局的 int8/int4 resident 权重显式拒绝，不误读为 F32。
+5. 部分加载失败、取消和重复 dispose 会释放已分配 resident buffer 与全部 shard handle；转换临时 buffer 继续由 M3 的 bounded read 路径在 `finally` 中归还。
+6. 已接通 embedding gather、逐层 input RMSNorm 和 dense SwiGLU MLP scalar 基础路径；tiny fixture generator 升级到 1.1.0，并增加独立 dense MLP oracle checkpoint，既有 MoE teacher-forcing 基线保持不变。
+7. managed session 已报告 resident tensor、resident/KV/scratch bytes、内存预算与 open shard 数，并继续以 `managed_forward_not_ready` 阻止未完成 forward 返回 token。
+8. M6 独立测试项目已接入 solution，覆盖 resident shape、预计/实际 resident bytes、预算先于 payload 读取、损坏 shard、取消、资源释放、routed expert 非 resident，以及 embedding、RMSNorm、dense MLP oracle；测试执行统一留在 M14。
 
-## 07. ⏳ M7：MLA attention 与 compressed KV cache
+## 07. ⏭️ M7：MLA attention 与 compressed KV cache
 
 目标：实现模型要求的 MLA attention，并避免按完整 K/V head 保存上下文。
 

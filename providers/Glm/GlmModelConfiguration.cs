@@ -88,7 +88,7 @@ internal sealed record GlmModelConfiguration(
         RequireRange(MoeIntermediateSize, 1, 1 << 20, "moe_intermediate_size");
         RequireRange(DenseIntermediateSize, 1, 1 << 24, "intermediate_size");
         RequireRange(FirstMoeLayer, 0, LayerCount, "first_k_dense_replace");
-        RequireRange(QueryLoraRank, 0, 1 << 20, "q_lora_rank");
+        RequireRange(QueryLoraRank, 1, 1 << 20, "q_lora_rank");
         RequireRange(KeyValueLoraRank, 1, 1 << 20, "kv_lora_rank");
         RequireRange(QueryKeyNopeHeadSize, 1, 1 << 16, "qk_nope_head_dim");
         RequireRange(QueryKeyRopeHeadSize, 1, 1 << 16, "qk_rope_head_dim");

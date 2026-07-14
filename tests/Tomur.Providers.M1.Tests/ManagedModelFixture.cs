@@ -5,23 +5,23 @@ namespace Tomur.Providers.M1.Tests;
 
 internal sealed class ManagedModelFixture : IDisposable
 {
-    private static readonly string[] RequiredTensorNames =
+    private static readonly (string Name, long[] Shape)[] RequiredTensors =
     [
-        "model.embed_tokens.weight",
-        "model.norm.weight",
-        "lm_head.weight",
-        "model.layers.0.input_layernorm.weight",
-        "model.layers.0.post_attention_layernorm.weight",
-        "model.layers.0.self_attn.q_a_proj.weight",
-        "model.layers.0.self_attn.q_a_layernorm.weight",
-        "model.layers.0.self_attn.q_b_proj.weight",
-        "model.layers.0.self_attn.kv_a_proj_with_mqa.weight",
-        "model.layers.0.self_attn.kv_a_layernorm.weight",
-        "model.layers.0.self_attn.kv_b_proj.weight",
-        "model.layers.0.self_attn.o_proj.weight",
-        "model.layers.0.mlp.gate_proj.weight",
-        "model.layers.0.mlp.up_proj.weight",
-        "model.layers.0.mlp.down_proj.weight"
+        ("model.embed_tokens.weight", [4, 4]),
+        ("model.norm.weight", [4]),
+        ("lm_head.weight", [4, 4]),
+        ("model.layers.0.input_layernorm.weight", [4]),
+        ("model.layers.0.post_attention_layernorm.weight", [4]),
+        ("model.layers.0.self_attn.q_a_proj.weight", [1, 4]),
+        ("model.layers.0.self_attn.q_a_layernorm.weight", [1]),
+        ("model.layers.0.self_attn.q_b_proj.weight", [2, 1]),
+        ("model.layers.0.self_attn.kv_a_proj_with_mqa.weight", [2, 4]),
+        ("model.layers.0.self_attn.kv_a_layernorm.weight", [1]),
+        ("model.layers.0.self_attn.kv_b_proj.weight", [2, 1]),
+        ("model.layers.0.self_attn.o_proj.weight", [4, 1]),
+        ("model.layers.0.mlp.gate_proj.weight", [4, 4]),
+        ("model.layers.0.mlp.up_proj.weight", [4, 4]),
+        ("model.layers.0.mlp.down_proj.weight", [4, 4])
     ];
 
     public ManagedModelFixture()
@@ -93,12 +93,12 @@ internal sealed class ManagedModelFixture : IDisposable
             }
             """);
 
-        var tensorNames = omitRequiredTensor
-            ? RequiredTensorNames.Where(static name => name != "lm_head.weight").ToArray()
-            : RequiredTensorNames;
+        var tensors = omitRequiredTensor
+            ? RequiredTensors.Where(static tensor => tensor.Name != "lm_head.weight").ToArray()
+            : RequiredTensors;
         WriteSafeTensors(
             Path.Combine(Root, "model.safetensors"),
-            tensorNames,
+            tensors,
             outOfBoundsOffset,
             unsupportedDataType);
         return CreateDescriptor();
@@ -134,7 +134,7 @@ internal sealed class ManagedModelFixture : IDisposable
 
     private static void WriteSafeTensors(
         string path,
-        IReadOnlyList<string> tensorNames,
+        IReadOnlyList<(string Name, long[] Shape)> tensors,
         bool outOfBoundsOffset,
         bool unsupportedDataType)
     {
@@ -143,18 +143,24 @@ internal sealed class ManagedModelFixture : IDisposable
         {
             writer.WriteStartObject();
             long offset = 0;
-            for (var index = 0; index < tensorNames.Count; index++)
+            for (var index = 0; index < tensors.Count; index++)
             {
-                writer.WritePropertyName(tensorNames[index]);
+                var tensor = tensors[index];
+                writer.WritePropertyName(tensor.Name);
                 writer.WriteStartObject();
                 writer.WriteString("dtype", unsupportedDataType && index == 0 ? "F64" : "F32");
                 writer.WriteStartArray("shape");
-                writer.WriteNumberValue(1);
+                foreach (var dimension in tensor.Shape)
+                {
+                    writer.WriteNumberValue(dimension);
+                }
+
                 writer.WriteEndArray();
                 writer.WriteStartArray("data_offsets");
                 writer.WriteNumberValue(offset);
-                var end = offset + sizeof(float);
-                if (outOfBoundsOffset && index == tensorNames.Count - 1)
+                var elementCount = tensor.Shape.Aggregate(1L, static (product, value) => checked(product * value));
+                var end = checked(offset + checked(elementCount * sizeof(float)));
+                if (outOfBoundsOffset && index == tensors.Count - 1)
                 {
                     end += sizeof(float);
                 }
@@ -162,7 +168,7 @@ internal sealed class ManagedModelFixture : IDisposable
                 writer.WriteNumberValue(end);
                 writer.WriteEndArray();
                 writer.WriteEndObject();
-                offset += sizeof(float);
+                offset = checked(offset + checked(elementCount * sizeof(float)));
             }
 
             writer.WriteEndObject();
@@ -173,9 +179,13 @@ internal sealed class ManagedModelFixture : IDisposable
         using var binaryWriter = new BinaryWriter(stream);
         binaryWriter.Write((ulong)header.Length);
         binaryWriter.Write(header);
-        foreach (var _ in tensorNames)
+        foreach (var tensor in tensors)
         {
-            binaryWriter.Write(1.0f);
+            var elementCount = tensor.Shape.Aggregate(1L, static (product, value) => checked(product * value));
+            for (long index = 0; index < elementCount; index++)
+            {
+                binaryWriter.Write(1.0f);
+            }
         }
     }
 }

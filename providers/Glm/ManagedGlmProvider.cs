@@ -37,6 +37,30 @@ public sealed class ManagedGlmProvider : IModelFixtureProvider
             var probe = ModelDirectoryProbe.Read(model, ProviderId);
             return new ManagedGlmSession(model, options, probe);
         }
+        catch (ModelMemoryBudgetExceededException exception)
+        {
+            throw new InferenceException(
+                "managed_model_memory_budget_exceeded",
+                exception.Message,
+                [
+                    "Reduce the requested context size.",
+                    "Use a smaller model or a system with more available memory.",
+                    "Unload other memory-heavy applications before retrying."
+                ],
+                exception);
+        }
+        catch (OutOfMemoryException exception)
+        {
+            throw new InferenceException(
+                "managed_model_out_of_memory",
+                $"The managed GLM resident model could not be allocated after memory preflight: {exception.Message}",
+                [
+                    "Reduce the requested context size.",
+                    "Use a smaller model or a system with more available memory.",
+                    "Unload the active model and other memory-heavy applications before retrying."
+                ],
+                exception);
+        }
         catch (Exception exception) when (
             exception is InvalidDataException or IOException or UnauthorizedAccessException or JsonException or OverflowException)
         {
@@ -63,8 +87,7 @@ internal sealed class ManagedGlmSession : ITextGenerationSession
 {
     private readonly LocalModelDescriptor model;
     private readonly ModelSessionOptions options;
-    private readonly ModelProbe probe;
-    private readonly TensorDataSource tensorDataSource;
+    private readonly ManagedGlmModel loadedModel;
     private readonly DateTimeOffset createdAt = DateTimeOffset.UtcNow;
     private long requestCount;
     private bool disposed;
@@ -76,8 +99,7 @@ internal sealed class ManagedGlmSession : ITextGenerationSession
     {
         this.model = model;
         this.options = options;
-        this.probe = probe;
-        tensorDataSource = new TensorDataSource(probe.Tensors);
+        loadedModel = ManagedGlmModel.Load(probe, options.ContextSize);
     }
 
     public string ProviderId => ManagedGlmProvider.ProviderId;
@@ -96,12 +118,13 @@ internal sealed class ManagedGlmSession : ITextGenerationSession
 
         throw new InferenceException(
             "managed_forward_not_ready",
-            "The managed GLM provider validated the model metadata and tensor index, but forward execution is not connected yet.",
+            "The managed GLM provider loaded the resident dense model, but forward execution is not connected yet.",
             [
-                $"Provider: {ProviderId}; architecture: {probe.Manifest.Architecture}.",
-                $"Indexed {probe.Tensors.Count} tensors from {probe.TensorFileCount} files ({probe.Tensors.TotalPayloadBytes} payload bytes).",
+                $"Provider: {ProviderId}; architecture: {loadedModel.Manifest.Architecture}.",
+                $"Loaded {loadedModel.ResidentTensorCount} resident tensors ({loadedModel.ActualResidentBytes} bytes).",
+                $"Planned KV {loadedModel.MemoryPlan.KvBytes} bytes and scratch {loadedModel.MemoryPlan.ScratchBytes} bytes for context {loadedModel.MemoryPlan.ContextSize}.",
                 "Use an existing llama.cpp-compatible model for inference until the managed kernels pass the tiny-model oracle.",
-                "Do not treat metadata validation as successful inference."
+                "Do not treat resident model loading as successful inference."
             ]);
     }
 
@@ -109,10 +132,10 @@ internal sealed class ManagedGlmSession : ITextGenerationSession
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         return new SessionSnapshot(
-            Loaded: false,
+            Loaded: true,
             ModelId: model.Id,
             ModelPath: model.AbsolutePath,
-            Mode: "managed-glm-probe",
+            Mode: "managed-glm-resident",
             LoadedAt: createdAt,
             RequestCount: Interlocked.Read(ref requestCount),
             PromptTokens: 0,
@@ -121,13 +144,18 @@ internal sealed class ManagedGlmSession : ITextGenerationSession
             [
                 $"provider: {ProviderId}",
                 $"context limit requested: {this.options.ContextSize}",
-                $"layers: {probe.Configuration.LayerCount}",
-                $"routed experts: {probe.Configuration.RoutedExpertCount}",
-                $"tokenizer vocabulary: {probe.Tokenizer.VocabularySize}",
-                $"tokenizer stop tokens: {new GlmPromptTemplate(probe.Tokenizer).ResolveStopTokenIds().Count}",
-                $"tensor files: {probe.TensorFileCount}",
-                $"open tensor shards: {tensorDataSource.ShardCount}",
-                $"indexed tensors: {probe.Tensors.Count}",
+                $"layers: {loadedModel.Configuration.LayerCount}",
+                $"routed experts: {loadedModel.Configuration.RoutedExpertCount}",
+                $"tokenizer vocabulary: {loadedModel.Tokenizer.VocabularySize}",
+                $"tokenizer stop tokens: {new GlmPromptTemplate(loadedModel.Tokenizer).ResolveStopTokenIds().Count}",
+                $"tensor files: {loadedModel.TensorFileCount}",
+                $"open tensor shards: {loadedModel.OpenShardCount}",
+                $"indexed tensors: {loadedModel.Tensors.Count}",
+                $"resident tensors: {loadedModel.ResidentTensorCount}",
+                $"resident bytes: {loadedModel.ActualResidentBytes}",
+                $"planned KV bytes: {loadedModel.MemoryPlan.KvBytes}",
+                $"planned scratch bytes: {loadedModel.MemoryPlan.ScratchBytes}",
+                $"load budget bytes: {loadedModel.MemoryPlan.RequiredBytes}/{loadedModel.MemoryPlan.AvailableBytes}",
                 "forward execution is not connected"
             ]);
     }
@@ -140,6 +168,6 @@ internal sealed class ManagedGlmSession : ITextGenerationSession
         }
 
         disposed = true;
-        tensorDataSource.Dispose();
+        loadedModel.Dispose();
     }
 }

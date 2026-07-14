@@ -5,6 +5,7 @@ internal static class TinyFixtureReference
     private const int HiddenSize = 4;
     private const int RoutedExpertCount = 3;
     private const int ExpertsPerToken = 2;
+    private const int DenseIntermediateSize = 6;
     private const int VocabularySize = 12;
     private const float RmsNormEpsilon = 0.00001f;
 
@@ -25,6 +26,12 @@ internal static class TinyFixtureReference
             Get(weights, "model.layers.0.input_layernorm.weight"));
         AddCheckpoint(checkpoints, "rms_norm.input", [HiddenSize], normInput);
         AddCheckpoint(checkpoints, "rms_norm.output", [HiddenSize], normOutput);
+        AddCheckpoint(checkpoints, "dense_mlp.input", [HiddenSize], normOutput);
+        AddCheckpoint(
+            checkpoints,
+            "dense_mlp.output",
+            [HiddenSize],
+            RunDenseMlp(normOutput, weights));
 
         var teacherForcing = ForwardSequence(promptTokenIds, weights);
         var captured = teacherForcing[^1];
@@ -283,6 +290,35 @@ internal static class TinyFixtureReference
         }
 
         return MatrixVector(Get(weights, $"{prefix}down_proj.weight"), HiddenSize, 3, activated);
+    }
+
+    private static float[] RunDenseMlp(
+        float[] input,
+        IReadOnlyDictionary<string, TinyTensor> weights)
+    {
+        const string prefix = "model.layers.0.mlp.";
+        var gate = MatrixVector(
+            Get(weights, $"{prefix}gate_proj.weight"),
+            DenseIntermediateSize,
+            HiddenSize,
+            input);
+        var up = MatrixVector(
+            Get(weights, $"{prefix}up_proj.weight"),
+            DenseIntermediateSize,
+            HiddenSize,
+            input);
+        var activated = new float[DenseIntermediateSize];
+        for (var index = 0; index < activated.Length; index++)
+        {
+            var silu = (float)(gate[index] / (1.0 + Math.Exp(-gate[index])));
+            activated[index] = silu * up[index];
+        }
+
+        return MatrixVector(
+            Get(weights, $"{prefix}down_proj.weight"),
+            HiddenSize,
+            DenseIntermediateSize,
+            activated);
     }
 
     private static float[] RmsNorm(float[] input, float[] weight)
