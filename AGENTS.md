@@ -26,10 +26,11 @@
 
 ## 工程边界
 
-- 首批实现只建立一个 C# 项目：`Tomur.csproj`。
-- `Tomur.csproj` 承载 CLI、本地 HTTP API、服务模式启动、native runtime 管理和 Web 静态资源托管。
+- `Tomur.csproj` 继续承载 CLI、本地 HTTP API、服务模式启动、runtime 管理和 Web 静态资源托管。
+- 允许在 `providers/` 下建立独立 C# 类库项目，用于隔离纯托管模型提供器；提供器不得拆成独立产品、服务进程或另一套 HTTP API。
+- 现有 llama.cpp、Whisper、OCR、stable-diffusion.cpp 与 TTS native runtime 路径必须保留；新增托管提供器是并行选择，不得以替换或删除现有 native 能力为前提。
 - `Program.cs` 必须承担进程入口、顶层命令分发和全局帮助；CLI 具体实现按类别放在 `app/Cli/`。
-- 在 API、native runtime、AOT 与发布流程稳定前，不拆分多个 C# 项目。
+- 除模型提供器及其必要的稳定契约外，不因功能分类继续拆分 C# 项目。
 - 不直接依赖外部服务器项目，不引入 PostgreSQL、RBAC、SSO、复杂审计、多租户治理或后台管理壳作为默认能力。
 - 默认本地状态使用文件系统与 SQLite-first 设计。
 - 用户面对的是 Tomur 本地程序，不要求理解底层 native backend、模型目录实现或内部适配层。
@@ -40,6 +41,7 @@
 - 避免把产品名直接拼到 `Configuration`、`RuntimeStatus`、`ApiKeyStore` 等语义名之前；优先使用 `LocalConfiguration`、`RuntimeStatusResponse`、`ApiKeyStore` 这类上下文明确的名称。
 - 项目文件、命名空间、产品名、服务名、公开命令和文档中必要的产品称呼不受此约束影响。
 - 新增代码前应检查同目录既有命名风格，保持名称短、明确，并避免重复表达所在项目或文件夹上下文。
+- 托管模型提供器按模型架构或能力命名，不使用参考实现、上游项目或第三方运行时的项目名作为程序集名、命名空间、类型名、provider ID、配置键或诊断代码。
 
 ## API 优先级
 
@@ -68,11 +70,14 @@
 ## 运行时与发布
 
 - Tomur 目标是自包含、单文件、Native AOT 友好。
+- Tomur 同时支持 native runtime 与纯 C# 托管模型提供器；模型格式、架构和 provider 匹配必须显式、可诊断，native 路径继续作为已验证的默认路径。
 - `tomur` 发布产物应携带必要的 C++ native dynamic libraries，降低用户手工准备运行时的成本。
 - 模型权重、SQLite 数据库、日志、用户文件和生成结果不硬编码进程序二进制，由 Tomur 管理在本地数据目录中。
 - native libraries 可以作为 bundle 资产携带，并在首次运行或版本变化时释放到 Tomur 管理的 runtime 目录。
 - 缺失或损坏的 native library 必须通过 `tomur doctor`、API 和 UI 返回可诊断错误。
-- 原生推理必须通过 C# 调用动态库实现，不得在托管代码中重新实现推理核心。
+- native 推理继续通过 C# 调用动态库实现；纯托管提供器可以使用 C# 实现模型加载、张量算子、缓存和推理核心，但不得在内部回退到未声明的 P/Invoke 或第三方 native dynamic library。
+- 纯托管性能路径可以使用 `unsafe`、`Span<T>`、`MemoryMarshal`、`RandomAccess`、内存映射和 `System.Runtime.Intrinsics`，同时必须保留边界检查、模型元数据校验、资源上限和取消响应。
+- 独立托管 provider DLL 只属于非 AOT 自包含发布面；Native AOT 发布若不支持动态托管程序集加载，必须静态引用兼容提供器或明确报告该 provider 不可用，不得伪装为已加载。
 - AOT / trimming 警告必须逐项处理，不得用 blanket suppression 掩盖。
 
 ## Native 能力范围

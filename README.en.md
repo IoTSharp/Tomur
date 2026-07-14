@@ -45,7 +45,7 @@ Run the local HTTP API service:
 tomur serve --open
 ```
 
-When developing from source, run the single C# project directly:
+When developing from source, run the main application project directly:
 
 ```powershell
 dotnet run --project app -- --help
@@ -63,10 +63,11 @@ The default local service URL is `http://127.0.0.1:5137`.
 5. 📦 Model catalog, download, verification, and local asset management.
 6. 🩺 Runtime diagnostics for CPU, memory, disk, proxy, ports, models, and native libraries.
 7. ⚙️ Native runtime support for llama.cpp, Whisper, OCR native, stable-diffusion.cpp, and llama.cpp TTS / GGUF TTS.
-8. 🖥️ System service mode.
-9. 🧑‍💻 React + Ant Design X web workspace.
+8. 🧮 Optional pure C# model providers that extend local inference by model architecture.
+9. 🖥️ System service mode.
+10. 🧑‍💻 React + Ant Design X web workspace.
 
-Tomur does not fabricate inference results when the local runtime is unavailable. Missing models, unavailable native runtime, damaged bundle assets, context length limits, capability mismatches, and insufficient memory are reported as diagnosable errors through the API, CLI, and UI.
+Tomur does not fabricate inference results when the local runtime is unavailable. Missing models, unavailable native runtime or managed providers, damaged bundle assets, context length limits, capability mismatches, and insufficient memory are reported as diagnosable errors through the API, CLI, and UI.
 
 ## 🔌 API Examples
 
@@ -120,7 +121,7 @@ tomur list --catalog
 
 ## 🚧 Current Status
 
-Tomur has completed the main R1-R11 loops, is converging the R12 Native AOT / self-contained release matrix, continuing the R13 web capability aggregation loop, and implementing R14 Intel GPU / NPU acceleration support. Completed history is tracked in [CHANGELOG.md](./CHANGELOG.md).
+Tomur has completed the main R1-R11 loops, is converging the R12 Native AOT / self-contained release matrix, continuing the R13 web capability aggregation loop, implementing R14 Intel GPU / NPU acceleration, and starting the R15 pure C# GLM / MoE provider experiment. Completed history is tracked in [CHANGELOG.md](./CHANGELOG.md).
 
 | Stage | Status |
 | --- | --- |
@@ -132,6 +133,7 @@ Tomur has completed the main R1-R11 loops, is converging the R12 Native AOT / se
 | R12 | Native AOT publishing currently passes without warnings; Linux/macOS release logs, macOS native bundle assets, and real-machine service smoke remain in progress. |
 | R13 | Web capability aggregation has connected Agent / Capabilities views, read-only Agent tool calls, explicit side-effect tool confirmation, protocol capability maps, and Claude Code / Anthropic Messages compatibility; visual download queue and editable Settings remain in progress. |
 | R14 | Intel GPU / NPU support is being connected through the existing ggml dynamic backend path; `vulkan`, `sycl`, `openvino`, and `intel` native build entries, runtime accelerator preferences, OpenVINO / NPU environment setup, CPU fallback diagnostics, NPU incompatibility errors, Web Runtime display, and the smoke evidence entry are in place. Real Intel GPU / NPU smoke still needs machine evidence. |
+| R15 | Work has started on an independent pure C# GLM / MoE provider library, provider selection boundary, and model format probing. The existing llama.cpp path remains available and is still the default; real forward execution is not connected yet. |
 
 Planned follow-up work includes Intel GPU / NPU real smoke (tracked through `docs/r14-intel-acceleration-smoke.md`), a visual download queue, editable Settings, model deletion, VAD / interruption, streaming voice turns, multi-model residency, Linux/macOS release records, and real-machine service smoke.
 
@@ -139,7 +141,7 @@ See [ROADMAP.md](./ROADMAP.md) for detailed stage plans and acceptance boundarie
 
 ## 🏗️ Architecture Overview
 
-The initial engineering shape remains a single C# project:
+The main application stays concentrated while pure managed model providers are isolated in class libraries:
 
 ```text
 Tomur/
@@ -154,9 +156,13 @@ Tomur/
     Cli/
     Config/
     Native/
+    Providers/
     Runtime/
     Services/
     Web/
+  providers/
+    Glm/
+      Tomur.Providers.Glm.csproj
   native/
     llama.cpp/
     llama.native/
@@ -172,9 +178,9 @@ Tomur/
     src/
 ```
 
-`Tomur.csproj` hosts the CLI, local HTTP API, service-mode startup, native runtime management, and web static assets. `Program.cs` owns process entry, top-level command dispatch, and global help; concrete CLI implementations live under `app/Cli/`.
+`Tomur.csproj` hosts the CLI, local HTTP API, service-mode startup, runtime management, and web static assets. `Program.cs` owns process entry, top-level command dispatch, and global help; concrete CLI implementations live under `app/Cli/`. `providers/` is limited to independent pure C# model providers and does not create a second service or product entry point.
 
-`native/` contains native backend source code, CMake projects, and release packaging boundaries. `app/Native/` only contains C# dynamic library loading, P/Invoke, and managed adapter code. The web source lives under `web/`; its build output goes to `app/wwwroot` and is served by the Tomur local HTTP service.
+`native/` contains native backend source code, CMake projects, and release packaging boundaries. `app/Native/` only contains C# dynamic library loading, P/Invoke, and native adapter code. Pure managed providers do not replace the existing llama.cpp path and are selected explicitly by model format and architecture. The web source lives under `web/`; its build output goes to `app/wwwroot` and is served by the Tomur local HTTP service.
 
 ## 📁 Local State
 
@@ -201,6 +207,8 @@ Override the data directory with `--data-dir <path>` or `TOMUR_DATA_DIR`. If the
 ## 📦 Runtime Assets
 
 Tomur release artifacts should carry the required C++ native dynamic libraries and prepare them into Tomur's managed runtime directory on first run or version change. Model weights are not packaged into the executable; `tomur pull` downloads them into the local model directory and records them in `<data>/models/models.manifest.json`.
+
+Independent managed provider DLLs belong to the non-AOT self-contained release surface. Native AOT releases must statically reference compatible providers or clearly report that dynamic managed providers are unavailable. This distinction does not remove or downgrade existing native providers.
 
 `tomur native prepare` extracts or repairs the native runtime bundle. `tomur doctor` checks runtime, models, SQLite, ports, proxy, and hardware status. Missing or damaged native libraries are reported through clear CLI, API, and UI diagnostics.
 

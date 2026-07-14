@@ -22,6 +22,7 @@ using Tomur.Hardware;
 using Tomur.Inference;
 using Tomur.Multimodal;
 using Tomur.Native;
+using Tomur.Providers;
 using Tomur.Runtime;
 using Tomur.Serialization;
 using Tomur.Services;
@@ -175,6 +176,7 @@ internal static class ServeCommand
         builder.Services.AddSingleton<LlamaImportResolver>();
         builder.Services.AddSingleton<LlamaBackendInitializer>();
         builder.Services.AddSingleton<HardwareAccelerationService>();
+        builder.Services.AddSingleton(_ => ModelProviderRegistry.CreateDefault());
         builder.Services.AddSingleton<SessionManager>();
         builder.Services.AddSingleton<LocalInferenceService>();
         builder.Services.AddSingleton<LocalChatClient>();

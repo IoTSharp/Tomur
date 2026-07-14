@@ -1,5 +1,6 @@
 using Tomur.Config;
 using Tomur.Models;
+using Tomur.Providers;
 
 namespace Tomur.Runtime;
 
@@ -44,8 +45,36 @@ public sealed class LocalModelCatalog
             }
         }
 
+        var providerModelDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var providerManifestPath in Directory.EnumerateFiles(
+                     paths.ModelsDirectory,
+                     ModelProviderManifest.FileName,
+                     SearchOption.AllDirectories))
+        {
+            var relativePath = BuildRelativePath(providerManifestPath);
+            if (relativePath.StartsWith($"{Defaults.DownloadCacheDirectoryName}/", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var descriptor = TryCreateProviderDescriptor(providerManifestPath);
+            if (descriptor is null)
+            {
+                continue;
+            }
+
+            descriptors.Add(descriptor);
+            providerModelDirectories.Add(Path.GetDirectoryName(providerManifestPath)!);
+        }
+
         foreach (var file in Directory.EnumerateFiles(paths.ModelsDirectory, "*", SearchOption.AllDirectories))
         {
+            if (string.Equals(Path.GetFileName(file), ModelProviderManifest.FileName, StringComparison.OrdinalIgnoreCase) ||
+                providerModelDirectories.Any(directory => IsWithinDirectory(file, directory)))
+            {
+                continue;
+            }
+
             var extension = Path.GetExtension(file);
             if (!SupportedExtensions.Contains(extension))
             {
@@ -67,6 +96,56 @@ public sealed class LocalModelCatalog
             .Select(static group => group.First())
             .OrderBy(static descriptor => descriptor.Id, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
+
+    private LocalModelDescriptor? TryCreateProviderDescriptor(string manifestPath)
+    {
+        try
+        {
+            if (!ModelProviderManifestReader.TryRead(manifestPath, out var manifest, out _) || manifest is null)
+            {
+                return null;
+            }
+
+            var modelDirectory = Path.GetDirectoryName(manifestPath)!;
+            var relativeDirectory = Path.GetRelativePath(paths.ModelsDirectory, modelDirectory).Replace('\\', '/');
+            var id = NormalizeModelId(relativeDirectory == "." ? manifest.Provider : relativeDirectory);
+            var assets = new List<string>
+            {
+                manifestPath,
+                ModelProviderManifestReader.ResolveAssetPath(modelDirectory, manifest.ConfigFile),
+                ModelProviderManifestReader.ResolveAssetPath(modelDirectory, manifest.TokenizerFile)
+            };
+            assets.AddRange(Directory.EnumerateFiles(modelDirectory, manifest.TensorPattern, SearchOption.TopDirectoryOnly));
+
+            var existingAssets = assets
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Select(static path => new FileInfo(path))
+                .Where(static info => info.Exists)
+                .ToArray();
+            var sizeBytes = existingAssets.Sum(static info => info.Length);
+            var lastModified = existingAssets.Length == 0
+                ? File.GetLastWriteTimeUtc(manifestPath)
+                : existingAssets.Max(static info => info.LastWriteTimeUtc);
+
+            return new LocalModelDescriptor(
+                id,
+                manifest.DisplayName,
+                Path.GetFileName(manifestPath),
+                BuildRelativePath(manifestPath),
+                Path.GetFullPath(manifestPath),
+                sizeBytes,
+                lastModified,
+                "managed-model",
+                manifest.Architecture,
+                manifest.Quantization,
+                manifest.Capabilities);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or ArgumentException or InvalidDataException or OverflowException)
+        {
+            return null;
+        }
     }
 
     public LocalModelDescriptor? Find(string? model)
@@ -97,6 +176,28 @@ public sealed class LocalModelCatalog
         if (!info.Exists)
         {
             return null;
+        }
+
+        if (string.Equals(info.Name, ModelProviderManifest.FileName, StringComparison.OrdinalIgnoreCase))
+        {
+            var providerDescriptor = TryCreateProviderDescriptor(info.FullName);
+            if (providerDescriptor is null)
+            {
+                return null;
+            }
+
+            var providerPrimaryAsset = installedPackage.Assets.FirstOrDefault(asset =>
+                string.Equals(asset.Path, installedPackage.PrimaryPath, StringComparison.OrdinalIgnoreCase));
+            return providerDescriptor with
+            {
+                Id = installedPackage.ModelKey,
+                Name = installedPackage.DisplayName,
+                PackageId = installedPackage.Id,
+                Status = installedPackage.Status,
+                License = installedPackage.License,
+                LicenseNotice = installedPackage.LicenseNotice,
+                IsVerified = providerPrimaryAsset?.Sha256Verified == true
+            };
         }
 
         var format = package?.Format ?? ResolveFormat(info.Extension);
@@ -161,6 +262,14 @@ public sealed class LocalModelCatalog
     private static string NormalizeModelId(string value)
     {
         return value.Trim().Replace('\\', '/');
+    }
+
+    private static bool IsWithinDirectory(string path, string directory)
+    {
+        var relative = Path.GetRelativePath(directory, path);
+        return relative != ".." &&
+            !relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal) &&
+            !Path.IsPathRooted(relative);
     }
 
     private static string ResolveFormat(string extension)
