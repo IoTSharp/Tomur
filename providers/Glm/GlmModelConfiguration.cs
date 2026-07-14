@@ -21,6 +21,7 @@ internal sealed record GlmModelConfiguration(
     int MaxPositionEmbeddings,
     int ExpertGroupCount,
     int ExpertGroupsPerToken,
+    bool NormalizeTopKProbabilities,
     float RmsNormEpsilon,
     float RoutedScalingFactor,
     float RopeTheta)
@@ -72,6 +73,7 @@ internal sealed record GlmModelConfiguration(
             GetRequiredInt(root, "max_position_embeddings"),
             GetRequiredInt(root, "n_group"),
             GetRequiredInt(root, "topk_group"),
+            GetOptionalBool(root, "norm_topk_prob", true),
             GetOptionalFloat(root, "rms_norm_eps", 1e-5f),
             GetOptionalFloat(root, "routed_scaling_factor", 1.0f),
             GetRopeTheta(root));
@@ -145,6 +147,21 @@ internal sealed record GlmModelConfiguration(
         }
 
         return value;
+    }
+
+    private static bool GetOptionalBool(JsonElement root, string name, bool fallback)
+    {
+        if (!root.TryGetProperty(name, out var property))
+        {
+            return fallback;
+        }
+
+        if (property.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+        {
+            throw new InvalidDataException($"Model configuration property '{name}' must be a boolean.");
+        }
+
+        return property.GetBoolean();
     }
 
     private static float GetRopeTheta(JsonElement root)

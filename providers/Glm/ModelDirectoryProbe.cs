@@ -93,7 +93,7 @@ internal static class ModelDirectoryProbe
 
         tensorPaths.Sort(StringComparer.OrdinalIgnoreCase);
         var tensors = SafeTensorCatalog.Read(tensorPaths);
-        ValidateRequiredTensors(configuration, tensors);
+        ValidateRequiredTensors(configuration, tensors, manifest.Quantization);
         return new ModelProbe(
             manifest,
             configuration,
@@ -131,7 +131,8 @@ internal static class ModelDirectoryProbe
 
     private static void ValidateRequiredTensors(
         GlmModelConfiguration configuration,
-        SafeTensorCatalog tensors)
+        SafeTensorCatalog tensors,
+        string quantization)
     {
         RequireTensor(tensors, "model.embed_tokens.weight");
         RequireTensor(tensors, "model.norm.weight");
@@ -173,6 +174,19 @@ internal static class ModelDirectoryProbe
                 RequireTensor(tensors, $"{expertPrefix}gate_proj.weight");
                 RequireTensor(tensors, $"{expertPrefix}up_proj.weight");
                 RequireTensor(tensors, $"{expertPrefix}down_proj.weight");
+                if (quantization.Equals("int8", StringComparison.OrdinalIgnoreCase) ||
+                    quantization.Equals("int4", StringComparison.OrdinalIgnoreCase))
+                {
+                    RequireTensor(
+                        tensors,
+                        ExpertDescriptorLayout.GetScaleTensorName($"{expertPrefix}gate_proj.weight"));
+                    RequireTensor(
+                        tensors,
+                        ExpertDescriptorLayout.GetScaleTensorName($"{expertPrefix}up_proj.weight"));
+                    RequireTensor(
+                        tensors,
+                        ExpertDescriptorLayout.GetScaleTensorName($"{expertPrefix}down_proj.weight"));
+                }
             }
         }
     }

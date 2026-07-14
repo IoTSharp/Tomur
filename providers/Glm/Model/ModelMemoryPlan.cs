@@ -5,6 +5,7 @@ internal sealed record ModelMemoryPlan(
     long ResidentBytes,
     long KvBytes,
     long ScratchBytes,
+    long MoeWorkspaceBytes,
     long RequiredBytes,
     long AvailableBytes,
     int ActivationCapacity,
@@ -52,7 +53,7 @@ internal sealed record ModelMemoryPlan(
             configuration.SharedExpertCount * configuration.MoeIntermediateSize);
         var largestMlpIntermediate = Math.Max(
             configuration.FirstMoeLayer > 0 ? configuration.DenseIntermediateSize : 0,
-            sharedIntermediateSize);
+            Math.Max(sharedIntermediateSize, configuration.MoeIntermediateSize));
         var attentionActivationCapacity = GetAttentionActivationCapacity(configuration);
         // Dense SwiGLU and MLA retain several intermediates at the same time.
         var activationCapacity = Math.Max(
@@ -69,11 +70,15 @@ internal sealed record ModelMemoryPlan(
                     configuration.RoutedExpertCount,
                     Math.Max(attentionProjectionSize, keyValueProjectionSize))));
         var attentionScoreCapacity = contextSize;
-        var scratchBytes = checked(
+        var baseScratchBytes = checked(
             checked((long)activationCapacity * sizeof(float)) +
             quantizationCapacity +
             checked((long)outputCapacity * sizeof(float)) +
             checked((long)attentionScoreCapacity * sizeof(float)));
+        var moeWorkspaceBytes = configuration.FirstMoeLayer < configuration.LayerCount
+            ? MoeWorkspace.GetBudgetedBytes(configuration)
+            : 0;
+        var scratchBytes = checked(baseScratchBytes + moeWorkspaceBytes);
         var requiredBytes = checked(residentBytes + kvBytes + scratchBytes);
 
         return new ModelMemoryPlan(
@@ -81,6 +86,7 @@ internal sealed record ModelMemoryPlan(
             residentBytes,
             kvBytes,
             scratchBytes,
+            moeWorkspaceBytes,
             requiredBytes,
             availableBytes,
             activationCapacity,

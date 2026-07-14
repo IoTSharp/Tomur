@@ -183,8 +183,8 @@ Disk
 | 05 | M5 | ✅ | tokenizer、prompt 与增量解码 |
 | 06 | M6 | ✅ | resident dense model 加载 |
 | 07 | M7 | ✅ | MLA attention 与 compressed KV cache |
-| 08 | M8 | ⏭️ | MoE router、shared expert 与 expert streaming |
-| 09 | M9 | ⏳ | 完整 forward、prefill、decode 与 sampling |
+| 08 | M8 | ✅ | MoE router、shared expert 与 expert streaming |
+| 09 | M9 | ⏭️ | 完整 forward、prefill、decode 与 sampling |
 | 10 | M10 | ⏳ | Tomur API、session、streaming 与诊断闭环 |
 | 11 | M11 | ⏳ | SIMD、并行、缓存与 I/O 优化 |
 | 12 | M12 | ⏳ | DSA、MTP、grammar draft 与 KV 持久化 |
@@ -324,7 +324,7 @@ resident 范围：
 8. cancellation 只在完整 KV entry 写入前后或计算安全点生效；token 失败回滚当前 entry，prefill 失败回滚本轮全部新增 entry，destination 只在单 token 计算完成后写回。
 9. M7 独立测试项目已接入 solution，覆盖 tiny oracle 全部 attention checkpoint、compressed KV 内容/字节公式、prefill/decode 与 absorbed/reference 一致性、interleaved RoPE、上下文上限、非有限输入、取消和回滚；测试执行统一留在 M14。
 
-## 08. ⏭️ M8：MoE 与 expert streaming
+## 08. ✅ M8：MoE 与 expert streaming
 
 目标：只让 dense/shared 权重常驻，由磁盘按路由结果读取 routed experts。
 
@@ -366,7 +366,20 @@ I/O 流水线：
 5. 不允许无界 Task 创建或每 expert 新建线程。
 6. 复用 M3 的 descriptor、data source、量化视图和 expert slab，不在 expert streaming 中重复解析 safetensors header。
 
-## 09. ⏳ M9：完整 forward 与生成
+已完成基础代码：
+
+1. `GlmModelConfiguration` 已读取 `norm_topk_prob`，并保持 `n_group=1` / `topk_group=1` 的首批边界；router 使用 resident F32 matvec、sigmoid、correction bias、稳定 top-k、可选概率归一化和 routed scaling factor。
+2. `ExpertDescriptorLayout` 已在模型加载阶段验证全部 routed expert 的 layer/expert ID、gate/up/down shape、manifest 量化格式和物理长度；int8/int4 固定使用同前缀 `*.scales` 的 per-row F32 sidecar。
+3. F32/F16/BF16 routed expert 使用固定容量池化 F32 buffer；int8/int4 routed expert 复用 M3 `ExpertSlab` 与 M4 dequant matvec，不把 routed expert 加入 resident weight 集合。
+4. `MoeWorkspace` 已为 router score、top-k ID/weight、shared/routed activation 和原子 output 提供固定池化容量，其字节数进入 `ModelMemoryPlan` scratch 预算。
+5. `ExpertCache` 已按 MoE layer 预分配相同容量的固定 slot；`ExpertKey` 包含 layer、expert ID 和格式，lease 在并发 forward 期间阻止 slot 被复用，未租用 slot 只在 layer 获取安全点按 LRU 淘汰。
+6. expert cache RAM 配额会先扣除 resident、KV、scratch 和配置的安全余量，并要求每个 MoE layer 至少容纳一个完整 top-k working set；预算不足时返回包含请求值、最小值和可用值的诊断。
+7. miss 已进入固定 worker 数的 bounded `Channel`；同 layer 重复 expert ID 在入队前合并，并发同 key miss 共享 completion，不为单个 expert 创建线程或无界任务。
+8. shared expert 会在 routed expert I/O 进行期间先执行；取消会释放尚未开始读取的 lease，已经开始的读取完成后保留在 slot，destination 只在全部 expert 成功且输出有限时提交。
+9. cache snapshot 已记录 hit、miss、eviction、disk reads/bytes、磁盘耗时、前台等待时间和长期 usage histogram；session 诊断显示 MoE workspace、expert 格式和单 slot 字节数。
+10. M8 独立测试项目已接入 solution，覆盖 tiny router/MoE oracle、cold/hot cache、batch expert union、lease 阻塞、LRU eviction、RAM 配额、取消、非归一化 routing 和 workspace accounting；测试执行统一留在 M14。
+
+## 09. ⏭️ M9：完整 forward 与生成
 
 目标：完成可从 prompt 生成 token 的最小正确路径。
 

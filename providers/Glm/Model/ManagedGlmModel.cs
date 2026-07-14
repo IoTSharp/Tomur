@@ -3,12 +3,15 @@ namespace Tomur.Providers.Glm;
 internal sealed class ManagedGlmModel : IDisposable
 {
     private readonly Dictionary<string, ResidentTensor<float>> residentWeights;
+    private readonly object expertCacheGate = new();
+    private ExpertCache? expertCache;
     private TensorDataSource? dataSource;
 
     private ManagedGlmModel(
         ModelProbe probe,
         TensorDataSource dataSource,
         Dictionary<string, ResidentTensor<float>> residentWeights,
+        ExpertDescriptorLayout expertLayout,
         ModelMemoryPlan memoryPlan,
         long actualResidentBytes)
     {
@@ -20,6 +23,7 @@ internal sealed class ManagedGlmModel : IDisposable
         TensorFileCount = probe.TensorFileCount;
         this.dataSource = dataSource;
         this.residentWeights = residentWeights;
+        ExpertLayout = expertLayout;
         MemoryPlan = memoryPlan;
         ActualResidentBytes = actualResidentBytes;
     }
@@ -44,6 +48,8 @@ internal sealed class ManagedGlmModel : IDisposable
 
     public long ActualResidentBytes { get; }
 
+    internal ExpertDescriptorLayout ExpertLayout { get; }
+
     internal TensorDataSource DataSource => GetDataSource();
 
     public static ManagedGlmModel Load(
@@ -62,6 +68,10 @@ internal sealed class ManagedGlmModel : IDisposable
         }
 
         var specs = ResidentWeightLayout.Create(probe.Configuration, probe.Tensors);
+        var expertLayout = ExpertDescriptorLayout.Create(
+            probe.Configuration,
+            probe.Manifest.Quantization,
+            probe.Tensors);
         var memoryPlan = ModelMemoryPlan.Create(
             probe.Configuration,
             specs,
@@ -99,7 +109,13 @@ internal sealed class ManagedGlmModel : IDisposable
                     $"Resident memory accounting mismatch: planned {memoryPlan.ResidentBytes} bytes, loaded {actualResidentBytes} bytes.");
             }
 
-            return new ManagedGlmModel(probe, source, weights, memoryPlan, actualResidentBytes);
+            return new ManagedGlmModel(
+                probe,
+                source,
+                weights,
+                expertLayout,
+                memoryPlan,
+                actualResidentBytes);
         }
         catch
         {
@@ -225,6 +241,28 @@ internal sealed class ManagedGlmModel : IDisposable
             MemoryPlan.AttentionScoreCapacity);
     }
 
+    public MoeWorkspace CreateMoeWorkspace()
+    {
+        _ = GetDataSource();
+        return new MoeWorkspace(Configuration);
+    }
+
+    public ExpertCache CreateExpertCache(ExpertCacheOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        lock (expertCacheGate)
+        {
+            if (expertCache is { IsDisposed: false })
+            {
+                throw new InvalidOperationException("This managed model already owns an active expert cache.");
+            }
+
+            var cache = new ExpertCache(ExpertLayout, GetDataSource(), MemoryPlan, options);
+            expertCache = cache;
+            return cache;
+        }
+    }
+
     public SequenceState CreateSequenceState(int layer)
     {
         ValidateLayer(layer);
@@ -283,13 +321,44 @@ internal sealed class ManagedGlmModel : IDisposable
             mode);
     }
 
+    public ValueTask RunMoeTokenAsync(
+        int layer,
+        ReadOnlyMemory<float> input,
+        ExpertCache cache,
+        MoeWorkspace workspace,
+        Memory<float> destination,
+        CancellationToken cancellationToken = default,
+        MoeTrace? trace = null)
+    {
+        ValidateLayer(layer);
+        return MoeExecutor.RunTokenAsync(
+            this,
+            layer,
+            input,
+            cache,
+            workspace,
+            destination,
+            cancellationToken,
+            trace);
+    }
+
     public void Dispose()
     {
-        var source = Interlocked.Exchange(ref dataSource, null);
+        TensorDataSource? source;
+        ExpertCache? cache;
+        lock (expertCacheGate)
+        {
+            source = Interlocked.Exchange(ref dataSource, null);
+            cache = expertCache;
+            expertCache = null;
+        }
+
         if (source is null)
         {
             return;
         }
+
+        cache?.Dispose();
 
         foreach (var weight in residentWeights.Values)
         {

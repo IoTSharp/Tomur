@@ -134,6 +134,7 @@ internal sealed class ManagedGlmSession : ITextGenerationSession
                 $"Provider: {ProviderId}; architecture: {loadedModel.Manifest.Architecture}.",
                 $"Loaded {loadedModel.ResidentTensorCount} resident tensors ({loadedModel.ActualResidentBytes} bytes).",
                 $"Planned KV {loadedModel.MemoryPlan.KvBytes} bytes and scratch {loadedModel.MemoryPlan.ScratchBytes} bytes for context {loadedModel.MemoryPlan.ContextSize}.",
+                $"MoE workspace requires {loadedModel.MemoryPlan.MoeWorkspaceBytes} bytes; each expert cache slot requires {loadedModel.ExpertLayout.SlotBudgetedBytes} bytes.",
                 "Use an existing llama.cpp-compatible model for inference until the managed kernels pass the tiny-model oracle.",
                 "Do not treat resident model loading as successful inference."
             ]);
@@ -166,6 +167,9 @@ internal sealed class ManagedGlmSession : ITextGenerationSession
                 $"resident bytes: {loadedModel.ActualResidentBytes}",
                 $"planned KV bytes: {loadedModel.MemoryPlan.KvBytes}",
                 $"planned scratch bytes: {loadedModel.MemoryPlan.ScratchBytes}",
+                $"planned MoE workspace bytes: {loadedModel.MemoryPlan.MoeWorkspaceBytes}",
+                $"expert storage format: {loadedModel.ExpertLayout.Format}",
+                $"expert cache slot bytes: {loadedModel.ExpertLayout.SlotBudgetedBytes}",
                 $"load budget bytes: {loadedModel.MemoryPlan.RequiredBytes}/{loadedModel.MemoryPlan.AvailableBytes}",
                 "forward execution is not connected"
             ]);
