@@ -2,7 +2,7 @@
 
 This project contains Tomur's pure C# provider for explicitly marked GLM / MoE model directories. It does not load a third-party inference dynamic library and does not replace the existing llama.cpp provider.
 
-The M1-M3 foundation code is in place: model metadata probing, safetensors indexing, fixed-seed tiny oracle fixture generation, bounded tensor storage, numeric conversion, quantized views, workspaces, and expert slabs. M4 scalar reference kernels are next. Build, regression, oracle alignment, cross-platform, performance, and release validation are intentionally deferred to the final M14 validation stage; forward execution remains unavailable until that stage passes.
+The M1-M4 foundation code is in place: model metadata probing, safetensors indexing, fixed-seed tiny oracle fixture generation, bounded tensor storage, numeric conversion, quantized views, workspaces, expert slabs, and scalar reference kernels. M5 tokenizer work is next. Build, regression, oracle alignment, cross-platform, performance, and release validation are intentionally deferred to the final M14 validation stage; forward execution remains unavailable until that stage passes.
 
 The complete implementation sequence, validation gates, performance work, and release criteria are maintained in [ROADMAP.md](./ROADMAP.md).
 

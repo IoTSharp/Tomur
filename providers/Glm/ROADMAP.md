@@ -179,8 +179,8 @@ Disk
 | 01 | M1 | ✅ | provider 边界、模型清单与 safetensors probe |
 | 02 | M2 | ✅ | tiny fixture 与 oracle 基线 |
 | 03 | M3 | ✅ | 张量存储、读取和量化视图 |
-| 04 | M4 | ⏭️ | scalar reference kernels |
-| 05 | M5 | ⏳ | tokenizer、prompt 与增量解码 |
+| 04 | M4 | ✅ | scalar reference kernels |
+| 05 | M5 | ⏭️ | tokenizer、prompt 与增量解码 |
 | 06 | M6 | ⏳ | resident dense model 加载 |
 | 07 | M7 | ⏳ | MLA attention 与 compressed KV cache |
 | 08 | M8 | ⏳ | MoE router、shared expert 与 expert streaming |
@@ -252,32 +252,22 @@ Disk
 6. `ExpertSlab` 已使用固定容量池化 slot 同时容纳 gate/up/down payload 与 scales，并在三个 payload 相邻时合并为一次读取。
 7. M3 独立测试项目已包含随机 slice、相邻读取、F32/F16/BF16 转换、int4 奇数列、取消、workspace/resident/expert slab dispose、短文件、溢出和重复 handle 释放用例。
 
-## 04. ⏭️ M4：scalar reference kernels
+## 04. ✅ M4：scalar reference kernels
 
 目标：建立简单、可读、可验证的标量实现，作为所有 SIMD kernel 的正确性基准。
 
-首批 kernel：
+已完成基础代码：
 
-1. embedding gather。
-2. RMSNorm。
-3. LayerNorm，仅用于模型配置需要的位置。
-4. F32 matvec / matmul。
-5. int8 per-row dequant matvec。
-6. packed int4 per-row dequant matvec。
-7. activation quantize-to-int8。
-8. SiLU、sigmoid、softmax。
-9. elementwise add、multiply 和 residual。
-10. top-k 与稳定 tie-breaking。
+1. `ScalarKernels` 已提供 embedding gather、RMSNorm 与按需 LayerNorm，使用显式 shape、row stride 和 destination stride。
+2. F32 matvec / matmul 已使用固定 row-major 循环顺序与 double accumulator，并覆盖带 padding stride 和空 batch。
+3. int8 per-row 与 packed int4 per-row dequant matvec 已复用 M3 的 `QuantizedTensorView`，逐元素 F32 解量化后进入 double accumulator。
+4. activation quantize-to-int8 已固定为对称 scale、`MidpointRounding.ToEven`、`[-127, 127]` 饱和范围，并处理全零与极小 activation。
+5. SiLU、sigmoid、稳定 softmax、elementwise add/multiply、显式原地 residual 与 stable top-k 已建立；top-k 同分时选择较小 source index。
+6. 未声明的输入输出 alias、非法 shape/stride/buffer、错误量化格式、非法 scale 与非有限 softmax/top-k/activation 输入会显式失败。
+7. M4 独立测试项目已接入 solution，覆盖 tiny fixture embedding/RMSNorm checkpoint、LayerNorm、F32 stride、int8/int4 离线解量化、奇数列、ties-to-even、激活函数、alias、稳定 top-k、空 batch 与非法边界；测试执行统一留在 M14。
+8. scalar path 不使用并行或 intrinsics，后续优化不得删除该路径。
 
-实现原则：
-
-1. scalar path 不使用并行和 intrinsics。
-2. 循环顺序、accumulator 类型和 rounding 必须固定。
-3. kernel 输入输出不得在未声明时 alias。
-4. 每个 kernel 检查 shape、stride 和 buffer 长度。
-5. 性能优化不得删除 scalar path；scalar path 用于诊断和跨平台 fallback。
-
-## 05. ⏳ M5：tokenizer、prompt 与增量解码
+## 05. ⏭️ M5：tokenizer、prompt 与增量解码
 
 目标：在模型 forward 前先锁定文本与 token 的双向语义。
 

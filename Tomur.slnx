@@ -4,4 +4,5 @@
   <Project Path="tests/Tomur.Providers.M1.Tests/Tomur.Providers.M1.Tests.csproj" />
   <Project Path="tests/Tomur.Providers.M2.Tests/Tomur.Providers.M2.Tests.csproj" />
   <Project Path="tests/Tomur.Providers.M3.Tests/Tomur.Providers.M3.Tests.csproj" />
+  <Project Path="tests/Tomur.Providers.M4.Tests/Tomur.Providers.M4.Tests.csproj" />
 </Solution>
