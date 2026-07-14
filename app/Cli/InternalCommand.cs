@@ -4,6 +4,7 @@ using Tomur.Hardware;
 using Tomur.Inference;
 using Tomur.Multimodal;
 using Tomur.Native;
+using Tomur.Providers;
 using Tomur.Runtime;
 using Tomur.Serialization;
 
@@ -22,8 +23,68 @@ internal static class InternalCommand
         return args[0] switch
         {
             "image-worker" => RunImageWorker(args[1..]),
+            "model-fixture" => RunModelFixture(args[1..]),
             _ => RunUnknownCommand(args[0])
         };
+    }
+
+    private static int RunModelFixture(IReadOnlyList<string> args)
+    {
+        if (args.Count == 0 || CommandLineHelpers.HasHelp(args))
+        {
+            Console.Error.WriteLine(
+                "Usage: tomur internal model-fixture <generate|verify> --provider <id> --output <directory>");
+            return args.Count == 0 ? 1 : 0;
+        }
+
+        if (!CommandLineHelpers.TryReadOption(args, "--provider", out var providerId, out var providerError))
+        {
+            return WriteError(providerError);
+        }
+
+        if (!CommandLineHelpers.TryReadOption(args, "--output", out var outputDirectory, out var outputError))
+        {
+            return WriteError(outputError);
+        }
+
+        if (string.IsNullOrWhiteSpace(providerId) || string.IsNullOrWhiteSpace(outputDirectory))
+        {
+            return WriteError("model-fixture requires --provider and --output values.");
+        }
+
+        using var registry = ModelProviderRegistry.CreateDefault();
+        var provider = registry.FindFixtureProvider(providerId);
+        if (provider is null)
+        {
+            return WriteError(
+                $"Managed fixture provider '{providerId}' was not found. " +
+                $"Set {ModelProviderRegistry.ProviderPathEnvironmentVariable} to the provider output directory.");
+        }
+
+        try
+        {
+            var result = args[0] switch
+            {
+                "generate" => provider.GenerateFixture(outputDirectory),
+                "verify" => provider.VerifyFixture(outputDirectory),
+                _ => throw new ArgumentException($"Unknown model-fixture operation: {args[0]}")
+            };
+
+            Console.WriteLine($"Fixture: {result.FixtureId}");
+            Console.WriteLine($"  Provider: {result.ProviderId}");
+            Console.WriteLine($"  Directory: {result.Directory}");
+            Console.WriteLine($"  Schema: {result.SchemaVersion}");
+            Console.WriteLine($"  Files: {result.FileCount}");
+            Console.WriteLine($"  Tensors: {result.TensorCount}");
+            Console.WriteLine($"  Oracle checkpoints: {result.OracleCheckpointCount}");
+            return 0;
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or ArgumentException or
+            InvalidDataException or JsonException or OverflowException)
+        {
+            return WriteError($"Model fixture operation failed: {exception.Message}");
+        }
     }
 
     private static int RunImageWorker(IReadOnlyList<string> args)

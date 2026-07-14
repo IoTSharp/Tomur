@@ -1,4 +1,6 @@
 <Solution>
   <Project Path="app/Tomur.csproj" />
   <Project Path="providers/Glm/Tomur.Providers.Glm.csproj" />
+  <Project Path="tests/Tomur.Providers.M1.Tests/Tomur.Providers.M1.Tests.csproj" />
+  <Project Path="tests/Tomur.Providers.M2.Tests/Tomur.Providers.M2.Tests.csproj" />
 </Solution>

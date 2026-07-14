@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using Tomur.Config;
 using Tomur.Hardware;
 using Tomur.Native;
+using Tomur.Providers;
 using Tomur.Storage;
 
 namespace Tomur.Runtime;
@@ -22,4 +23,13 @@ public sealed record RuntimeStatusResponse(
     [property: JsonPropertyName("acceleration")] AccelerationPlan Acceleration,
     [property: JsonPropertyName("native_bundle")] NativeBundleProbeResult NativeBundle,
     [property: JsonPropertyName("runtime")] RuntimeDiagnostic Runtime,
-    [property: JsonPropertyName("diagnostics")] IReadOnlyList<DiagnosticItem> Diagnostics);
+    [property: JsonPropertyName("diagnostics")] IReadOnlyList<DiagnosticItem> Diagnostics)
+{
+    [JsonPropertyName("managed_providers")]
+    public ModelProviderStatus ManagedProviders { get; init; } = new(
+        "not_checked",
+        false,
+        [],
+        [],
+        []);
+}

@@ -22,6 +22,22 @@ public interface ITextGenerationProvider
     ITextGenerationSession CreateSession(LocalModelDescriptor model, ModelSessionOptions options);
 }
 
+public interface IModelFixtureProvider : ITextGenerationProvider
+{
+    ModelFixtureResult GenerateFixture(string outputDirectory);
+
+    ModelFixtureResult VerifyFixture(string fixtureDirectory);
+}
+
+public sealed record ModelFixtureResult(
+    string ProviderId,
+    string FixtureId,
+    string Directory,
+    int SchemaVersion,
+    int FileCount,
+    int TensorCount,
+    int OracleCheckpointCount);
+
 public interface ITextGenerationSession : IDisposable
 {
     string ProviderId { get; }

@@ -2,6 +2,7 @@ using Tomur.Config;
 using Tomur.Hardware;
 using Tomur.Inference;
 using Tomur.Native;
+using Tomur.Providers;
 using Tomur.Runtime;
 
 namespace Tomur.Cli;
@@ -29,11 +30,16 @@ internal static class DoctorCommand
         var importResolver = new LlamaImportResolver(libraryResolver);
         var backendInitializer = new LlamaBackendInitializer(importResolver, libraryResolver, configurationStore);
         var accelerationService = new HardwareAccelerationService(backendInitializer, nativeBundleProbe, configurationStore);
+        using var modelProviderRegistry = ModelProviderRegistry.CreateDefault();
         var diagnostics = new RuntimeDiagnosticsProvider(
             configurationStore,
             paths,
             nativeBundleProbe,
-            accelerationService: accelerationService).GetDoctorReport();
+            serverOptions: null,
+            inferenceService: null,
+            accelerationService: accelerationService,
+            modelProviderRegistry: modelProviderRegistry,
+            logger: null).GetDoctorReport();
 
         Console.WriteLine($"{Defaults.ProductName} doctor");
         Console.WriteLine($"  Version: {diagnostics.Version}");
@@ -101,6 +107,18 @@ internal static class DoctorCommand
 
         Console.WriteLine($"  Native bundle: {diagnostics.NativeBundle.Status} ({diagnostics.NativeBundle.Rid})");
         Console.WriteLine($"  Runtime: {diagnostics.Runtime.Status} / {diagnostics.Runtime.Code}");
+        Console.WriteLine($"  Managed providers: {diagnostics.Details.ManagedProviders.Status} ({diagnostics.Details.ManagedProviders.Loaded.Count} loaded)");
+        foreach (var provider in diagnostics.Details.ManagedProviders.Loaded)
+        {
+            Console.WriteLine($"    {provider.Id}: {provider.Assembly} {provider.Version ?? "unknown"}");
+            Console.WriteLine($"      Path: {provider.Path}");
+        }
+
+        foreach (var directory in diagnostics.Details.ManagedProviders.SearchDirectories)
+        {
+            Console.WriteLine($"  Managed provider search path: {directory}");
+        }
+
         Console.WriteLine();
         Console.WriteLine("Diagnostics:");
 
@@ -132,7 +150,7 @@ Usage:
 Options:
   --data-dir      Override the local data directory for this process.
 
-Prints local OS, data directory, SQLite, API key, port and runtime diagnostics.
+Prints local OS, data directory, SQLite, API key, port, provider and runtime diagnostics.
 Run `tomur native prepare` to extract or repair native runtime files.
 """);
     }

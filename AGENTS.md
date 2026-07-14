@@ -31,6 +31,7 @@
 - 现有 llama.cpp、Whisper、OCR、stable-diffusion.cpp 与 TTS native runtime 路径必须保留；新增托管提供器是并行选择，不得以替换或删除现有 native 能力为前提。
 - `Program.cs` 必须承担进程入口、顶层命令分发和全局帮助；CLI 具体实现按类别放在 `app/Cli/`。
 - 除模型提供器及其必要的稳定契约外，不因功能分类继续拆分 C# 项目。
+- `tests/` 允许按验证阶段建立独立 .NET 测试项目；测试项目不属于产品拆分，不得承载另一套服务或公开 API。
 - 不直接依赖外部服务器项目，不引入 PostgreSQL、RBAC、SSO、复杂审计、多租户治理或后台管理壳作为默认能力。
 - 默认本地状态使用文件系统与 SQLite-first 设计。
 - 用户面对的是 Tomur 本地程序，不要求理解底层 native backend、模型目录实现或内部适配层。

@@ -263,8 +263,30 @@ export interface RuntimeStatusResponse {
   port: PortState;
   acceleration: AccelerationPlan;
   native_bundle: NativeBundleStatus;
+  managed_providers: ManagedProviderStatus;
   runtime: RuntimeDiagnostic;
   diagnostics: DiagnosticItem[];
+}
+
+export interface ManagedProviderStatus {
+  status: string;
+  dynamic_loading_supported: boolean;
+  search_directories: string[];
+  loaded: ManagedProviderInfo[];
+  diagnostics: ManagedProviderLoadDiagnostic[];
+}
+
+export interface ManagedProviderInfo {
+  id: string;
+  assembly: string;
+  version?: string | null;
+  path: string;
+}
+
+export interface ManagedProviderLoadDiagnostic {
+  code: string;
+  message: string;
+  path?: string | null;
 }
 
 export interface SystemSnapshot {

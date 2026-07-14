@@ -175,8 +175,8 @@ Disk
 | --- | --- | --- | --- |
 | 00 | M0 | ✅ | 分支、工程规则与 provider 方向 |
 | 01 | M1 | 🚧 | provider 边界、模型清单与 safetensors probe |
-| 02 | M2 | ⏭️ | tiny fixture 与 oracle 验证基线 |
-| 03 | M3 | ⏳ | 张量存储、读取和量化视图 |
+| 02 | M2 | 🚧 | tiny fixture 与 oracle 验证基线 |
+| 03 | M3 | 🚧 | 张量存储、读取和量化视图 |
 | 04 | M4 | ⏳ | scalar reference kernels |
 | 05 | M5 | ⏳ | tokenizer、prompt 与增量解码 |
 | 06 | M6 | ⏳ | resident dense model 加载 |
@@ -221,14 +221,18 @@ Disk
 7. safetensors header、shape、dtype、offset 和重复 tensor 检查已建立。
 8. dense、attention、router、shared expert 和 routed expert 必需 tensor 名称检查已建立。
 9. forward 未接通时返回 `managed_forward_not_ready`。
+10. provider discovery 已记录搜索目录、已加载 provider ID、程序集版本与路径，并区分坏程序集、契约缺失、激活失败、非法 ID 和重复 ID。
+11. provider discovery diagnostics 已接入 `tomur doctor`、`GET /api/runtime/status` 与 Web Runtime 状态合同；managed provider 失败只降低为 warning，不阻断 native provider。
+12. Catalog 已隔离包含无效 `model.tomur.json` 的目录，不再把其中的 safetensors shard 误登记为普通模型。
+13. safetensors probe 已校验受支持 dtype、shape 对应字节数、连续且不重叠的数据范围，并保持只读取文件长度与 header。
+14. M1 测试项目已建立运行时生成的最小合法/非法模型目录 fixture，不在仓库保存模型权重。
 
 仍需完成：
 
-1. 编译主程序和 provider 项目，解决编译器与 analyzer 发现的问题。
-2. 构造最小合法与非法模型目录 fixture。
-3. 验证 provider DLL 从默认 `providers` 目录和 `TOMUR_PROVIDER_PATH` 加载。
-4. 验证缺 DLL、坏 DLL、重复 provider ID、坏 manifest、越界 tensor offset 和缺 tensor 的诊断。
-5. 把 provider load diagnostics 接入 `tomur doctor` 与 Runtime API。
+1. 编译主程序、provider 与 M1 测试项目，解决编译器和 analyzer 发现的问题。
+2. 执行 M1 回归测试，确认合法 probe、坏 manifest、越界 tensor offset、缺 tensor、坏 DLL、非法 ID、重复 ID 与缺 provider 诊断。
+3. 实跑 provider DLL 从默认 `providers` 目录和 `TOMUR_PROVIDER_PATH` 加载，并记录两条发现路径的结果。
+4. 实跑 `tomur doctor` 与 `GET /api/runtime/status`，确认 provider 状态、路径和修复动作可见。
 
 验收：
 
@@ -238,18 +242,26 @@ Disk
 4. probe 期间不读取 tensor payload，不分配完整模型内存。
 5. 本阶段完成前仍保持 🚧，不得标记为可聊天。
 
-## 02. ⏭️ M2：tiny fixture 与 oracle 基线
+## 02. 🚧 M2：tiny fixture 与 oracle 基线
 
 目标：先建立可重复的正确性判定，再开始实现算子。
 
-实现：
+当前代码：
 
-1. 准备使用真实 GLM / MoE 配置字段的 tiny 模型，缩小 hidden、layer、head、expert、vocab 和 context。
-2. fixture 使用固定 seed 生成 F32 或 BF16 权重，并保留完整 tensor manifest。
-3. 保存固定文本的 token IDs、embedding lookup、RMSNorm、attention、router、单层输出、teacher-forcing logits 和 greedy decode token 序列。
-4. 浮点 reference path 默认使用 F32；必要位置用 double accumulator 诊断误差来源。
-5. fixture 和 oracle 只保存小模型资产，不把完整权重提交到仓库。
-6. 验证入口优先接入 Tomur 现有 `internal` CLI；若新增专用测试项目，先同步工程规则。
+1. tiny 配置使用真实 GLM / MoE 字段，并把 hidden、layer、head、expert、vocab 和 context 缩小到可逐项检查的范围。
+2. fixture generator 使用版本固定的 SplitMix64 派生 PRNG 与固定 seed 生成 F32 权重，并写出完整 tensor manifest。
+3. oracle 已保存固定文本 token IDs、embedding lookup、RMSNorm、MLA attention、router、MoE、单层输出、teacher-forcing logits 和 greedy decode token 序列。
+4. scalar reference graph 在 F32 边界保存 checkpoint，并使用 double accumulator 固定矩阵乘、归一化、softmax 与路由权重计算顺序。
+5. `fixture.manifest.json` 对配置、tokenizer、safetensors、tensor manifest 和 oracle 记录长度与 SHA-256；校验器同时检查 schema、配置摘要与逐 tensor checksum。
+6. `tomur internal model-fixture generate|verify` 已通过可选 provider 契约接入；M2 独立测试项目覆盖重复生成、oracle checkpoint、篡改拒绝与 managed probe。
+7. fixture 由 generator 在干净目录按需创建，仓库不提交完整模型权重。
+
+仍需完成：
+
+1. 编译主程序、provider 与 M2 测试项目，处理编译器和 analyzer 结果。
+2. 执行 M2 回归测试，并确认两个干净目录的全部生成文件逐字节一致。
+3. 实跑隐藏 CLI 的 generate 与 verify 路径，记录 checksum 和失败诊断。
+4. 在首个生产 kernel 合入前，用独立实现复核 reference graph 的 attention、router、teacher-forcing 与 greedy 结果。
 
 验收：
 
@@ -258,7 +270,7 @@ Disk
 3. 所有后续 kernel 都能单独与 oracle 比较。
 4. greedy 输出必须在固定 seed、固定 kernel path 下可重复。
 
-## 03. ⏳ M3：张量存储和读取层
+## 03. 🚧 M3：张量存储和读取层
 
 目标：建立不依赖模型图的安全张量访问层。
 

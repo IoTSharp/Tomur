@@ -7,6 +7,7 @@ using Tomur.Hardware;
 using Tomur.Inference;
 using Tomur.Multimodal;
 using Tomur.Native;
+using Tomur.Providers;
 using Tomur.Storage;
 
 namespace Tomur.Runtime;
@@ -21,6 +22,7 @@ public sealed class RuntimeDiagnosticsProvider
     private readonly ServerOptions serverOptions;
     private readonly LocalInferenceService? inferenceService;
     private readonly HardwareAccelerationService? accelerationService;
+    private readonly ModelProviderRegistry? modelProviderRegistry;
     private readonly ILogger<RuntimeDiagnosticsProvider> logger;
 
     public RuntimeDiagnosticsProvider(
@@ -39,6 +41,27 @@ public sealed class RuntimeDiagnosticsProvider
         this.inferenceService = inferenceService;
         this.accelerationService = accelerationService;
         this.logger = logger ?? NullLogger<RuntimeDiagnosticsProvider>.Instance;
+    }
+
+    public RuntimeDiagnosticsProvider(
+        ConfigurationStore configurationStore,
+        DataPaths basePaths,
+        INativeBundleProbe? nativeBundleProbe,
+        ServerOptions? serverOptions,
+        LocalInferenceService? inferenceService,
+        HardwareAccelerationService? accelerationService,
+        ModelProviderRegistry modelProviderRegistry,
+        ILogger<RuntimeDiagnosticsProvider>? logger)
+        : this(
+            configurationStore,
+            basePaths,
+            nativeBundleProbe,
+            serverOptions,
+            inferenceService,
+            accelerationService,
+            logger)
+    {
+        this.modelProviderRegistry = modelProviderRegistry;
     }
 
     public RuntimeDiagnostic GetRuntimeUnavailable(string? model)
@@ -152,7 +175,19 @@ public sealed class RuntimeDiagnosticsProvider
         var nativeBundle = nativeBundleProbe.Probe(paths.RuntimeDirectory);
         var acceleration = GetAccelerationPlan(nativeBundle);
         var runtime = GetRuntimeDiagnostic(nativeBundle);
-        var diagnostics = BuildDiagnostics(configuration, directories, database, apiKeys, disk, proxy, port, nativeBundle, acceleration, runtime);
+        var managedProviders = modelProviderRegistry?.Status ?? GetUncheckedManagedProviderStatus();
+        var diagnostics = BuildDiagnostics(
+            configuration,
+            directories,
+            database,
+            apiKeys,
+            disk,
+            proxy,
+            port,
+            nativeBundle,
+            acceleration,
+            runtime,
+            managedProviders);
         var resolvedPathConfiguration = paths.ToPathConfiguration();
 
         return new RuntimeStatusResponse(
@@ -171,7 +206,10 @@ public sealed class RuntimeDiagnosticsProvider
             acceleration,
             nativeBundle,
             runtime,
-            diagnostics);
+            diagnostics)
+        {
+            ManagedProviders = managedProviders
+        };
     }
 
     private string ResolveServiceUrls(LocalConfiguration configuration)
@@ -404,7 +442,8 @@ public sealed class RuntimeDiagnosticsProvider
         PortState port,
         NativeBundleProbeResult nativeBundle,
         AccelerationPlan acceleration,
-        RuntimeDiagnostic runtime)
+        RuntimeDiagnostic runtime,
+        ModelProviderStatus managedProviders)
     {
         var diagnostics = new List<DiagnosticItem>
         {
@@ -492,7 +531,85 @@ public sealed class RuntimeDiagnosticsProvider
             runtime.Code,
             runtime.Actions));
 
+        diagnostics.Add(ToDiagnostic(
+            "managed_providers",
+            managedProviders.Status,
+            managedProviders.Status == "warning" ? "warning" : "ok",
+            BuildManagedProviderDiagnosticMessage(managedProviders),
+            managedProviders.Loaded.Count == 0
+                ? null
+                : string.Join(", ", managedProviders.Loaded.Select(static provider => provider.Id)),
+            managedProviders.Status == "warning"
+                ? ["Review the managed provider diagnostics below; native providers remain available independently."]
+                : []));
+
+        foreach (var providerDiagnostic in managedProviders.Diagnostics)
+        {
+            var expectedAotLimitation = providerDiagnostic.Code == "dynamic_managed_providers_unavailable";
+            diagnostics.Add(ToDiagnostic(
+                $"managed_provider:{providerDiagnostic.Code}",
+                expectedAotLimitation ? "unavailable" : "warning",
+                expectedAotLimitation ? "ok" : "warning",
+                providerDiagnostic.Message,
+                providerDiagnostic.Path,
+                GetManagedProviderDiagnosticActions(providerDiagnostic.Code)));
+        }
+
         return diagnostics;
+    }
+
+    private static string BuildManagedProviderDiagnosticMessage(ModelProviderStatus status)
+    {
+        if (!status.DynamicLoadingSupported)
+        {
+            return "Dynamic managed provider discovery is unavailable in this release profile; native providers are unaffected.";
+        }
+
+        if (status.Loaded.Count == 0)
+        {
+            return status.Diagnostics.Count == 0
+                ? "No optional managed model provider assemblies were discovered; native providers remain available."
+                : "No managed model provider assemblies were loaded because discovery reported diagnostics.";
+        }
+
+        return status.Diagnostics.Count == 0
+            ? $"Loaded {status.Loaded.Count} managed model provider(s)."
+            : $"Loaded {status.Loaded.Count} managed model provider(s), with {status.Diagnostics.Count} discovery diagnostic(s).";
+    }
+
+    private static IReadOnlyList<string> GetManagedProviderDiagnosticActions(string code)
+        => code switch
+        {
+            "managed_provider_path_invalid" =>
+                [$"Set {ModelProviderRegistry.ProviderPathEnvironmentVariable} to one or more valid provider directories."],
+            "managed_provider_directory_unavailable" =>
+                ["Verify that the provider directory exists and is readable by the current user."],
+            "managed_provider_load_failed" or "managed_provider_type_load_failed" or "managed_provider_contract_not_found" =>
+                ["Verify that the provider assembly targets this Tomur build and that all managed dependencies are present."],
+            "managed_provider_activation_failed" =>
+                ["Verify that the provider type is concrete and has a public parameterless constructor."],
+            "managed_provider_id_invalid" =>
+                ["Assign the provider a stable, non-empty provider ID."],
+            "managed_provider_id_duplicate" =>
+                ["Remove the duplicate provider assembly or assign it a unique provider ID."],
+            "dynamic_managed_providers_unavailable" =>
+                ["Use the non-AOT self-contained release for independent provider DLLs, or a release that statically includes the provider."],
+            _ => ["Inspect the provider assembly and model manifest before retrying."]
+        };
+
+    private static ModelProviderStatus GetUncheckedManagedProviderStatus()
+    {
+#if TOMUR_NATIVE_AOT
+        const bool dynamicLoadingSupported = false;
+#else
+        const bool dynamicLoadingSupported = true;
+#endif
+        return new ModelProviderStatus(
+            "not_checked",
+            dynamicLoadingSupported,
+            [],
+            [],
+            []);
     }
 
     private static string BuildAccelerationDiagnosticMessage(AccelerationPlan acceleration)

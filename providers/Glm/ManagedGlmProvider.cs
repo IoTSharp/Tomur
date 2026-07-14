@@ -5,7 +5,7 @@ using Tomur.Runtime;
 
 namespace Tomur.Providers.Glm;
 
-public sealed class ManagedGlmProvider : ITextGenerationProvider
+public sealed class ManagedGlmProvider : IModelFixtureProvider
 {
     public const string ProviderId = "managed-glm";
 
@@ -14,10 +14,17 @@ public sealed class ManagedGlmProvider : ITextGenerationProvider
     public bool CanHandle(LocalModelDescriptor model)
     {
         ArgumentNullException.ThrowIfNull(model);
-        return string.Equals(model.Format, "managed-model", StringComparison.OrdinalIgnoreCase) &&
-            ModelProviderManifestReader.TryRead(model.AbsolutePath, out var manifest, out _) &&
-            manifest is not null &&
-            string.Equals(manifest.Provider, ProviderId, StringComparison.OrdinalIgnoreCase);
+        if (!string.Equals(model.Format, "managed-model", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!ModelProviderManifestReader.TryRead(model.AbsolutePath, out var manifest, out var error) || manifest is null)
+        {
+            throw new InvalidDataException(error ?? "Managed model provider manifest is invalid.");
+        }
+
+        return string.Equals(manifest.Provider, ProviderId, StringComparison.OrdinalIgnoreCase);
     }
 
     public ITextGenerationSession CreateSession(LocalModelDescriptor model, ModelSessionOptions options)
@@ -44,6 +51,12 @@ public sealed class ManagedGlmProvider : ITextGenerationProvider
                 exception);
         }
     }
+
+    public ModelFixtureResult GenerateFixture(string outputDirectory)
+        => TinyFixtureBundle.Generate(outputDirectory).ToResult(ProviderId);
+
+    public ModelFixtureResult VerifyFixture(string fixtureDirectory)
+        => TinyFixtureBundle.Verify(fixtureDirectory).ToResult(ProviderId);
 }
 
 internal sealed class ManagedGlmSession : ITextGenerationSession

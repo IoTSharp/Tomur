@@ -46,10 +46,7 @@ public sealed class LocalModelCatalog
         }
 
         var providerModelDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var providerManifestPath in Directory.EnumerateFiles(
-                     paths.ModelsDirectory,
-                     ModelProviderManifest.FileName,
-                     SearchOption.AllDirectories))
+        foreach (var providerManifestPath in EnumerateModelFiles(ModelProviderManifest.FileName))
         {
             var relativePath = BuildRelativePath(providerManifestPath);
             if (relativePath.StartsWith($"{Defaults.DownloadCacheDirectoryName}/", StringComparison.OrdinalIgnoreCase))
@@ -57,6 +54,7 @@ public sealed class LocalModelCatalog
                 continue;
             }
 
+            providerModelDirectories.Add(Path.GetDirectoryName(providerManifestPath)!);
             var descriptor = TryCreateProviderDescriptor(providerManifestPath);
             if (descriptor is null)
             {
@@ -64,10 +62,9 @@ public sealed class LocalModelCatalog
             }
 
             descriptors.Add(descriptor);
-            providerModelDirectories.Add(Path.GetDirectoryName(providerManifestPath)!);
         }
 
-        foreach (var file in Directory.EnumerateFiles(paths.ModelsDirectory, "*", SearchOption.AllDirectories))
+        foreach (var file in EnumerateModelFiles("*"))
         {
             if (string.Equals(Path.GetFileName(file), ModelProviderManifest.FileName, StringComparison.OrdinalIgnoreCase) ||
                 providerModelDirectories.Any(directory => IsWithinDirectory(file, directory)))
@@ -257,6 +254,28 @@ public sealed class LocalModelCatalog
     private string BuildRelativePath(string file)
     {
         return Path.GetRelativePath(paths.ModelsDirectory, file).Replace('\\', '/');
+    }
+
+    private IReadOnlyList<string> EnumerateModelFiles(string pattern)
+    {
+        try
+        {
+            return Directory
+                .EnumerateFiles(paths.ModelsDirectory, pattern, new EnumerationOptions
+                {
+                    RecurseSubdirectories = true,
+                    IgnoreInaccessible = true,
+                    ReturnSpecialDirectories = false,
+                    AttributesToSkip = FileAttributes.Hidden | FileAttributes.System | FileAttributes.ReparsePoint
+                })
+                .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return [];
+        }
     }
 
     private static string NormalizeModelId(string value)

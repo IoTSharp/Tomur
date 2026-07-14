@@ -15,6 +15,7 @@ internal sealed record ModelProbe(
 internal static class ModelDirectoryProbe
 {
     private const long MaximumTokenizerBytes = 512L * 1024 * 1024;
+    private const int MaximumTensorFileCount = 4096;
 
     public static ModelProbe Read(LocalModelDescriptor model, string providerId)
     {
@@ -42,22 +43,51 @@ internal static class ModelDirectoryProbe
                 $"Managed GLM provider does not support architecture '{manifest.Architecture}'.");
         }
 
+        if (!manifest.Capabilities.Any(static capability =>
+                string.Equals(capability, "completion", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(capability, "chat", StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new InvalidDataException(
+                "Managed GLM model manifest must declare the completion or chat capability.");
+        }
+
+        if (!IsSupportedQuantization(manifest.Quantization))
+        {
+            throw new InvalidDataException(
+                $"Managed GLM provider does not support quantization '{manifest.Quantization}'.");
+        }
+
         var modelDirectory = Path.GetDirectoryName(manifestPath)!;
         var configPath = ModelProviderManifestReader.ResolveAssetPath(modelDirectory, manifest.ConfigFile);
         var tokenizerPath = ModelProviderManifestReader.ResolveAssetPath(modelDirectory, manifest.TokenizerFile);
+        RejectLinkedAsset(modelDirectory, configPath);
+        RejectLinkedAsset(modelDirectory, tokenizerPath);
         var configuration = GlmModelConfiguration.Read(configPath);
         ValidateTokenizer(tokenizerPath);
 
-        var tensorPaths = Directory
-            .EnumerateFiles(modelDirectory, manifest.TensorPattern, SearchOption.TopDirectoryOnly)
-            .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        if (tensorPaths.Length == 0)
+        var tensorPaths = new List<string>();
+        foreach (var tensorPath in Directory.EnumerateFiles(
+                     modelDirectory,
+                     manifest.TensorPattern,
+                     SearchOption.TopDirectoryOnly))
+        {
+            if (tensorPaths.Count >= MaximumTensorFileCount)
+            {
+                throw new InvalidDataException(
+                    $"Managed GLM model contains more than {MaximumTensorFileCount} tensor files.");
+            }
+
+            RejectLinkedAsset(modelDirectory, tensorPath);
+            tensorPaths.Add(tensorPath);
+        }
+
+        if (tensorPaths.Count == 0)
         {
             throw new InvalidDataException(
                 $"No tensor files matched '{manifest.TensorPattern}' in {modelDirectory}.");
         }
 
+        tensorPaths.Sort(StringComparer.OrdinalIgnoreCase);
         var tensors = SafeTensorCatalog.Read(tensorPaths);
         ValidateRequiredTensors(configuration, tensors);
         return new ModelProbe(
@@ -65,9 +95,34 @@ internal static class ModelDirectoryProbe
             configuration,
             modelDirectory,
             tokenizerPath,
-            tensorPaths.Length,
+            tensorPaths.Count,
             tensors);
     }
+
+    private static void RejectLinkedAsset(string modelDirectory, string assetPath)
+    {
+        var relativePath = Path.GetRelativePath(modelDirectory, assetPath);
+        var currentPath = modelDirectory;
+        foreach (var segment in relativePath.Split(
+                     [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+                     StringSplitOptions.RemoveEmptyEntries))
+        {
+            currentPath = Path.Combine(currentPath, segment);
+            if ((File.Exists(currentPath) || Directory.Exists(currentPath)) &&
+                File.GetAttributes(currentPath).HasFlag(FileAttributes.ReparsePoint))
+            {
+                throw new InvalidDataException(
+                    $"Managed model assets must not resolve through symbolic links or reparse points: {assetPath}");
+            }
+        }
+    }
+
+    private static bool IsSupportedQuantization(string quantization)
+        => quantization.Equals("f32", StringComparison.OrdinalIgnoreCase) ||
+            quantization.Equals("f16", StringComparison.OrdinalIgnoreCase) ||
+            quantization.Equals("bf16", StringComparison.OrdinalIgnoreCase) ||
+            quantization.Equals("int8", StringComparison.OrdinalIgnoreCase) ||
+            quantization.Equals("int4", StringComparison.OrdinalIgnoreCase);
 
     private static void ValidateTokenizer(string path)
     {

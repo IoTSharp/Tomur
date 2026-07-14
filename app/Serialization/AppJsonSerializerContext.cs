@@ -11,6 +11,7 @@ using Tomur.Diagnostics;
 using Tomur.Hardware;
 using Tomur.Multimodal;
 using Tomur.Native;
+using Tomur.Providers;
 using Tomur.Runtime;
 using Tomur.Models;
 using Tomur.Services;
@@ -181,6 +182,9 @@ namespace Tomur.Serialization;
 [JsonSerializable(typeof(AccelerationBackendStatus))]
 [JsonSerializable(typeof(RuntimeStatusResponse))]
 [JsonSerializable(typeof(DoctorReport))]
+[JsonSerializable(typeof(ModelProviderStatus))]
+[JsonSerializable(typeof(ModelProviderInfo))]
+[JsonSerializable(typeof(ModelProviderLoadDiagnostic))]
 [JsonSerializable(typeof(NativeBundleManifest))]
 [JsonSerializable(typeof(NativeBundleComponent))]
 [JsonSerializable(typeof(NativeBundleSource))]

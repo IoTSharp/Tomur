@@ -133,7 +133,7 @@ Tomur has completed the main R1-R11 loops, is converging the R12 Native AOT / se
 | R12 | Native AOT publishing currently passes without warnings; Linux/macOS release logs, macOS native bundle assets, and real-machine service smoke remain in progress. |
 | R13 | Web capability aggregation has connected Agent / Capabilities views, read-only Agent tool calls, explicit side-effect tool confirmation, protocol capability maps, and Claude Code / Anthropic Messages compatibility; visual download queue and editable Settings remain in progress. |
 | R14 | Intel GPU / NPU support is being connected through the existing ggml dynamic backend path; `vulkan`, `sycl`, `openvino`, and `intel` native build entries, runtime accelerator preferences, OpenVINO / NPU environment setup, CPU fallback diagnostics, NPU incompatibility errors, Web Runtime display, and the smoke evidence entry are in place. Real Intel GPU / NPU smoke still needs machine evidence. |
-| R15 | Work has started on an independent pure C# GLM / MoE provider library, provider selection boundary, and model format probing. The existing llama.cpp path remains available and is still the default; real forward execution is not connected yet. |
+| R15 | Work has started on an independent pure C# GLM / MoE provider library, provider selection boundary, model format probing, and a fixed-seed tiny fixture/oracle baseline. The existing llama.cpp path remains available and is still the default; fixture regression and real forward execution have not been validated yet. |
 
 Planned follow-up work includes Intel GPU / NPU real smoke (tracked through `docs/r14-intel-acceleration-smoke.md`), a visual download queue, editable Settings, model deletion, VAD / interruption, streaming voice turns, multi-model residency, Linux/macOS release records, and real-machine service smoke.
 
@@ -163,6 +163,9 @@ Tomur/
   providers/
     Glm/
       Tomur.Providers.Glm.csproj
+  tests/
+    Tomur.Providers.M1.Tests/
+    Tomur.Providers.M2.Tests/
   native/
     llama.cpp/
     llama.native/
@@ -178,7 +181,7 @@ Tomur/
     src/
 ```
 
-`Tomur.csproj` hosts the CLI, local HTTP API, service-mode startup, runtime management, and web static assets. `Program.cs` owns process entry, top-level command dispatch, and global help; concrete CLI implementations live under `app/Cli/`. `providers/` is limited to independent pure C# model providers and does not create a second service or product entry point.
+`Tomur.csproj` hosts the CLI, local HTTP API, service-mode startup, runtime management, and web static assets. `Program.cs` owns process entry, top-level command dispatch, and global help; concrete CLI implementations live under `app/Cli/`. `providers/` is limited to independent pure C# model providers and does not create a second service or product entry point; `tests/` only contains stage-specific validation projects.
 
 `native/` contains native backend source code, CMake projects, and release packaging boundaries. `app/Native/` only contains C# dynamic library loading, P/Invoke, and native adapter code. Pure managed providers do not replace the existing llama.cpp path and are selected explicitly by model format and architecture. The web source lives under `web/`; its build output goes to `app/wwwroot` and is served by the Tomur local HTTP service.
 
