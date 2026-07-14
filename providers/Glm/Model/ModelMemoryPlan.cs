@@ -6,14 +6,19 @@ internal sealed record ModelMemoryPlan(
     long KvBytes,
     long ScratchBytes,
     long MoeWorkspaceBytes,
+    long ForwardWorkspaceBytes,
+    long SamplingWorkspaceBytes,
     long RequiredBytes,
     long AvailableBytes,
+    int ForwardBatchSize,
     int ActivationCapacity,
     int AttentionActivationCapacity,
     int QuantizationCapacity,
     int OutputCapacity,
     int AttentionScoreCapacity)
 {
+    public const int MaximumForwardBatchSize = 32;
+
     public static ModelMemoryPlan Create(
         GlmModelConfiguration configuration,
         IReadOnlyList<ResidentWeightSpec> residentWeights,
@@ -70,15 +75,27 @@ internal sealed record ModelMemoryPlan(
                     configuration.RoutedExpertCount,
                     Math.Max(attentionProjectionSize, keyValueProjectionSize))));
         var attentionScoreCapacity = contextSize;
-        var baseScratchBytes = checked(
+        var tensorWorkspaceBytes = checked(
             checked((long)activationCapacity * sizeof(float)) +
             quantizationCapacity +
-            checked((long)outputCapacity * sizeof(float)) +
+            checked((long)outputCapacity * sizeof(float)));
+        var attentionWorkspaceBytes = checked(
+            checked((long)attentionActivationCapacity * sizeof(float)) +
             checked((long)attentionScoreCapacity * sizeof(float)));
+        var forwardBatchSize = Math.Min(contextSize, MaximumForwardBatchSize);
+        var forwardWorkspaceBytes = checked(
+            checked((long)forwardBatchSize * configuration.HiddenSize * 4) * sizeof(float));
+        var samplingWorkspaceBytes = checked(
+            checked((long)configuration.VocabularySize * (sizeof(float) + sizeof(int))));
         var moeWorkspaceBytes = configuration.FirstMoeLayer < configuration.LayerCount
             ? MoeWorkspace.GetBudgetedBytes(configuration)
             : 0;
-        var scratchBytes = checked(baseScratchBytes + moeWorkspaceBytes);
+        var scratchBytes = checked(
+            tensorWorkspaceBytes +
+            attentionWorkspaceBytes +
+            forwardWorkspaceBytes +
+            samplingWorkspaceBytes +
+            moeWorkspaceBytes);
         var requiredBytes = checked(residentBytes + kvBytes + scratchBytes);
 
         return new ModelMemoryPlan(
@@ -87,8 +104,11 @@ internal sealed record ModelMemoryPlan(
             kvBytes,
             scratchBytes,
             moeWorkspaceBytes,
+            forwardWorkspaceBytes,
+            samplingWorkspaceBytes,
             requiredBytes,
             availableBytes,
+            forwardBatchSize,
             activationCapacity,
             attentionActivationCapacity,
             quantizationCapacity,

@@ -72,7 +72,7 @@ public sealed class TinyFixtureTests
     }
 
     [Fact]
-    public void GeneratedFixtureLoadsResidentModelWithoutEnablingForward()
+    public void GeneratedFixtureLoadsManagedGenerationSession()
     {
         using var root = new TemporaryDirectory();
         var fixturePath = Path.Combine(root.Path, "fixture");
@@ -102,10 +102,7 @@ public sealed class TinyFixtureTests
 
         Assert.True(result.TensorCount > 0);
         Assert.Equal(0UL, BinaryPrimitives.ReadUInt64LittleEndian(headerLengthBytes) % 8);
-        Assert.Equal("managed-glm-resident", session.GetSnapshot().Mode);
-        var exception = Assert.Throws<InferenceException>(() =>
-            session.Generate("hello Tomur", CompletionOptions.Default, CancellationToken.None));
-        Assert.Equal("managed_forward_not_ready", exception.Code);
+        Assert.Equal("managed-glm-generation", session.GetSnapshot().Mode);
     }
 
     [Fact]

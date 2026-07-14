@@ -184,7 +184,7 @@ Disk
 | 06 | M6 | ✅ | resident dense model 加载 |
 | 07 | M7 | ✅ | MLA attention 与 compressed KV cache |
 | 08 | M8 | ✅ | MoE router、shared expert 与 expert streaming |
-| 09 | M9 | ⏭️ | 完整 forward、prefill、decode 与 sampling |
+| 09 | M9 | ✅ | 完整 forward、prefill、decode 与 sampling |
 | 10 | M10 | ⏳ | Tomur API、session、streaming 与诊断闭环 |
 | 11 | M11 | ⏳ | SIMD、并行、缓存与 I/O 优化 |
 | 12 | M12 | ⏳ | DSA、MTP、grammar draft 与 KV 持久化 |
@@ -217,7 +217,7 @@ Disk
 6. tokenizer JSON 基础结构检查已建立。
 7. safetensors header、shape、dtype、offset 和重复 tensor 检查已建立。
 8. dense、attention、router、shared expert 和 routed expert 必需 tensor 名称检查已建立。
-9. forward 未接通时返回 `managed_forward_not_ready`。
+9. M1 阶段使用 `managed_forward_not_ready` 阻止未完成路径返回 token；该临时边界已在 M9 由真实 forward 替代。
 10. provider discovery 已记录搜索目录、已加载 provider ID、程序集版本与路径，并区分坏程序集、契约缺失、激活失败、非法 ID 和重复 ID。
 11. provider discovery diagnostics 已接入 `tomur doctor`、`GET /api/runtime/status` 与 Web Runtime 状态合同；managed provider 失败只降低为 warning，不阻断 native provider。
 12. Catalog 已隔离包含无效 `model.tomur.json` 的目录，不再把其中的 safetensors shard 误登记为普通模型。
@@ -305,7 +305,7 @@ resident 范围：
 4. F32、F16 与 BF16 resident 权重复用 M3 conversion 和所有权类型；未声明 payload/scale 布局的 int8/int4 resident 权重显式拒绝，不误读为 F32。
 5. 部分加载失败、取消和重复 dispose 会释放已分配 resident buffer 与全部 shard handle；转换临时 buffer 继续由 M3 的 bounded read 路径在 `finally` 中归还。
 6. 已接通 embedding gather、逐层 input RMSNorm 和 dense SwiGLU MLP scalar 基础路径；tiny fixture generator 升级到 1.1.0，并增加独立 dense MLP oracle checkpoint，既有 MoE teacher-forcing 基线保持不变。
-7. managed session 已报告 resident tensor、resident/KV/scratch bytes、内存预算与 open shard 数，并继续以 `managed_forward_not_ready` 阻止未完成 forward 返回 token。
+7. managed session 已报告 resident tensor、resident/KV/scratch bytes、内存预算与 open shard 数；M6 阶段的 forward 禁用边界已在 M9 由真实生成路径替代。
 8. M6 独立测试项目已接入 solution，覆盖 resident shape、预计/实际 resident bytes、预算先于 payload 读取、损坏 shard、取消、资源释放、routed expert 非 resident，以及 embedding、RMSNorm、dense MLP oracle；测试执行统一留在 M14。
 
 ## 07. ✅ M7：MLA attention 与 compressed KV cache
@@ -379,7 +379,7 @@ I/O 流水线：
 9. cache snapshot 已记录 hit、miss、eviction、disk reads/bytes、磁盘耗时、前台等待时间和长期 usage histogram；session 诊断显示 MoE workspace、expert 格式和单 slot 字节数。
 10. M8 独立测试项目已接入 solution，覆盖 tiny router/MoE oracle、cold/hot cache、batch expert union、lease 阻塞、LRU eviction、RAM 配额、取消、非归一化 routing 和 workspace accounting；测试执行统一留在 M14。
 
-## 09. ⏭️ M9：完整 forward 与生成
+## 09. ✅ M9：完整 forward 与生成
 
 目标：完成可从 prompt 生成 token 的最小正确路径。
 
@@ -404,13 +404,18 @@ forward 顺序：
 7. 文本 stop sequences。
 8. max output token、context limit 和 cancellation。
 
-实现顺序：
+已完成基础代码：
 
-1. `batch=1`、greedy、F32 reference。
-2. `batch=1`、量化权重。
-3. 多 token prefill。
-4. sampling。
-5. streaming callback。
+1. `ManagedForwardContext` 已按 embedding、逐层 input RMSNorm、MLA attention、attention residual、post-attention RMSNorm、dense MLP 或 MoE、第二次 residual、final RMSNorm 和 lm head 的顺序接通完整 scalar forward。
+2. prompt prefill 使用最大 32 token 的有界批次，跨批次和单 token decode 复用按层 compressed KV cache 与 sequence position，不按完整上下文分配 hidden-state 矩阵。
+3. dense 层复用 resident SwiGLU 路径；MoE 层复用 router、shared expert、streamed routed expert 和 session 级最小 top-k expert cache，不新增 native 依赖。
+4. `ModelMemoryPlan` 已纳入 tensor、attention、forward batch、sampling 和 MoE workspace；expert cache 继续在 resident、KV 和 scratch 预算之后校验每层最小 top-k working set。
+5. `TokenSampler` 已实现稳定 greedy、temperature、top-k、top-p、repeat/frequency/presence penalty 和固定 seed 的确定性伪随机序列，并保持 token ID 稳定 tie-breaking。
+6. `ManagedTextGenerator` 已接通 prompt prefill、增量 decode、多 EOS、跨 token 文本 stop、max output token、context limit、cancellation 和增量文本 callback。
+7. prompt token 与最大输出 token 会在创建 forward context 和读取 expert 前完成总上下文预检；取消、上下文超限和 forward 异常不会返回占位 completion。
+8. managed session 已从 resident-only 状态切换为 `managed-glm-generation`，只在成功后累计 request、prompt token 和 completion token，并报告 forward、sampling、expert cache 与 I/O 诊断。
+9. `managed_context_length_exceeded` 与 `managed_inference_failed` 已作为 M9 生成失败边界；现有 llama.cpp provider 的选择和执行路径不变。
+10. M9 独立测试项目已接入 solution，覆盖 tiny teacher forcing logits、多 token prefill、greedy token oracle、固定 seed sampling、penalty、session usage、上下文写入前失败、取消前零 expert I/O 和失败后 context 禁止复用；测试执行统一留在 M14。
 
 ## 10. ⏳ M10：Tomur 集成闭环
 
@@ -436,8 +441,7 @@ forward 顺序：
 6. `managed_quantization_unsupported`
 7. `managed_memory_budget_exceeded`
 8. `managed_context_length_exceeded`
-9. `managed_forward_not_ready`
-10. `managed_inference_failed`
+9. `managed_inference_failed`
 
 ## 11. ⏳ M11：性能优化
 

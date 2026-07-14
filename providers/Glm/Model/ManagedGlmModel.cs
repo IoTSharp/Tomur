@@ -165,6 +165,41 @@ internal sealed class ManagedGlmModel : IDisposable
             destination);
     }
 
+    public void NormalizePostAttention(
+        int layer,
+        ReadOnlySpan<float> input,
+        Span<float> destination)
+    {
+        ValidateLayer(layer);
+        ScalarKernels.RmsNorm(
+            input,
+            GetResidentWeight($"model.layers.{layer}.post_attention_layernorm.weight"),
+            Configuration.RmsNormEpsilon,
+            destination);
+    }
+
+    public void NormalizeFinal(ReadOnlySpan<float> input, Span<float> destination)
+    {
+        _ = GetDataSource();
+        ScalarKernels.RmsNorm(
+            input,
+            GetResidentWeight("model.norm.weight"),
+            Configuration.RmsNormEpsilon,
+            destination);
+    }
+
+    public void ProjectLogits(ReadOnlySpan<float> input, Span<float> destination)
+    {
+        _ = GetDataSource();
+        ScalarKernels.MatVec(
+            GetResidentWeight("lm_head.weight"),
+            Configuration.VocabularySize,
+            Configuration.HiddenSize,
+            Configuration.HiddenSize,
+            input,
+            destination);
+    }
+
     public void RunDenseMlp(
         int layer,
         ReadOnlySpan<float> input,
@@ -247,6 +282,15 @@ internal sealed class ManagedGlmModel : IDisposable
         return new MoeWorkspace(Configuration);
     }
 
+    public TensorWorkspace CreateTensorWorkspace()
+    {
+        _ = GetDataSource();
+        return new TensorWorkspace(
+            MemoryPlan.ActivationCapacity,
+            MemoryPlan.QuantizationCapacity,
+            MemoryPlan.OutputCapacity);
+    }
+
     public ExpertCache CreateExpertCache(ExpertCacheOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -263,10 +307,16 @@ internal sealed class ManagedGlmModel : IDisposable
         }
     }
 
-    public SequenceState CreateSequenceState(int layer)
+    public SequenceState CreateSequenceState(int layer, int? contextLimit = null)
     {
         ValidateLayer(layer);
-        return new SequenceState(layer, Configuration.LayerCount, MemoryPlan.ContextSize);
+        var effectiveLimit = contextLimit ?? MemoryPlan.ContextSize;
+        if (effectiveLimit <= 0 || effectiveLimit > MemoryPlan.ContextSize)
+        {
+            throw new ArgumentOutOfRangeException(nameof(contextLimit));
+        }
+
+        return new SequenceState(layer, Configuration.LayerCount, effectiveLimit);
     }
 
     public void RunAttentionToken(

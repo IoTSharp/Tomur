@@ -8,7 +8,7 @@
 
 1. 已建立 `Tomur.Providers.Glm` 独立纯 C# 类库、extend-only provider 契约、非 AOT 动态发现边界与 `SessionManager` 选择路径；未匹配的现有模型继续使用 llama.cpp。
 2. 已建立 `model.tomur.json`、GLM 配置、tokenizer 基础结构和 safetensors header/tensor index 的有界只读探测，并接入 provider discovery、Catalog、doctor、Runtime API 与 Web Runtime 诊断。
-3. 已建立固定 seed 的 tiny F32 fixture、版本化 oracle、tensor manifest、SHA-256 校验、隐藏 generate/verify 入口与 M1-M8 独立测试项目；fixture generator 1.1.0 增加 dense MLP checkpoint，同时保留既有 MoE teacher-forcing 基线。
+3. 已建立固定 seed 的 tiny F32 fixture、版本化 oracle、tensor manifest、SHA-256 校验、隐藏 generate/verify 入口与 M1-M9 独立测试项目；fixture generator 1.1.0 增加 dense MLP checkpoint，同时保留既有 MoE teacher-forcing 基线。
 4. 已建立统一 tensor descriptor、只读 shard 随机访问、F32/F16/BF16 resident 转换、int4/int8 量化视图、池化 workspace 与 expert slab 基础层。
 5. 已建立无并行、无 intrinsics 的 scalar reference kernels，覆盖 embedding、normalization、F32 与 int8/int4 矩阵乘、activation int8 量化、基础激活、elementwise、residual 和 stable top-k，并显式校验 shape、stride、buffer、alias 与量化边界。
 6. 已实现 WordLevel/BPE tokenizer、必要的 normalizer/pre-tokenizer/decoder 子集、byte-level UTF-8 映射、added/special token、GLM role prompt template、多个 token stop，以及跨 token UTF-8 和文本 stop 增量解码。
@@ -19,7 +19,10 @@
 11. 已实现 MoE router 的 sigmoid、correction bias、稳定 top-k、可选概率归一化和 routed scaling，并接通 resident shared expert 与 streamed routed expert 的 SwiGLU 合并路径。
 12. 已建立 routed expert descriptor 契约与 F32/F16/BF16、int8/int4 可复用 buffer；量化 expert 使用 `*.weight` payload 和同前缀 `*.scales` per-row F32 sidecar。
 13. 已建立按层固定容量 expert LRU、lease 隔离、RAM 配额、固定 worker bounded channel、同 key miss 合并、取消边界，以及 hit/miss/eviction/disk/等待时间/usage histogram 诊断。
-14. managed forward 尚未接通时返回 `managed_forward_not_ready`，不会返回占位 token，也不会影响现有 native provider。
+14. 已按 embedding、逐层 norm/attention/residual/MLP 或 MoE、final norm 和 lm head 顺序接通完整 scalar forward，并使用最大 32 token 的有界批次执行 prompt prefill、compressed KV 增量 decode 和最终 logits 投影。
+15. 已实现稳定 greedy、temperature、top-k/top-p、repeat/frequency/presence penalty、固定 seed sampling、多 EOS、跨 token 文本 stop、max output token、context limit、cancellation 和增量文本 callback。
+16. managed session 已切换到 `managed-glm-generation`，在 expert 读取前完成总上下文预检，只在成功后累计 usage，并通过 `managed_context_length_exceeded` 或 `managed_inference_failed` 返回失败，不生成占位 completion。
+17. forward batch、sampling、tensor、attention 与 MoE workspace 已纳入内存计划；session 级 expert cache 在 resident、KV 和 scratch 之后校验每层最小 top-k working set，并报告 cache/I/O 诊断。
 
 ### R14 当前已接入
 

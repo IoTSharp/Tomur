@@ -7,3 +7,4 @@ using System.Runtime.CompilerServices;
 [assembly: InternalsVisibleTo("Tomur.Providers.M6.Tests")]
 [assembly: InternalsVisibleTo("Tomur.Providers.M7.Tests")]
 [assembly: InternalsVisibleTo("Tomur.Providers.M8.Tests")]
+[assembly: InternalsVisibleTo("Tomur.Providers.M9.Tests")]

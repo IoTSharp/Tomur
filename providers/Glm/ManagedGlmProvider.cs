@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Tomur.Inference;
 using Tomur.Providers;
@@ -49,6 +50,18 @@ public sealed class ManagedGlmProvider : IModelFixtureProvider
                 ],
                 exception);
         }
+        catch (ExpertCacheBudgetExceededException exception)
+        {
+            throw new InferenceException(
+                "managed_model_memory_budget_exceeded",
+                exception.Message,
+                [
+                    "Use a smaller model or a system with more available memory.",
+                    "Unload other memory-heavy applications before retrying.",
+                    "The managed provider requires at least one complete top-k expert working set for every MoE layer."
+                ],
+                exception);
+        }
         catch (OutOfMemoryException exception)
         {
             throw new InferenceException(
@@ -96,11 +109,16 @@ public sealed class ManagedGlmProvider : IModelFixtureProvider
 
 internal sealed class ManagedGlmSession : ITextGenerationSession
 {
+    private readonly object gate = new();
     private readonly LocalModelDescriptor model;
     private readonly ModelSessionOptions options;
     private readonly ManagedGlmModel loadedModel;
+    private readonly ExpertCache? expertCache;
+    private readonly ManagedTextGenerator generator;
     private readonly DateTimeOffset createdAt = DateTimeOffset.UtcNow;
     private long requestCount;
+    private long promptTokens;
+    private long completionTokens;
     private bool disposed;
 
     public ManagedGlmSession(
@@ -110,7 +128,29 @@ internal sealed class ManagedGlmSession : ITextGenerationSession
     {
         this.model = model;
         this.options = options;
-        loadedModel = ManagedGlmModel.Load(probe, options.ContextSize);
+        var candidate = ManagedGlmModel.Load(probe, options.ContextSize);
+        try
+        {
+            if (candidate.ExpertLayout.MoeLayerCount > 0)
+            {
+                var minimumCacheBytes = checked(
+                    candidate.ExpertLayout.SlotBudgetedBytes *
+                    candidate.ExpertLayout.MoeLayerCount *
+                    candidate.Configuration.ExpertsPerToken);
+                expertCache = candidate.CreateExpertCache(new ExpertCacheOptions(
+                    minimumCacheBytes,
+                    WorkerCount: Math.Min(2, candidate.Configuration.ExpertsPerToken),
+                    QueueCapacity: Math.Max(8, candidate.Configuration.ExpertsPerToken)));
+            }
+
+            loadedModel = candidate;
+            generator = new ManagedTextGenerator(candidate, expertCache);
+        }
+        catch
+        {
+            candidate.Dispose();
+            throw;
+        }
     }
 
     public string ProviderId => ManagedGlmProvider.ProviderId;
@@ -121,68 +161,154 @@ internal sealed class ManagedGlmSession : ITextGenerationSession
         CancellationToken cancellationToken,
         Action<string>? onToken = null)
     {
-        ObjectDisposedException.ThrowIf(disposed, this);
         ArgumentNullException.ThrowIfNull(prompt);
         ArgumentNullException.ThrowIfNull(options);
-        cancellationToken.ThrowIfCancellationRequested();
-        Interlocked.Increment(ref requestCount);
+        if (string.IsNullOrWhiteSpace(prompt))
+        {
+            throw new InferenceException(
+                "empty_prompt",
+                "The prompt is empty after normalization.",
+                ["Provide at least one non-empty user message or prompt string."]);
+        }
 
-        throw new InferenceException(
-            "managed_forward_not_ready",
-            "The managed GLM provider loaded the resident dense model, but forward execution is not connected yet.",
-            [
-                $"Provider: {ProviderId}; architecture: {loadedModel.Manifest.Architecture}.",
-                $"Loaded {loadedModel.ResidentTensorCount} resident tensors ({loadedModel.ActualResidentBytes} bytes).",
-                $"Planned KV {loadedModel.MemoryPlan.KvBytes} bytes and scratch {loadedModel.MemoryPlan.ScratchBytes} bytes for context {loadedModel.MemoryPlan.ContextSize}.",
-                $"MoE workspace requires {loadedModel.MemoryPlan.MoeWorkspaceBytes} bytes; each expert cache slot requires {loadedModel.ExpertLayout.SlotBudgetedBytes} bytes.",
-                "Use an existing llama.cpp-compatible model for inference until the managed kernels pass the tiny-model oracle.",
-                "Do not treat resident model loading as successful inference."
-            ]);
+        lock (gate)
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            cancellationToken.ThrowIfCancellationRequested();
+            var stopwatch = Stopwatch.StartNew();
+            try
+            {
+                var preparedPrompt = new GlmPromptTemplate(loadedModel.Tokenizer)
+                    .BuildCompletion(prompt);
+                var result = generator.GenerateAsync(
+                        preparedPrompt,
+                        options,
+                        cancellationToken,
+                        onToken)
+                    .AsTask()
+                    .GetAwaiter()
+                    .GetResult();
+                stopwatch.Stop();
+
+                var generatedCount = result.GeneratedTokenIds.Count;
+                Interlocked.Increment(ref requestCount);
+                Interlocked.Add(ref promptTokens, result.PromptTokenCount);
+                Interlocked.Add(ref completionTokens, generatedCount);
+                var diagnostics = BuildDiagnostics(
+                    $"prompt tokens: {result.PromptTokenCount}",
+                    $"completion tokens: {generatedCount}",
+                    $"stop reason: {result.StopReason}",
+                    $"sampling seed: {result.Seed}");
+                return new CompletionResult(
+                    result.Text,
+                    new TokenUsage(
+                        result.PromptTokenCount,
+                        generatedCount,
+                        checked(result.PromptTokenCount + generatedCount)),
+                    stopwatch.Elapsed,
+                    diagnostics);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (InferenceException)
+            {
+                throw;
+            }
+            catch (ContextLengthExceededException exception)
+            {
+                throw new InferenceException(
+                    "managed_context_length_exceeded",
+                    exception.Message,
+                    [
+                        $"Request no more than {exception.ContextLimit} total prompt and output tokens.",
+                        "Reduce max_tokens, shorten the prompt, or create the session with a larger supported context."
+                    ],
+                    exception);
+            }
+            catch (Exception exception)
+            {
+                throw new InferenceException(
+                    "managed_inference_failed",
+                    $"Managed GLM forward execution failed: {exception.Message}",
+                    [
+                        "Verify the model manifest, tokenizer and tensor assets.",
+                        "Retry with a shorter context and inspect tomur doctor diagnostics.",
+                        "Use the existing llama.cpp provider for models that are not explicitly packaged for the managed provider."
+                    ],
+                    exception);
+            }
+        }
     }
 
     public SessionSnapshot GetSnapshot()
     {
-        ObjectDisposedException.ThrowIf(disposed, this);
-        return new SessionSnapshot(
-            Loaded: true,
-            ModelId: model.Id,
-            ModelPath: model.AbsolutePath,
-            Mode: "managed-glm-resident",
-            LoadedAt: createdAt,
-            RequestCount: Interlocked.Read(ref requestCount),
-            PromptTokens: 0,
-            CompletionTokens: 0,
-            Diagnostics:
-            [
-                $"provider: {ProviderId}",
-                $"context limit requested: {this.options.ContextSize}",
-                $"layers: {loadedModel.Configuration.LayerCount}",
-                $"routed experts: {loadedModel.Configuration.RoutedExpertCount}",
-                $"tokenizer vocabulary: {loadedModel.Tokenizer.VocabularySize}",
-                $"tokenizer stop tokens: {new GlmPromptTemplate(loadedModel.Tokenizer).ResolveStopTokenIds().Count}",
-                $"tensor files: {loadedModel.TensorFileCount}",
-                $"open tensor shards: {loadedModel.OpenShardCount}",
-                $"indexed tensors: {loadedModel.Tensors.Count}",
-                $"resident tensors: {loadedModel.ResidentTensorCount}",
-                $"resident bytes: {loadedModel.ActualResidentBytes}",
-                $"planned KV bytes: {loadedModel.MemoryPlan.KvBytes}",
-                $"planned scratch bytes: {loadedModel.MemoryPlan.ScratchBytes}",
-                $"planned MoE workspace bytes: {loadedModel.MemoryPlan.MoeWorkspaceBytes}",
-                $"expert storage format: {loadedModel.ExpertLayout.Format}",
-                $"expert cache slot bytes: {loadedModel.ExpertLayout.SlotBudgetedBytes}",
-                $"load budget bytes: {loadedModel.MemoryPlan.RequiredBytes}/{loadedModel.MemoryPlan.AvailableBytes}",
-                "forward execution is not connected"
-            ]);
+        lock (gate)
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return new SessionSnapshot(
+                Loaded: true,
+                ModelId: model.Id,
+                ModelPath: model.AbsolutePath,
+                Mode: "managed-glm-generation",
+                LoadedAt: createdAt,
+                RequestCount: Interlocked.Read(ref requestCount),
+                PromptTokens: Interlocked.Read(ref promptTokens),
+                CompletionTokens: Interlocked.Read(ref completionTokens),
+                Diagnostics: BuildDiagnostics("forward execution: scalar reference"));
+        }
     }
 
     public void Dispose()
     {
-        if (disposed)
+        lock (gate)
         {
-            return;
+            if (disposed)
+            {
+                return;
+            }
+
+            disposed = true;
+            loadedModel.Dispose();
+        }
+    }
+
+    private IReadOnlyList<string> BuildDiagnostics(params string[] requestDiagnostics)
+    {
+        var diagnostics = new List<string>
+        {
+            $"provider: {ProviderId}",
+            $"context limit requested: {options.ContextSize}",
+            $"layers: {loadedModel.Configuration.LayerCount}",
+            $"routed experts: {loadedModel.Configuration.RoutedExpertCount}",
+            $"tokenizer vocabulary: {loadedModel.Tokenizer.VocabularySize}",
+            $"tokenizer stop tokens: {new GlmPromptTemplate(loadedModel.Tokenizer).ResolveStopTokenIds().Count}",
+            $"tensor files: {loadedModel.TensorFileCount}",
+            $"open tensor shards: {loadedModel.OpenShardCount}",
+            $"indexed tensors: {loadedModel.Tensors.Count}",
+            $"resident tensors: {loadedModel.ResidentTensorCount}",
+            $"resident bytes: {loadedModel.ActualResidentBytes}",
+            $"planned KV bytes: {loadedModel.MemoryPlan.KvBytes}",
+            $"planned scratch bytes: {loadedModel.MemoryPlan.ScratchBytes}",
+            $"planned forward workspace bytes: {loadedModel.MemoryPlan.ForwardWorkspaceBytes}",
+            $"planned sampling workspace bytes: {loadedModel.MemoryPlan.SamplingWorkspaceBytes}",
+            $"forward batch size: {loadedModel.MemoryPlan.ForwardBatchSize}",
+            $"planned MoE workspace bytes: {loadedModel.MemoryPlan.MoeWorkspaceBytes}",
+            $"expert storage format: {loadedModel.ExpertLayout.Format}",
+            $"expert cache slot bytes: {loadedModel.ExpertLayout.SlotBudgetedBytes}",
+            $"load budget bytes: {loadedModel.MemoryPlan.RequiredBytes}/{loadedModel.MemoryPlan.AvailableBytes}"
+        };
+        if (expertCache is not null)
+        {
+            var snapshot = expertCache.GetSnapshot();
+            diagnostics.Add($"expert cache bytes: {snapshot.BudgetedBytes}");
+            diagnostics.Add($"expert cache slots per layer: {snapshot.SlotCapacityPerLayer}");
+            diagnostics.Add($"expert cache hit/miss/eviction: {snapshot.Hits}/{snapshot.Misses}/{snapshot.Evictions}");
+            diagnostics.Add($"expert disk reads/bytes: {snapshot.DiskReads}/{snapshot.DiskBytes}");
         }
 
-        disposed = true;
-        loadedModel.Dispose();
+        diagnostics.AddRange(requestDiagnostics);
+        return diagnostics;
     }
 }

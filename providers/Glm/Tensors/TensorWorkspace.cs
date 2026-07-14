@@ -59,6 +59,16 @@ internal sealed class TensorWorkspace : IDisposable
     public Span<float> GetOutputs(int length)
         => Slice(GetOutputs(), length, OutputCapacity, nameof(length));
 
+    public Memory<float> GetOutputMemory(int length)
+    {
+        if (length < 0 || length > OutputCapacity)
+        {
+            throw new ArgumentOutOfRangeException(nameof(length));
+        }
+
+        return GetOutputs().AsMemory(0, length);
+    }
+
     public void Dispose()
     {
         var activationBuffer = Interlocked.Exchange(ref activations, null);

@@ -8,7 +8,7 @@ namespace Tomur.Providers.M1.Tests;
 public sealed class ModelProbeTests
 {
     [Fact]
-    public void ValidFixtureLoadsResidentSessionWithoutEnablingForward()
+    public void ValidFixtureLoadsManagedGenerationSession()
     {
         using var fixture = new ManagedModelFixture();
         var model = fixture.CreateValidModel();
@@ -18,10 +18,8 @@ public sealed class ModelProbeTests
 
         var snapshot = session.GetSnapshot();
         Assert.True(snapshot.Loaded);
-        Assert.Equal("managed-glm-resident", snapshot.Mode);
-        var exception = Assert.Throws<InferenceException>(() =>
-            session.Generate("hello", CompletionOptions.Default, CancellationToken.None));
-        Assert.Equal("managed_forward_not_ready", exception.Code);
+        Assert.Equal("managed-glm-generation", snapshot.Mode);
+        Assert.Contains("forward execution: scalar reference", snapshot.Diagnostics);
     }
 
     [Fact]
