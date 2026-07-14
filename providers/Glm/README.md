@@ -2,7 +2,7 @@
 
 This project contains Tomur's pure C# provider for explicitly marked GLM / MoE model directories. It does not load a third-party inference dynamic library and does not replace the existing llama.cpp provider.
 
-The first implementation stage validates model metadata and indexes safetensors headers. Forward execution remains unavailable until the managed tensor kernels and model graph have oracle-backed correctness evidence.
+The current implementation validates model metadata, indexes safetensors headers, generates a fixed-seed tiny oracle fixture, and defines bounded tensor storage, conversion, quantized-view, workspace, and expert-slab primitives. Forward execution remains unavailable until the managed tensor kernels and model graph have oracle-backed correctness evidence.
 
 The complete implementation sequence, validation gates, performance work, and release criteria are maintained in [ROADMAP.md](./ROADMAP.md).
 

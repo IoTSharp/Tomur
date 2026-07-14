@@ -488,7 +488,7 @@ internal static class TinyFixtureBundle
         }
 
         var names = new HashSet<string>(StringComparer.Ordinal);
-        var dataStart = catalog.Items.Min(static tensor => tensor.DataOffset);
+        var dataStart = catalog.Items.Min(static tensor => tensor.Offset);
         using var stream = File.OpenRead(tensorPath);
         foreach (var entry in manifest.Tensors)
         {
@@ -504,22 +504,22 @@ internal static class TinyFixtureBundle
                 throw new InvalidDataException($"Tensor manifest entry is invalid: {entry.Name}");
             }
 
-            if (!tensor.Shape.SequenceEqual(entry.Shape) ||
+            if (!tensor.LogicalShape.SequenceEqual(entry.Shape) ||
                 !expectedTensor.Shape.SequenceEqual(entry.Shape) ||
-                tensor.ByteLength != entry.ByteLength ||
+                tensor.PhysicalLength != entry.ByteLength ||
                 expectedTensor.ByteLength != entry.ByteLength ||
-                tensor.DataOffset - dataStart != entry.DataOffset)
+                tensor.Offset - dataStart != entry.DataOffset)
             {
                 throw new InvalidDataException($"Tensor manifest metadata mismatch for '{entry.Name}'.");
             }
 
-            if (tensor.ByteLength > int.MaxValue)
+            if (tensor.PhysicalLength > int.MaxValue)
             {
                 throw new InvalidDataException($"Tiny fixture tensor is too large: {entry.Name}");
             }
 
-            var payload = GC.AllocateUninitializedArray<byte>((int)tensor.ByteLength);
-            stream.Position = tensor.DataOffset;
+            var payload = GC.AllocateUninitializedArray<byte>((int)tensor.PhysicalLength);
+            stream.Position = tensor.Offset;
             stream.ReadExactly(payload);
             RequireDigest($"tensor '{entry.Name}'", entry.Sha256, ComputeSha256(payload));
             RequireDigest(

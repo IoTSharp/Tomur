@@ -133,7 +133,7 @@ Tomur has completed the main R1-R11 loops, is converging the R12 Native AOT / se
 | R12 | Native AOT publishing currently passes without warnings; Linux/macOS release logs, macOS native bundle assets, and real-machine service smoke remain in progress. |
 | R13 | Web capability aggregation has connected Agent / Capabilities views, read-only Agent tool calls, explicit side-effect tool confirmation, protocol capability maps, and Claude Code / Anthropic Messages compatibility; visual download queue and editable Settings remain in progress. |
 | R14 | Intel GPU / NPU support is being connected through the existing ggml dynamic backend path; `vulkan`, `sycl`, `openvino`, and `intel` native build entries, runtime accelerator preferences, OpenVINO / NPU environment setup, CPU fallback diagnostics, NPU incompatibility errors, Web Runtime display, and the smoke evidence entry are in place. Real Intel GPU / NPU smoke still needs machine evidence. |
-| R15 | Work has started on an independent pure C# GLM / MoE provider library, provider selection boundary, model format probing, and a fixed-seed tiny fixture/oracle baseline. The existing llama.cpp path remains available and is still the default; fixture regression and real forward execution have not been validated yet. |
+| R15 | Work has started on an independent pure C# GLM / MoE provider library, provider selection boundary, model format probing, a fixed-seed tiny fixture/oracle baseline, and the tensor storage/read layer. The existing llama.cpp path remains available and is still the default; stage regression and real forward execution have not been validated yet. |
 
 Planned follow-up work includes Intel GPU / NPU real smoke (tracked through `docs/r14-intel-acceleration-smoke.md`), a visual download queue, editable Settings, model deletion, VAD / interruption, streaming voice turns, multi-model residency, Linux/macOS release records, and real-machine service smoke.
 
@@ -166,6 +166,7 @@ Tomur/
   tests/
     Tomur.Providers.M1.Tests/
     Tomur.Providers.M2.Tests/
+    Tomur.Providers.M3.Tests/
   native/
     llama.cpp/
     llama.native/

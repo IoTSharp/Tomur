@@ -274,24 +274,22 @@ Disk
 
 目标：建立不依赖模型图的安全张量访问层。
 
-计划类型：
+当前代码：
 
-1. `TensorDescriptor`：name、dtype、logical shape、physical length、shard、offset。
-2. `TensorDataSource`：持有只读 shard handle，提供有界 `ReadExactly`。
-3. `ResidentTensor<T>`：拥有长期驻留内存。
-4. `QuantizedTensorView`：描述 int8/int4 payload 与 per-row scales。
-5. `TensorWorkspace`：复用临时 activation、quantization 和 output buffer。
-6. `ExpertSlab`：一次容纳 gate/up/down 和 scale 的可复用 slot。
+1. `TensorDescriptor` 已统一 safetensors probe 与后续读取所需的 name、dtype、logical shape、physical length、shard 和 offset，并允许量化层在不改变物理范围的前提下指定逻辑 shape。
+2. `TensorDataSource` 已按 shard 持有只读随机访问 handle，提供有界整 tensor、slice 与同 shard 相邻 tensor 合并读取，并在 dispose 时关闭全部 handle。
+3. F32、F16 与 BF16 已支持读取为 F32 resident buffer；F16/BF16 转换使用固定大小临时 buffer，并在取消或失败时释放未完成的 resident tensor。
+4. `ResidentTensor<T>` 已使用独占托管数组表达长期驻留所有权；`TensorWorkspace` 使用固定容量池化 activation、quantization 和 output buffer 表达短期 scratch 所有权。
+5. `QuantizedTensorDescriptor` 与 `QuantizedTensorView` 已校验 int8/int4 payload、奇数列 packed int4 长度和 per-row F32 scales，并提供有符号 int8/int4 元素视图。
+6. `ExpertSlab` 已使用固定容量池化 slot 同时容纳 gate/up/down payload 与 scales，并在三个 payload 相邻时合并为一次读取。
+7. M3 独立测试项目已覆盖随机 slice、相邻读取、F32/F16/BF16 转换、int4 奇数列、取消、workspace/resident/expert slab dispose、短文件、溢出和重复 handle 释放。
 
-实现顺序：
+仍需完成：
 
-1. 支持 F32、BF16、F16 转 F32。
-2. 支持按 tensor 整体读取和按字节区间读取。
-3. 支持 packed int4 逻辑 shape 校验。
-4. 支持合并读取同一 shard 内相邻 payload。
-5. 为长期 resident 和短期 scratch 建立不同所有权。
-6. 所有大数组在 session 创建时预算，decode 热路径不反复进入 LOH。
-7. session dispose 后关闭 handles 并归还 pooled buffers。
+1. 编译 provider 与 M3 测试项目，处理编译器和 analyzer 结果。
+2. 执行 M3 回归测试，确认随机字节读取、半精度转换、量化 shape 和资源释放行为。
+3. 在 Windows 与 Linux 执行多 shard data source 重复创建/销毁用例，并记录文件句柄释放结果。
+4. 在 M6 model load 与 M8 expert streaming 中复用本阶段 descriptor、data source 和所有权类型，不重新解析 safetensors header。
 
 验收：
 

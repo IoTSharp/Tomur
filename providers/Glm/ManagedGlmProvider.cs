@@ -64,6 +64,7 @@ internal sealed class ManagedGlmSession : ITextGenerationSession
     private readonly LocalModelDescriptor model;
     private readonly ModelSessionOptions options;
     private readonly ModelProbe probe;
+    private readonly TensorDataSource tensorDataSource;
     private readonly DateTimeOffset createdAt = DateTimeOffset.UtcNow;
     private long requestCount;
     private bool disposed;
@@ -76,6 +77,7 @@ internal sealed class ManagedGlmSession : ITextGenerationSession
         this.model = model;
         this.options = options;
         this.probe = probe;
+        tensorDataSource = new TensorDataSource(probe.Tensors);
     }
 
     public string ProviderId => ManagedGlmProvider.ProviderId;
@@ -122,6 +124,7 @@ internal sealed class ManagedGlmSession : ITextGenerationSession
                 $"layers: {probe.Configuration.LayerCount}",
                 $"routed experts: {probe.Configuration.RoutedExpertCount}",
                 $"tensor files: {probe.TensorFileCount}",
+                $"open tensor shards: {tensorDataSource.ShardCount}",
                 $"indexed tensors: {probe.Tensors.Count}",
                 "forward execution is not connected"
             ]);
@@ -129,6 +132,12 @@ internal sealed class ManagedGlmSession : ITextGenerationSession
 
     public void Dispose()
     {
+        if (disposed)
+        {
+            return;
+        }
+
         disposed = true;
+        tensorDataSource.Dispose();
     }
 }

@@ -4,23 +4,14 @@ using Microsoft.Win32.SafeHandles;
 
 namespace Tomur.Providers.Glm;
 
-internal sealed record SafeTensorInfo(
-    string Name,
-    string DataType,
-    IReadOnlyList<long> Shape,
-    long ElementCount,
-    string FilePath,
-    long DataOffset,
-    long ByteLength);
-
 internal sealed class SafeTensorCatalog
 {
     private const int MaximumHeaderBytes = 64 * 1024 * 1024;
     private const int MaximumTensorRank = 16;
     private const int MaximumTensorsPerShard = 1_000_000;
-    private readonly IReadOnlyDictionary<string, SafeTensorInfo> tensors;
+    private readonly IReadOnlyDictionary<string, TensorDescriptor> tensors;
 
-    private SafeTensorCatalog(IReadOnlyDictionary<string, SafeTensorInfo> tensors, long totalPayloadBytes)
+    private SafeTensorCatalog(IReadOnlyDictionary<string, TensorDescriptor> tensors, long totalPayloadBytes)
     {
         this.tensors = tensors;
         TotalPayloadBytes = totalPayloadBytes;
@@ -30,16 +21,21 @@ internal sealed class SafeTensorCatalog
 
     public long TotalPayloadBytes { get; }
 
-    public IEnumerable<SafeTensorInfo> Items => tensors.Values;
+    public IEnumerable<TensorDescriptor> Items => tensors.Values;
 
     public bool Contains(string name) => tensors.ContainsKey(name);
 
-    public bool TryGet(string name, out SafeTensorInfo info)
+    public bool TryGet(string name, out TensorDescriptor info)
         => tensors.TryGetValue(name, out info!);
+
+    public TensorDescriptor GetRequired(string name)
+        => tensors.TryGetValue(name, out var descriptor)
+            ? descriptor
+            : throw new KeyNotFoundException($"Tensor descriptor was not found: {name}");
 
     public static SafeTensorCatalog Read(IEnumerable<string> paths)
     {
-        var tensors = new Dictionary<string, SafeTensorInfo>(StringComparer.Ordinal);
+        var tensors = new Dictionary<string, TensorDescriptor>(StringComparer.Ordinal);
         long totalPayloadBytes = 0;
 
         foreach (var path in paths.OrderBy(static item => item, StringComparer.OrdinalIgnoreCase))
@@ -51,7 +47,7 @@ internal sealed class SafeTensorCatalog
                     throw new InvalidDataException($"Duplicate tensor name across model shards: {tensor.Name}");
                 }
 
-                totalPayloadBytes = checked(totalPayloadBytes + tensor.ByteLength);
+                totalPayloadBytes = checked(totalPayloadBytes + tensor.PhysicalLength);
             }
         }
 
@@ -63,7 +59,7 @@ internal sealed class SafeTensorCatalog
         return new SafeTensorCatalog(tensors, totalPayloadBytes);
     }
 
-    private static IReadOnlyList<SafeTensorInfo> ReadFile(string path)
+    private static IReadOnlyList<TensorDescriptor> ReadFile(string path)
     {
         var file = new FileInfo(path);
         if (!file.Exists || file.Length < sizeof(ulong))
@@ -105,7 +101,7 @@ internal sealed class SafeTensorCatalog
             throw new InvalidDataException($"Safetensors header root must be an object: {path}");
         }
 
-        var tensors = new List<SafeTensorInfo>();
+        var tensors = new List<TensorDescriptor>();
         foreach (var property in document.RootElement.EnumerateObject())
         {
             if (property.NameEquals("__metadata__"))
@@ -132,7 +128,7 @@ internal sealed class SafeTensorCatalog
         return tensors;
     }
 
-    private static SafeTensorInfo ParseTensor(
+    private static TensorDescriptor ParseTensor(
         JsonProperty property,
         string path,
         long fileLength,
@@ -179,47 +175,47 @@ internal sealed class SafeTensorCatalog
             throw new InvalidDataException($"Tensor data extends beyond its shard for '{property.Name}' in {path}.");
         }
 
-        var dataType = dataTypeProperty.GetString();
-        if (string.IsNullOrWhiteSpace(dataType) || !TryGetElementSize(dataType, out var elementSize))
+        var dataTypeName = dataTypeProperty.GetString();
+        if (string.IsNullOrWhiteSpace(dataTypeName))
         {
             throw new InvalidDataException(
-                $"Tensor data type is not supported for '{property.Name}' in {path}: {dataType}");
+                $"Tensor data type is empty for '{property.Name}' in {path}.");
         }
 
+        var dataType = TensorDataTypes.Parse(dataTypeName, property.Name, path);
         var byteLength = end - start;
-        var expectedByteLength = checked(elementCount * elementSize);
+        var expectedByteLength = checked(elementCount * dataType.GetElementSize());
         if (byteLength != expectedByteLength)
         {
             throw new InvalidDataException(
                 $"Tensor byte length does not match its dtype and shape for '{property.Name}' in {path}: expected {expectedByteLength}, found {byteLength}.");
         }
 
-        return new SafeTensorInfo(
+        return new TensorDescriptor(
             property.Name,
             dataType,
             shape,
-            elementCount,
             path,
             absoluteStart,
             byteLength);
     }
 
     private static void ValidateDataRanges(
-        IReadOnlyList<SafeTensorInfo> tensors,
+        IReadOnlyList<TensorDescriptor> tensors,
         string path,
         long fileLength,
         long dataStart)
     {
         var expectedOffset = dataStart;
-        foreach (var tensor in tensors.OrderBy(static tensor => tensor.DataOffset))
+        foreach (var tensor in tensors.OrderBy(static tensor => tensor.Offset))
         {
-            if (tensor.DataOffset != expectedOffset)
+            if (tensor.Offset != expectedOffset)
             {
                 throw new InvalidDataException(
                     $"Tensor data ranges must be contiguous and non-overlapping in {path}; invalid range starts at tensor '{tensor.Name}'.");
             }
 
-            expectedOffset = checked(tensor.DataOffset + tensor.ByteLength);
+            expectedOffset = checked(tensor.Offset + tensor.PhysicalLength);
         }
 
         if (expectedOffset != fileLength)
@@ -227,18 +223,6 @@ internal sealed class SafeTensorCatalog
             throw new InvalidDataException(
                 $"Safetensors payload contains bytes not described by tensor metadata: {path}");
         }
-    }
-
-    private static bool TryGetElementSize(string dataType, out int elementSize)
-    {
-        elementSize = dataType switch
-        {
-            "F32" => sizeof(float),
-            "F16" or "BF16" => sizeof(ushort),
-            "I8" or "U8" => sizeof(byte),
-            _ => 0
-        };
-        return elementSize > 0;
     }
 
     private static void ReadExactly(SafeFileHandle handle, Span<byte> destination, long fileOffset)
