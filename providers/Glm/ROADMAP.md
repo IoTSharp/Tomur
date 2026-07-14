@@ -180,8 +180,8 @@ Disk
 | 02 | M2 | ✅ | tiny fixture 与 oracle 基线 |
 | 03 | M3 | ✅ | 张量存储、读取和量化视图 |
 | 04 | M4 | ✅ | scalar reference kernels |
-| 05 | M5 | ⏭️ | tokenizer、prompt 与增量解码 |
-| 06 | M6 | ⏳ | resident dense model 加载 |
+| 05 | M5 | ✅ | tokenizer、prompt 与增量解码 |
+| 06 | M6 | ⏭️ | resident dense model 加载 |
 | 07 | M7 | ⏳ | MLA attention 与 compressed KV cache |
 | 08 | M8 | ⏳ | MoE router、shared expert 与 expert streaming |
 | 09 | M9 | ⏳ | 完整 forward、prefill、decode 与 sampling |
@@ -267,21 +267,23 @@ Disk
 7. M4 独立测试项目已接入 solution，覆盖 tiny fixture embedding/RMSNorm checkpoint、LayerNorm、F32 stride、int8/int4 离线解量化、奇数列、ties-to-even、激活函数、alias、稳定 top-k、空 batch 与非法边界；测试执行统一留在 M14。
 8. scalar path 不使用并行或 intrinsics，后续优化不得删除该路径。
 
-## 05. ⏭️ M5：tokenizer、prompt 与增量解码
+## 05. ✅ M5：tokenizer、prompt 与增量解码
 
 目标：在模型 forward 前先锁定文本与 token 的双向语义。
 
-实现：
+已完成基础代码：
 
-1. 解析 tokenizer model、vocab、merge rules、added tokens 和 special tokens。
-2. 实现 Unicode 到 UTF-8 byte sequence 的稳定映射。
-3. 实现 normalizer、pre-tokenizer 和 BPE merge 的必要子集。
-4. 支持 EOS、user、assistant、observation 等多个 stop token。
-5. 建立 GLM chat template，不把通用 llama prompt builder 直接套用到该模型。
-6. decode 维护未完成 UTF-8 尾部，只有完整字符才发送给 streaming callback。
-7. stop sequence 检查保留可能跨 token 的尾部窗口。
+1. `ManagedTokenizer` 已解析 WordLevel/BPE model、vocab、merge rank、added token、special token、unknown token、byte fallback 和 deterministic BPE 选项，并对文件、词表、token ID 和输入长度设置上限。
+2. Unicode 文本已通过固定可逆 byte-level 映射转换为 UTF-8 byte sequence；decoder 支持 byte-level、byte fallback、Metaspace、BPE suffix 与 WordPiece 必要子集。
+3. normalizer 已覆盖 Unicode normalization、lowercase、strip、accent、prepend、literal/regex replace 与 Bert 必要子集；pre-tokenizer 已覆盖 whitespace、sequence、split、Metaspace 与 ByteLevel 必要子集，未知组件显式失败。
+4. added token 区分 normalized/non-normalized、special、single-word 与左右空白语义；普通文本编码不会隐式注入 special token。
+5. `GlmPromptTemplate` 直接使用 GLM generation mask、start-of-prompt 和 system/user/assistant/observation role token，不复用通用 llama prompt builder，并暴露 EOS 与全部 role stop token。
+6. `IncrementalTextDecoder` 使用有状态 UTF-8 decoder 保留跨 token byte 尾部，只向 streaming callback 发送完整字符；token stop 终止前会安全释放已完成文本。
+7. 文本 stop 检查保留各 stop 的最长可能前缀，可识别跨 token stop sequence 且不向回调泄漏 stop 内容。
+8. `ModelDirectoryProbe` 已加载完整 tokenizer 并校验最大 token ID 不超过模型 `vocab_size`；session 诊断显示 tokenizer 词表和 stop token 数量。
+9. M5 独立测试项目已接入 solution，覆盖 tiny oracle、BPE merge、normalization、special token、byte roundtrip、中英文/代码/emoji、增量 UTF-8、跨 token stop 与 GLM role prompt；测试执行统一留在 M14。
 
-## 06. ⏳ M6：resident dense model
+## 06. ⏭️ M6：resident dense model
 
 目标：加载每个 token 都需要的 dense 权重，并完成 embedding 到首层输入的基础路径。
 

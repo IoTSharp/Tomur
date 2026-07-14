@@ -123,6 +123,8 @@ internal sealed class ManagedGlmSession : ITextGenerationSession
                 $"context limit requested: {this.options.ContextSize}",
                 $"layers: {probe.Configuration.LayerCount}",
                 $"routed experts: {probe.Configuration.RoutedExpertCount}",
+                $"tokenizer vocabulary: {probe.Tokenizer.VocabularySize}",
+                $"tokenizer stop tokens: {new GlmPromptTemplate(probe.Tokenizer).ResolveStopTokenIds().Count}",
                 $"tensor files: {probe.TensorFileCount}",
                 $"open tensor shards: {tensorDataSource.ShardCount}",
                 $"indexed tensors: {probe.Tensors.Count}",

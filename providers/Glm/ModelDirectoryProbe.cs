@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Tomur.Providers;
 using Tomur.Runtime;
 
@@ -9,12 +8,12 @@ internal sealed record ModelProbe(
     GlmModelConfiguration Configuration,
     string ModelDirectory,
     string TokenizerPath,
+    ManagedTokenizer Tokenizer,
     int TensorFileCount,
     SafeTensorCatalog Tensors);
 
 internal static class ModelDirectoryProbe
 {
-    private const long MaximumTokenizerBytes = 512L * 1024 * 1024;
     private const int MaximumTensorFileCount = 4096;
 
     public static ModelProbe Read(LocalModelDescriptor model, string providerId)
@@ -63,7 +62,12 @@ internal static class ModelDirectoryProbe
         RejectLinkedAsset(modelDirectory, configPath);
         RejectLinkedAsset(modelDirectory, tokenizerPath);
         var configuration = GlmModelConfiguration.Read(configPath);
-        ValidateTokenizer(tokenizerPath);
+        var tokenizer = ManagedTokenizer.Read(tokenizerPath);
+        if (tokenizer.MaximumTokenId >= configuration.VocabularySize)
+        {
+            throw new InvalidDataException(
+                $"Tokenizer token ID {tokenizer.MaximumTokenId} exceeds model vocabulary size {configuration.VocabularySize}.");
+        }
 
         var tensorPaths = new List<string>();
         foreach (var tensorPath in Directory.EnumerateFiles(
@@ -95,6 +99,7 @@ internal static class ModelDirectoryProbe
             configuration,
             modelDirectory,
             tokenizerPath,
+            tokenizer,
             tensorPaths.Count,
             tensors);
     }
@@ -123,30 +128,6 @@ internal static class ModelDirectoryProbe
             quantization.Equals("bf16", StringComparison.OrdinalIgnoreCase) ||
             quantization.Equals("int8", StringComparison.OrdinalIgnoreCase) ||
             quantization.Equals("int4", StringComparison.OrdinalIgnoreCase);
-
-    private static void ValidateTokenizer(string path)
-    {
-        var info = new FileInfo(path);
-        if (!info.Exists || info.Length <= 0 || info.Length > MaximumTokenizerBytes)
-        {
-            throw new InvalidDataException(
-                $"Tokenizer must exist and be between 1 and {MaximumTokenizerBytes} bytes: {path}");
-        }
-
-        using var stream = File.OpenRead(info.FullName);
-        using var document = JsonDocument.Parse(stream, new JsonDocumentOptions
-        {
-            AllowTrailingCommas = false,
-            CommentHandling = JsonCommentHandling.Disallow,
-            MaxDepth = 128
-        });
-        if (document.RootElement.ValueKind != JsonValueKind.Object ||
-            !document.RootElement.TryGetProperty("model", out var tokenizerModel) ||
-            tokenizerModel.ValueKind != JsonValueKind.Object)
-        {
-            throw new InvalidDataException("Tokenizer JSON must contain a model object.");
-        }
-    }
 
     private static void ValidateRequiredTensors(
         GlmModelConfiguration configuration,

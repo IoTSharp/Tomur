@@ -76,7 +76,22 @@ internal sealed class ManagedModelFixture : IDisposable
               "rope_parameters": { "rope_theta": 10000.0 }
             }
             """);
-        File.WriteAllText(Path.Combine(Root, "tokenizer.json"), "{\"model\":{}}");
+        File.WriteAllText(Path.Combine(Root, "tokenizer.json"), """
+            {
+              "added_tokens": [
+                { "id": 0, "content": "<pad>", "special": true },
+                { "id": 1, "content": "<bos>", "special": true },
+                { "id": 2, "content": "<eos>", "special": true },
+                { "id": 3, "content": "<unk>", "special": true }
+              ],
+              "pre_tokenizer": { "type": "WhitespaceSplit" },
+              "model": {
+                "type": "WordLevel",
+                "unk_token": "<unk>",
+                "vocab": { "<pad>": 0, "<bos>": 1, "<eos>": 2, "<unk>": 3 }
+              }
+            }
+            """);
 
         var tensorNames = omitRequiredTensor
             ? RequiredTensorNames.Where(static name => name != "lm_head.weight").ToArray()
