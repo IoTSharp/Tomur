@@ -701,6 +701,7 @@ internal static class TinyFixtureBundle
             configuration.ValueHeadSize != 2 ||
             configuration.SharedExpertCount != 1 ||
             configuration.VocabularySize != VocabularySize ||
+            configuration.MaxPositionEmbeddings != ContextSize ||
             configuration.ExpertGroupCount != 1 ||
             configuration.ExpertGroupsPerToken != 1)
         {

@@ -182,8 +182,8 @@ Disk
 | 04 | M4 | ✅ | scalar reference kernels |
 | 05 | M5 | ✅ | tokenizer、prompt 与增量解码 |
 | 06 | M6 | ✅ | resident dense model 加载 |
-| 07 | M7 | ⏭️ | MLA attention 与 compressed KV cache |
-| 08 | M8 | ⏳ | MoE router、shared expert 与 expert streaming |
+| 07 | M7 | ✅ | MLA attention 与 compressed KV cache |
+| 08 | M8 | ⏭️ | MoE router、shared expert 与 expert streaming |
 | 09 | M9 | ⏳ | 完整 forward、prefill、decode 与 sampling |
 | 10 | M10 | ⏳ | Tomur API、session、streaming 与诊断闭环 |
 | 11 | M11 | ⏳ | SIMD、并行、缓存与 I/O 优化 |
@@ -308,36 +308,23 @@ resident 范围：
 7. managed session 已报告 resident tensor、resident/KV/scratch bytes、内存预算与 open shard 数，并继续以 `managed_forward_not_ready` 阻止未完成 forward 返回 token。
 8. M6 独立测试项目已接入 solution，覆盖 resident shape、预计/实际 resident bytes、预算先于 payload 读取、损坏 shard、取消、资源释放、routed expert 非 resident，以及 embedding、RMSNorm、dense MLP oracle；测试执行统一留在 M14。
 
-## 07. ⏭️ M7：MLA attention 与 compressed KV cache
+## 07. ✅ M7：MLA attention 与 compressed KV cache
 
 目标：实现模型要求的 MLA attention，并避免按完整 K/V head 保存上下文。
 
-数据结构：
+已完成基础代码：
 
-1. `KvCache`：按 layer 保存压缩 KV latent 和 RoPE key 部分。
-2. `AttentionWorkspace`：q latent、q heads、scores、context 和 output projection。
-3. `SequenceState`：position、有效 token 数、上下文上限和 cache 起点。
+1. `KvCache` 已按 layer 使用独立连续 buffer 保存 normalized KV latent 与旋转后的共享 RoPE key；实际字节数与 M6 的 compressed KV 预算公式一致，不保存完整 K/V head。
+2. `SequenceState` 已按 attention layer 维护 position、有效 token 数、上下文上限与 cache 起点，并在写入前拒绝 layer 不匹配、越过 context limit 或状态不一致的追加。
+3. `AttentionWorkspace` 已使用固定容量池化 activation 与 score buffer，覆盖 q latent、q heads、KV expansion、context 和原子 output projection；容量由 `ModelMemoryPlan` 按配置预计算。
+4. q_a/q_b 与 kv_a/kv_b projection、q_a/kv_a RMSNorm、nope/rope/value 拆分和 interleaved partial RoPE 已接通；奇数 RoPE 维度在配置 probe 阶段拒绝。
+5. reference path 已从 compressed latent 逐位置重建 K/V，执行逐 head causal score、稳定 softmax、context 聚合与 output projection，并对非有限 score/output 显式失败。
+6. absorbed path 已把 nope query 投影到 KV latent 空间，并先在 latent 空间聚合 value，再执行 value projection；reference path 继续保留为后续 SIMD 与优化的正确性基线。
+7. 单 token decode 与多 token prefill 已复用同一事务边界；prefill 后 decode、一次性 prefill 和 absorbed/reference 模式共享一致的 cache/state 语义。
+8. cancellation 只在完整 KV entry 写入前后或计算安全点生效；token 失败回滚当前 entry，prefill 失败回滚本轮全部新增 entry，destination 只在单 token 计算完成后写回。
+9. M7 独立测试项目已接入 solution，覆盖 tiny oracle 全部 attention checkpoint、compressed KV 内容/字节公式、prefill/decode 与 absorbed/reference 一致性、interleaved RoPE、上下文上限、非有限输入、取消和回滚；测试执行统一留在 M14。
 
-实现顺序：
-
-1. q_a projection 与 q_a norm。
-2. q_b projection，拆分 nope/rope head。
-3. kv_a projection，拆分 compressed latent 与 RoPE key。
-4. interleaved partial RoPE。
-5. kv_b 重建 K/V 的 reference path。
-6. causal attention、softmax 和 output projection。
-7. 单 token decode。
-8. 多 token prefill。
-9. decode 正确后再加入 MLA weight absorption 优化。
-
-安全边界：
-
-1. position 和 context size 必须在分配上限内。
-2. attention score 计算检查 NaN/Infinity。
-3. cancellation 只在不会留下半写 KV 的安全点生效。
-4. forward 失败时回滚本轮新增 KV 位置。
-
-## 08. ⏳ M8：MoE 与 expert streaming
+## 08. ⏭️ M8：MoE 与 expert streaming
 
 目标：只让 dense/shared 权重常驻，由磁盘按路由结果读取 routed experts。
 

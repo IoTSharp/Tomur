@@ -18,6 +18,7 @@ internal sealed record GlmModelConfiguration(
     int ValueHeadSize,
     int SharedExpertCount,
     int VocabularySize,
+    int MaxPositionEmbeddings,
     int ExpertGroupCount,
     int ExpertGroupsPerToken,
     float RmsNormEpsilon,
@@ -68,6 +69,7 @@ internal sealed record GlmModelConfiguration(
             GetRequiredInt(root, "v_head_dim"),
             GetRequiredInt(root, "n_shared_experts"),
             GetRequiredInt(root, "vocab_size"),
+            GetRequiredInt(root, "max_position_embeddings"),
             GetRequiredInt(root, "n_group"),
             GetRequiredInt(root, "topk_group"),
             GetOptionalFloat(root, "rms_norm_eps", 1e-5f),
@@ -95,12 +97,19 @@ internal sealed record GlmModelConfiguration(
         RequireRange(ValueHeadSize, 1, 1 << 16, "v_head_dim");
         RequireRange(SharedExpertCount, 0, 64, "n_shared_experts");
         RequireRange(VocabularySize, 1, 1 << 24, "vocab_size");
+        RequireRange(MaxPositionEmbeddings, 1, 1 << 24, "max_position_embeddings");
         RequireRange(ExpertGroupCount, 1, RoutedExpertCount, "n_group");
         RequireRange(ExpertGroupsPerToken, 1, ExpertGroupCount, "topk_group");
 
         if (ExpertGroupCount != 1)
         {
             throw new InvalidDataException("The current managed GLM provider requires n_group=1.");
+        }
+
+        if ((QueryKeyRopeHeadSize & 1) != 0)
+        {
+            throw new InvalidDataException(
+                "Model configuration property 'qk_rope_head_dim' must be even for interleaved partial RoPE.");
         }
 
         if (!float.IsFinite(RmsNormEpsilon) || RmsNormEpsilon <= 0 ||

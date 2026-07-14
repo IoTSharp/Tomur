@@ -53,6 +53,14 @@ internal sealed class ManagedGlmModel : IDisposable
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(probe);
+        if (contextSize > probe.Configuration.MaxPositionEmbeddings)
+        {
+            throw new ContextLengthExceededException(
+                position: 0,
+                requestedTokenCount: contextSize,
+                contextLimit: probe.Configuration.MaxPositionEmbeddings);
+        }
+
         var specs = ResidentWeightLayout.Create(probe.Configuration, probe.Tensors);
         var memoryPlan = ModelMemoryPlan.Create(
             probe.Configuration,
@@ -200,6 +208,79 @@ internal sealed class ManagedGlmModel : IDisposable
             intermediateSize,
             gate,
             destination);
+    }
+
+    public KvCache CreateKvCache()
+    {
+        _ = GetDataSource();
+        return new KvCache(Configuration, MemoryPlan.ContextSize);
+    }
+
+    public AttentionWorkspace CreateAttentionWorkspace()
+    {
+        _ = GetDataSource();
+        return new AttentionWorkspace(
+            Configuration,
+            MemoryPlan.AttentionActivationCapacity,
+            MemoryPlan.AttentionScoreCapacity);
+    }
+
+    public SequenceState CreateSequenceState(int layer)
+    {
+        ValidateLayer(layer);
+        return new SequenceState(layer, Configuration.LayerCount, MemoryPlan.ContextSize);
+    }
+
+    public void RunAttentionToken(
+        int layer,
+        ReadOnlySpan<float> input,
+        KvCache cache,
+        SequenceState sequence,
+        AttentionWorkspace workspace,
+        Span<float> destination,
+        CancellationToken cancellationToken = default,
+        AttentionTrace? trace = null,
+        MlaAttentionMode mode = MlaAttentionMode.Reference)
+    {
+        ValidateLayer(layer);
+        MlaAttention.RunToken(
+            this,
+            layer,
+            input,
+            cache,
+            sequence,
+            workspace,
+            destination,
+            cancellationToken,
+            trace,
+            mode);
+    }
+
+    public void RunAttentionPrefill(
+        int layer,
+        ReadOnlySpan<float> inputs,
+        int tokenCount,
+        KvCache cache,
+        SequenceState sequence,
+        AttentionWorkspace workspace,
+        Span<float> destinations,
+        CancellationToken cancellationToken = default,
+        AttentionTrace? lastTokenTrace = null,
+        MlaAttentionMode mode = MlaAttentionMode.Reference)
+    {
+        ValidateLayer(layer);
+        MlaAttention.RunPrefill(
+            this,
+            layer,
+            inputs,
+            tokenCount,
+            cache,
+            sequence,
+            workspace,
+            destinations,
+            cancellationToken,
+            lastTokenTrace,
+            mode);
     }
 
     public void Dispose()

@@ -294,6 +294,38 @@ internal static class ScalarKernels
         }
     }
 
+    public static void SoftmaxInPlace(Span<float> values)
+    {
+        if (values.IsEmpty)
+        {
+            throw new ArgumentException("Buffer cannot be empty.", nameof(values));
+        }
+
+        var maximum = float.NegativeInfinity;
+        for (var index = 0; index < values.Length; index++)
+        {
+            if (!float.IsFinite(values[index]))
+            {
+                throw new ArgumentException(
+                    $"Softmax input at index {index} must be finite.",
+                    nameof(values));
+            }
+
+            maximum = Math.Max(maximum, values[index]);
+        }
+
+        double denominator = 0;
+        for (var index = 0; index < values.Length; index++)
+        {
+            denominator += Math.Exp(values[index] - maximum);
+        }
+
+        for (var index = 0; index < values.Length; index++)
+        {
+            values[index] = (float)(Math.Exp(values[index] - maximum) / denominator);
+        }
+    }
+
     public static void Add(
         ReadOnlySpan<float> left,
         ReadOnlySpan<float> right,

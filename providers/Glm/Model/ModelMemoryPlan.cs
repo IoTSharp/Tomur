@@ -8,6 +8,7 @@ internal sealed record ModelMemoryPlan(
     long RequiredBytes,
     long AvailableBytes,
     int ActivationCapacity,
+    int AttentionActivationCapacity,
     int QuantizationCapacity,
     int OutputCapacity,
     int AttentionScoreCapacity)
@@ -44,8 +45,6 @@ internal sealed record ModelMemoryPlan(
         var attentionProjectionSize = checked(
             configuration.AttentionHeadCount *
             checked(configuration.QueryKeyNopeHeadSize + configuration.QueryKeyRopeHeadSize));
-        var keyValueInputSize = checked(
-            configuration.KeyValueLoraRank + configuration.QueryKeyRopeHeadSize);
         var keyValueProjectionSize = checked(
             configuration.AttentionHeadCount *
             checked(configuration.QueryKeyNopeHeadSize + configuration.ValueHeadSize));
@@ -54,15 +53,7 @@ internal sealed record ModelMemoryPlan(
         var largestMlpIntermediate = Math.Max(
             configuration.FirstMoeLayer > 0 ? configuration.DenseIntermediateSize : 0,
             sharedIntermediateSize);
-        var attentionContextSize = checked(
-            configuration.AttentionHeadCount * configuration.ValueHeadSize);
-        var attentionActivationCapacity = checked(
-            configuration.QueryLoraRank +
-            attentionProjectionSize +
-            keyValueInputSize +
-            keyValueProjectionSize +
-            attentionContextSize +
-            configuration.HiddenSize);
+        var attentionActivationCapacity = GetAttentionActivationCapacity(configuration);
         // Dense SwiGLU and MLA retain several intermediates at the same time.
         var activationCapacity = Math.Max(
             configuration.HiddenSize,
@@ -93,9 +84,38 @@ internal sealed record ModelMemoryPlan(
             requiredBytes,
             availableBytes,
             activationCapacity,
+            attentionActivationCapacity,
             quantizationCapacity,
             outputCapacity,
             attentionScoreCapacity);
+    }
+
+    public static int GetAttentionActivationCapacity(GlmModelConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+        var queryHeadSize = checked(
+            configuration.QueryKeyNopeHeadSize + configuration.QueryKeyRopeHeadSize);
+        var queryProjectionSize = checked(
+            configuration.AttentionHeadCount * queryHeadSize);
+        var keyValueInputSize = checked(
+            configuration.KeyValueLoraRank + configuration.QueryKeyRopeHeadSize);
+        var keyValueProjectionSize = checked(
+            configuration.AttentionHeadCount *
+            checked(configuration.QueryKeyNopeHeadSize + configuration.ValueHeadSize));
+        var attentionContextSize = checked(
+            configuration.AttentionHeadCount * configuration.ValueHeadSize);
+        var firstTemporarySize = Math.Max(configuration.QueryLoraRank, keyValueInputSize);
+        var secondTemporarySize = Math.Max(
+            configuration.QueryLoraRank,
+            configuration.KeyValueLoraRank);
+
+        return checked(
+            firstTemporarySize +
+            secondTemporarySize +
+            queryProjectionSize +
+            keyValueProjectionSize +
+            attentionContextSize +
+            configuration.HiddenSize);
     }
 
     public static long GetAvailableMemoryBytes()

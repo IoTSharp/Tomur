@@ -61,6 +61,17 @@ public sealed class ManagedGlmProvider : IModelFixtureProvider
                 ],
                 exception);
         }
+        catch (ContextLengthExceededException exception)
+        {
+            throw new InferenceException(
+                "managed_context_length_exceeded",
+                exception.Message,
+                [
+                    $"Request no more than {exception.ContextLimit} total tokens for this model.",
+                    "Reduce the requested context size before creating the managed model session."
+                ],
+                exception);
+        }
         catch (Exception exception) when (
             exception is InvalidDataException or IOException or UnauthorizedAccessException or JsonException or OverflowException)
         {

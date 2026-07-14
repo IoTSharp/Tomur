@@ -8,13 +8,15 @@
 
 1. 已建立 `Tomur.Providers.Glm` 独立纯 C# 类库、extend-only provider 契约、非 AOT 动态发现边界与 `SessionManager` 选择路径；未匹配的现有模型继续使用 llama.cpp。
 2. 已建立 `model.tomur.json`、GLM 配置、tokenizer 基础结构和 safetensors header/tensor index 的有界只读探测，并接入 provider discovery、Catalog、doctor、Runtime API 与 Web Runtime 诊断。
-3. 已建立固定 seed 的 tiny F32 fixture、版本化 oracle、tensor manifest、SHA-256 校验、隐藏 generate/verify 入口与 M1-M6 独立测试项目；fixture generator 1.1.0 增加 dense MLP checkpoint，同时保留既有 MoE teacher-forcing 基线。
+3. 已建立固定 seed 的 tiny F32 fixture、版本化 oracle、tensor manifest、SHA-256 校验、隐藏 generate/verify 入口与 M1-M7 独立测试项目；fixture generator 1.1.0 增加 dense MLP checkpoint，同时保留既有 MoE teacher-forcing 基线。
 4. 已建立统一 tensor descriptor、只读 shard 随机访问、F32/F16/BF16 resident 转换、int4/int8 量化视图、池化 workspace 与 expert slab 基础层。
 5. 已建立无并行、无 intrinsics 的 scalar reference kernels，覆盖 embedding、normalization、F32 与 int8/int4 矩阵乘、activation int8 量化、基础激活、elementwise、residual 和 stable top-k，并显式校验 shape、stride、buffer、alias 与量化边界。
 6. 已实现 WordLevel/BPE tokenizer、必要的 normalizer/pre-tokenizer/decoder 子集、byte-level UTF-8 映射、added/special token、GLM role prompt template、多个 token stop，以及跨 token UTF-8 和文本 stop 增量解码。
 7. 已建立 `ManagedGlmModel` resident dense model 边界，按配置校验常驻 tensor shape/dtype，在 payload 读取前核算 resident、compressed KV 与 scratch bytes，并在预算超限、取消、损坏 shard 或 dispose 时提供明确失败与资源释放行为。
 8. 已接通 resident embedding gather、input RMSNorm 与 dense SwiGLU MLP scalar 基础路径；session 会报告 resident tensor、resident/KV/scratch bytes、总预算和 open shard 数。
-9. managed forward 尚未接通时返回 `managed_forward_not_ready`，不会返回占位 token，也不会影响现有 native provider。
+9. 已实现 MLA q/kv projection、interleaved partial RoPE、逐位置重建 K/V 的 reference path、KV latent weight absorption path、逐 head causal attention、稳定 softmax、单 token decode 与多 token prefill。
+10. 已建立按 layer 保存 normalized KV latent 与 RoPE key 的 compressed KV cache，以及 position/context 状态、固定 attention workspace、非有限 score/output 诊断、取消安全点和 token/prefill 失败回滚边界。
+11. managed forward 尚未接通时返回 `managed_forward_not_ready`，不会返回占位 token，也不会影响现有 native provider。
 
 ### R14 当前已接入
 
