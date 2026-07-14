@@ -176,7 +176,9 @@ internal sealed class ManagedGlmSession : IChatGenerationSession
         {
             ObjectDisposedException.ThrowIf(disposed, this);
             cancellationToken.ThrowIfCancellationRequested();
-            var preparedPrompt = new GlmPromptTemplate(loadedModel.Tokenizer)
+            var preparedPrompt = new GlmPromptTemplate(
+                    loadedModel.Tokenizer,
+                    loadedModel.Configuration.ModelType)
                 .BuildCompletion(prompt);
             return GeneratePrepared(preparedPrompt, options, cancellationToken, onToken);
         }
@@ -202,7 +204,9 @@ internal sealed class ManagedGlmSession : IChatGenerationSession
         {
             ObjectDisposedException.ThrowIf(disposed, this);
             cancellationToken.ThrowIfCancellationRequested();
-            var preparedPrompt = new GlmPromptTemplate(loadedModel.Tokenizer)
+            var preparedPrompt = new GlmPromptTemplate(
+                    loadedModel.Tokenizer,
+                    loadedModel.Configuration.ModelType)
                 .BuildChat(messages);
             return GeneratePrepared(preparedPrompt, options, cancellationToken, onToken);
         }
@@ -315,12 +319,13 @@ internal sealed class ManagedGlmSession : IChatGenerationSession
         var diagnostics = new List<string>
         {
             $"provider: {ProviderId}",
+            $"model type: {loadedModel.Configuration.ModelType}",
             $"context limit requested: {options.ContextSize}",
             $"context limit effective: {loadedModel.MemoryPlan.ContextSize}",
             $"layers: {loadedModel.Configuration.LayerCount}",
             $"routed experts: {loadedModel.Configuration.RoutedExpertCount}",
             $"tokenizer vocabulary: {loadedModel.Tokenizer.VocabularySize}",
-            $"tokenizer stop tokens: {new GlmPromptTemplate(loadedModel.Tokenizer).ResolveStopTokenIds().Count}",
+            $"tokenizer stop tokens: {new GlmPromptTemplate(loadedModel.Tokenizer, loadedModel.Configuration.ModelType).ResolveStopTokenIds().Count}",
             $"tensor files: {loadedModel.TensorFileCount}",
             $"open tensor shards: {loadedModel.OpenShardCount}",
             $"indexed tensors: {loadedModel.Tensors.Count}",

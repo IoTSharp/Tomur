@@ -23,6 +23,51 @@ public sealed class ModelProbeTests
     }
 
     [Fact]
+    public void Glm4MoeLiteFixtureLoadsManagedGenerationSession()
+    {
+        using var fixture = new ManagedModelFixture();
+        var model = fixture.CreateValidModel(architecture: GlmModelConfiguration.MoeLiteModelType);
+        var provider = new ManagedGlmProvider();
+
+        using var session = provider.CreateSession(model, new ModelSessionOptions(4096));
+
+        Assert.True(session.GetSnapshot().Loaded);
+    }
+
+    [Fact]
+    public void ManifestArchitectureMustMatchConfigurationModelType()
+    {
+        using var fixture = new ManagedModelFixture();
+        var model = fixture.CreateValidModel(
+            architecture: GlmModelConfiguration.MoeLiteModelType,
+            modelType: GlmModelConfiguration.DsaModelType);
+        var provider = new ManagedGlmProvider();
+
+        var exception = Assert.Throws<InferenceException>(() =>
+            provider.CreateSession(model, new ModelSessionOptions(4096)));
+
+        Assert.Equal("managed_model_invalid", exception.Code);
+        Assert.Contains("does not match manifest architecture", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UnsupportedAttentionBiasFailsBeforeTensorLoading()
+    {
+        using var fixture = new ManagedModelFixture();
+        var model = fixture.CreateValidModel(architecture: GlmModelConfiguration.MoeLiteModelType);
+        var config = File.ReadAllText(fixture.ConfigPath)
+            .Replace("\"attention_bias\": false", "\"attention_bias\": true", StringComparison.Ordinal);
+        File.WriteAllText(fixture.ConfigPath, config);
+        var provider = new ManagedGlmProvider();
+
+        var exception = Assert.Throws<InferenceException>(() =>
+            provider.CreateSession(model, new ModelSessionOptions(4096)));
+
+        Assert.Equal("managed_model_invalid", exception.Code);
+        Assert.Contains("attention_bias=false", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void MissingRequiredTensorReturnsManagedModelInvalid()
     {
         using var fixture = new ManagedModelFixture();

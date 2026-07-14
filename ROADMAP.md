@@ -242,7 +242,8 @@ GLM 基础代码顺序、性能计划、集中验证门槛与发布标准见 [pr
 10. ✅ 已实现 MoE router、shared/routed expert 合并、按层固定容量 LRU、lease 隔离、RAM 配额、有界异步磁盘读取、取消和 cache/I/O 诊断，并接入 M8 独立测试项目。
 11. ✅ 已接通有界批次完整 scalar forward、prompt prefill、compressed KV 增量 decode、greedy、temperature、top-k/top-p、penalty、多 EOS、文本 stop、context/cancellation 和增量 callback，并接入 M9 独立测试项目。
 12. 🚧 正在完成 M10 集成闭环：为显式标记的 packed rowwise safetensors 目录补齐 offset-binary int4、`*.qs` per-row scale、量化 resident 权重加载，并让兼容 API 的 Chat 请求直接使用 GLM role token 模板；转换后的随机 tiny 模型已完成三类兼容 API 链路 smoke，证据见 [R15 packed GLM smoke 记录](./docs/r15-packed-glm-smoke.md)。
-13. 🚧 独立 `managed-olmoe` provider 已接通标准 causal attention、q/k RMSNorm、softmax top-k router、BF16 与 rowwise int8 experts、官方 chat template 和生成链路；原始 BF16 `allenai/OLMoE-1B-7B-0125-Instruct` 已通过 Catalog、provider load 与中文 Ollama 非流式真实对话，证据见 [R15 OLMoE real-model smoke](./docs/r15-olmoe-smoke.md)。OpenAI、Anthropic、SSE、完整 int8 转换和性能优化仍待验证。
+13. 🚧 将 `glm4_moe_lite` 作为 managed GLM 的显式兼容架构目标，首个真实候选为 `cerebras/GLM-4.7-Flash-REAP-23B-A3B`。当前工作只实现 architecture/config/tensor/prompt 契约与可执行测试代码；完整模型转换、加载、自然语言质量和性能验证转移到具备充足存储与算力的独立机器执行。
+14. 🚧 独立 `managed-olmoe` provider 已接通标准 causal attention、q/k RMSNorm、softmax top-k router、BF16 与 rowwise int8 experts、官方 chat template 和生成链路；原始 BF16 `allenai/OLMoE-1B-7B-0125-Instruct` 已通过 Catalog、provider load 与中文 Ollama 非流式真实对话，证据见 [R15 OLMoE real-model smoke](./docs/r15-olmoe-smoke.md)。OpenAI、Anthropic、SSE、完整 int8 转换和性能优化仍待验证。
 
 集中验证：
 
@@ -251,6 +252,7 @@ GLM 基础代码顺序、性能计划、集中验证门槛与发布标准见 [pr
 3. 完整 GLM-5.2 预转换目录为 `383,760,077,466` bytes（357.4 GiB，约 384 GB）；当前本机没有单盘可用空间容纳该资产，因此只能记录 tiny 格式/API 链路证据，不得据此宣称完整模型真实对话通过。
 4. M14 完成前，managed GLM provider 继续保持实验状态，不标记为可用于真实聊天。
 5. OLMoE 的完成口径要求 tiny oracle、tokenizer/chat template、真实 instruct 权重、非流式与 streaming API 均有证据；只通过模型 probe 或随机 fixture 不算真实对话通过。
+6. `glm4_moe_lite` 的本机代码完成不等同于模型可用；异机验证必须覆盖转换输入 checksum、产物清单、配置与 tensor probe、完整模型加载、兼容 API 对话、首 token、token/s、峰值内存和 expert cache/I/O。
 
 ### 05. ⏳ R16: Runtime 偏好、下载队列与 Settings 写入
 

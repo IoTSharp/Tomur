@@ -30,6 +30,7 @@
 22. 已建立独立 `Tomur.Providers.Olmoe` 纯 C# provider，接通 OLMoE config/probe、标准 causal attention、full KV cache、q/k RMSNorm、split-half RoPE、softmax top-k router、streamed experts、官方 chat template、生成与 session 诊断；tiny F32/BF16 与 signed-int8 `rowwise-qs` 路径纳入自动化测试。
 23. 原始 BF16 `allenai/OLMoE-1B-7B-0125-Instruct` 三个 safetensors shard 已通过 Catalog、动态 provider load、完整模型加载与中文 Ollama 非流式真实对话；`/api/runtime/status` 可报告 147 个 resident tensor、3 个打开的 shard、resident/KV/scratch 预算和 expert cache/I/O。记录见 `docs/r15-olmoe-smoke.md`。
 24. 文本 session 生命周期日志已从硬编码的 llama 文案改为中性 `text generation session`，并显示实际 `runtime`；Runtime 诊断会优先报告已加载的 managed session，不再被未使用的 llama.cpp native bundle 状态覆盖。
+25. managed GLM 以 extend-only 方式增加 `glm4_moe_lite` architecture/config 契约，要求 manifest 与 `model_type` 一致，并校验当前实现所需的 MLA head、interleaved RoPE、SwiGLU、sigmoid/noaux router 与 dense/sparse layer 边界；GLM-4.7 prompt 分支已对齐 prefix 换行、默认非 thinking assistant closure 和 tool response 包装。真实 REAP 权重转换与完整模型 smoke 尚未执行，异机步骤记录在 `docs/r15-glm4-moe-lite-validation.md`。
 
 ### R14 当前已接入
 

@@ -34,12 +34,17 @@ internal sealed class ManagedModelFixture : IDisposable
 
     public string ManifestPath => Path.Combine(Root, ModelProviderManifest.FileName);
 
+    public string ConfigPath => Path.Combine(Root, "config.json");
+
     public LocalModelDescriptor CreateValidModel(
         bool omitRequiredTensor = false,
         bool outOfBoundsOffset = false,
-        bool unsupportedDataType = false)
+        bool unsupportedDataType = false,
+        string architecture = GlmModelConfiguration.DsaModelType,
+        string? modelType = null)
     {
-        File.WriteAllText(ManifestPath, """
+        modelType ??= architecture;
+        var manifest = """
             {
               "schema_version": 1,
               "provider": "managed-glm",
@@ -51,12 +56,15 @@ internal sealed class ManagedModelFixture : IDisposable
               "quantization": "f32",
               "capabilities": ["completion", "chat"]
             }
-            """);
-        File.WriteAllText(Path.Combine(Root, "config.json"), """
+            """.Replace(GlmModelConfiguration.DsaModelType, architecture, StringComparison.Ordinal);
+        File.WriteAllText(ManifestPath, manifest);
+        var config = """
             {
+              "model_type": "glm_moe_dsa",
               "hidden_size": 4,
               "num_hidden_layers": 1,
               "num_attention_heads": 1,
+              "num_key_value_heads": 1,
               "n_routed_experts": 1,
               "num_experts_per_tok": 1,
               "moe_intermediate_size": 4,
@@ -66,17 +74,22 @@ internal sealed class ManagedModelFixture : IDisposable
               "kv_lora_rank": 1,
               "qk_nope_head_dim": 1,
               "qk_rope_head_dim": 2,
+              "qk_head_dim": 3,
               "v_head_dim": 1,
               "n_shared_experts": 0,
               "vocab_size": 4,
               "max_position_embeddings": 4096,
               "n_group": 1,
               "topk_group": 1,
+              "hidden_act": "silu",
+              "attention_bias": false,
+              "rope_interleave": true,
               "rms_norm_eps": 0.00001,
               "routed_scaling_factor": 1.0,
-              "rope_parameters": { "rope_theta": 10000.0 }
+              "rope_parameters": { "rope_theta": 10000.0, "rope_type": "default" }
             }
-            """);
+            """.Replace(GlmModelConfiguration.DsaModelType, modelType, StringComparison.Ordinal);
+        File.WriteAllText(ConfigPath, config);
         File.WriteAllText(Path.Combine(Root, "tokenizer.json"), """
             {
               "added_tokens": [
@@ -102,10 +115,10 @@ internal sealed class ManagedModelFixture : IDisposable
             tensors,
             outOfBoundsOffset,
             unsupportedDataType);
-        return CreateDescriptor();
+        return CreateDescriptor(architecture);
     }
 
-    public LocalModelDescriptor CreateDescriptor()
+    public LocalModelDescriptor CreateDescriptor(string architecture = GlmModelConfiguration.DsaModelType)
         => new(
             "m1-fixture",
             "M1 tiny metadata fixture",
@@ -115,7 +128,7 @@ internal sealed class ManagedModelFixture : IDisposable
             new FileInfo(ManifestPath).Length,
             File.GetLastWriteTimeUtc(ManifestPath),
             "managed-model",
-            "glm_moe_dsa",
+            architecture,
             "f32",
             ["completion", "chat"]);
 

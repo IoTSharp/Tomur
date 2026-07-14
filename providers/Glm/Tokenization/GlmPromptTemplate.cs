@@ -16,12 +16,26 @@ internal sealed class GlmPromptTemplate
     private static readonly string[] ObservationTokens = ["<|observation|>", "<|tool|>"];
     private const string ThinkStartToken = "<think>";
     private const string ThinkEndToken = "</think>";
+    private const string ToolResponseStart = "<tool_response>";
+    private const string ToolResponseEnd = "</tool_response>";
     private readonly ManagedTokenizer tokenizer;
+    private readonly bool usesMoeLiteTemplate;
 
-    public GlmPromptTemplate(ManagedTokenizer tokenizer)
+    public GlmPromptTemplate(
+        ManagedTokenizer tokenizer,
+        string modelType = GlmModelConfiguration.DsaModelType)
     {
         ArgumentNullException.ThrowIfNull(tokenizer);
+        ArgumentException.ThrowIfNullOrWhiteSpace(modelType);
+        if (!GlmModelConfiguration.IsSupportedModelType(modelType))
+        {
+            throw new ArgumentOutOfRangeException(nameof(modelType), modelType, "Unsupported GLM prompt model type.");
+        }
+
         this.tokenizer = tokenizer;
+        usesMoeLiteTemplate = modelType.Equals(
+            GlmModelConfiguration.MoeLiteModelType,
+            StringComparison.OrdinalIgnoreCase);
     }
 
     public GlmPrompt BuildCompletion(string prompt)
@@ -49,17 +63,40 @@ internal sealed class GlmPromptTemplate
 
         var tokens = new List<int>();
         AppendPrefix(tokens);
+        if (usesMoeLiteTemplate)
+        {
+            AppendEncoded(tokens, "\n", "GLM4 MoE Lite prompt prefix newline");
+        }
+
         foreach (var message in normalized)
         {
             tokens.Add(RequireRoleToken(message.Role));
-            tokens.AddRange(tokenizer.Encode(message.Content));
+            if (usesMoeLiteTemplate && message.Role.Equals("assistant", StringComparison.Ordinal))
+            {
+                tokens.Add(RequireTokenId(ThinkEndToken));
+                tokens.AddRange(tokenizer.Encode(StripThinking(message.Content)));
+            }
+            else if (usesMoeLiteTemplate && message.Role.Equals("observation", StringComparison.Ordinal))
+            {
+                AppendEncoded(tokens, ToolResponseStart, "GLM4 MoE Lite tool response start");
+                tokens.AddRange(tokenizer.Encode(message.Content));
+                AppendEncoded(tokens, ToolResponseEnd, "GLM4 MoE Lite tool response end");
+            }
+            else
+            {
+                tokens.AddRange(tokenizer.Encode(message.Content));
+            }
         }
 
         if (!string.Equals(normalized[^1].Role, "assistant", StringComparison.Ordinal))
         {
             tokens.Add(RequireRoleToken("assistant"));
-            if (tokenizer.TryGetTokenId(ThinkStartToken, out var thinkStart) &&
-                tokenizer.TryGetTokenId(ThinkEndToken, out var thinkEnd))
+            if (usesMoeLiteTemplate)
+            {
+                tokens.Add(RequireTokenId(ThinkEndToken));
+            }
+            else if (tokenizer.TryGetTokenId(ThinkStartToken, out var thinkStart) &&
+                     tokenizer.TryGetTokenId(ThinkEndToken, out var thinkEnd))
             {
                 tokens.Add(thinkStart);
                 tokens.Add(thinkEnd);
@@ -115,6 +152,22 @@ internal sealed class GlmPromptTemplate
             $"GLM tokenizer does not define the required '{role}' role token.");
     }
 
+    private int RequireTokenId(string content)
+        => tokenizer.TryGetTokenId(content, out var tokenId)
+            ? tokenId
+            : throw new InvalidDataException($"GLM tokenizer does not define required token '{content}'.");
+
+    private void AppendEncoded(List<int> destination, string content, string description)
+    {
+        var encoded = tokenizer.Encode(content);
+        if (encoded.Count == 0)
+        {
+            throw new InvalidDataException($"Tokenizer produced no tokens for {description}.");
+        }
+
+        destination.AddRange(encoded);
+    }
+
     private int? FindTokenId(IEnumerable<string> candidates)
     {
         foreach (var candidate in candidates)
@@ -150,4 +203,12 @@ internal sealed class GlmPromptTemplate
 
     private static string NormalizeContent(string content)
         => content.Replace("\r\n", "\n", StringComparison.Ordinal).Trim();
+
+    private static string StripThinking(string content)
+    {
+        var marker = content.LastIndexOf(ThinkEndToken, StringComparison.Ordinal);
+        return marker < 0
+            ? content
+            : content[(marker + ThinkEndToken.Length)..].TrimStart('\r', '\n');
+    }
 }

@@ -36,7 +36,7 @@ internal static class ModelDirectoryProbe
                 $"Model provider '{manifest.Provider}' does not match loaded provider '{providerId}'.");
         }
 
-        if (!string.Equals(manifest.Architecture, "glm_moe_dsa", StringComparison.OrdinalIgnoreCase))
+        if (!GlmModelConfiguration.IsSupportedModelType(manifest.Architecture))
         {
             throw new InvalidDataException(
                 $"Managed GLM provider does not support architecture '{manifest.Architecture}'.");
@@ -67,7 +67,7 @@ internal static class ModelDirectoryProbe
         var tokenizerPath = ModelProviderManifestReader.ResolveAssetPath(modelDirectory, manifest.TokenizerFile);
         RejectLinkedAsset(modelDirectory, configPath);
         RejectLinkedAsset(modelDirectory, tokenizerPath);
-        var configuration = GlmModelConfiguration.Read(configPath);
+        var configuration = GlmModelConfiguration.Read(configPath, manifest.Architecture);
         var tokenizer = ManagedTokenizer.Read(tokenizerPath);
         if (tokenizer.MaximumTokenId >= configuration.VocabularySize)
         {

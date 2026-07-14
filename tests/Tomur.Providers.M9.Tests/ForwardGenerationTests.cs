@@ -88,7 +88,9 @@ public sealed class ForwardGenerationTests
 
         var tokenizer = ManagedTokenizer.Read(
             Path.Combine(fixture.Path, TinyFixtureFiles.Tokenizer));
-        var stopTokenIds = new GlmPromptTemplate(tokenizer).ResolveStopTokenIds();
+        var stopTokenIds = new GlmPromptTemplate(
+            tokenizer,
+            GlmModelConfiguration.DsaModelType).ResolveStopTokenIds();
         var expectedTokenIds = oracle.GreedyDecode.TokenIds
             .TakeWhile(tokenId => !stopTokenIds.Contains(tokenId))
             .ToArray();
@@ -156,7 +158,10 @@ public sealed class ForwardGenerationTests
 
             var tokenizer = ManagedTokenizer.Read(
                 Path.Combine(fixture.Path, TinyFixtureFiles.Tokenizer));
-            var expectedPrompt = new GlmPromptTemplate(tokenizer).BuildChat(messages);
+            var expectedPrompt = new GlmPromptTemplate(
+                    tokenizer,
+                    GlmModelConfiguration.DsaModelType)
+                .BuildChat(messages);
             Assert.Equal(expectedPrompt.TokenIds.Count, result.Usage.PromptTokens);
             Assert.Contains(result.Diagnostics, value => value == "provider: managed-glm");
         }

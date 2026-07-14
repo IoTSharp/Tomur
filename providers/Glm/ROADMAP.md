@@ -437,6 +437,9 @@ forward 顺序：
 9. 对显式声明 `packed-offset` 的目录加载量化 resident matrix 与 routed expert，统一解释 `*.qs` per-row scale、U8 int8 payload 和 offset-binary packed int4。
 10. 使用转换后的 tiny `glm_moe_dsa` 目录完成 Catalog、provider load、completion/chat、streaming callback 和兼容 API smoke；tiny 随机权重只证明格式与调用链，不作为自然语言质量证据。
 11. 完整 GLM-5.2 转换模型仍需独立记录约 370 GB 资产、内存预算、真实 prompt、首 token、token/s 和 expert I/O 证据。
+12. 以 extend-only 方式增加 `glm4_moe_lite` manifest architecture，并要求其与 `config.json:model_type` 一致；配置必须显式符合当前 MLA、interleaved RoPE、SwiGLU、sigmoid/noaux router 与 dense/sparse layer 边界。
+13. `GlmPromptTemplate` 按 architecture 保留既有 GLM-5.2 行为，并为 `glm4_moe_lite` 对齐官方 Jinja 的 prefix 换行、历史 assistant thinking closure、默认非 thinking generation prompt 与 tool response 包装。
+14. `cerebras/GLM-4.7-Flash-REAP-23B-A3B` 的 BF16 到 packed rowwise int4/int8 转换与完整模型 smoke 不在当前本机执行；异机证据形成前，`glm4_moe_lite` 保持代码已接入但完整模型待验证状态。
 
 当前证据：`packed-offset` 格式、量化 resident/expert forward、OpenAI Chat 非流式与 SSE、Ollama Chat、Anthropic Messages 已通过转换后的随机 tiny 模型 smoke；默认 int8 embedding/lm_head 与 int4 dense/expert 的混合精度目录也已完成 OpenAI Chat smoke。完整模型、自然语言质量、完整 oracle、跨平台和性能验证仍未执行，记录见 [R15 packed GLM smoke](../../docs/r15-packed-glm-smoke.md)。
 

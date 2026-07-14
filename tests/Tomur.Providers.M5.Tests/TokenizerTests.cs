@@ -161,6 +161,29 @@ public sealed class TokenizerTests
     }
 
     [Fact]
+    public void Glm4MoeLitePromptMatchesNonThinkingChatTemplate()
+    {
+        using var root = new TemporaryDirectory();
+        var tokenizerPath = Path.Combine(root.Path, "tokenizer.json");
+        WriteGlm4MoeLiteTokenizer(tokenizerPath);
+        var tokenizer = ManagedTokenizer.Read(tokenizerPath);
+        var template = new GlmPromptTemplate(tokenizer, GlmModelConfiguration.MoeLiteModelType);
+
+        var prompt = template.BuildChat(
+        [
+            new ChatTurn("system", "hello"),
+            new ChatTurn("user", "hello"),
+            new ChatTurn("assistant", "<think>hidden</think>answer"),
+            new ChatTurn("tool", "result")
+        ]);
+
+        Assert.Equal(
+            new[] { 4, 5, 13, 6, 10, 7, 10, 8, 14, 11, 9, 15, 12, 16, 8, 14 },
+            prompt.TokenIds);
+        Assert.Equal(new[] { 4, 5, 10 }, template.BuildCompletion("hello").TokenIds);
+    }
+
+    [Fact]
     public void UnknownTokenizerComponentsFailDuringRead()
     {
         using var root = new TemporaryDirectory();
@@ -236,6 +259,39 @@ public sealed class TokenizerTests
         {
             added_tokens = addedTokens,
             pre_tokenizer = new { type = "WhitespaceSplit" },
+            model = new { type = "WordLevel", unk_token = "<unk>", vocab = vocabulary }
+        });
+    }
+
+    private static void WriteGlm4MoeLiteTokenizer(string path)
+    {
+        var vocabulary = new Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            ["<pad>"] = 0,
+            ["<bos>"] = 1,
+            ["<eos>"] = 2,
+            ["<unk>"] = 3,
+            ["[gMASK]"] = 4,
+            ["<sop>"] = 5,
+            ["<|system|>"] = 6,
+            ["<|user|>"] = 7,
+            ["<|assistant|>"] = 8,
+            ["<|observation|>"] = 9,
+            ["hello"] = 10,
+            ["answer"] = 11,
+            ["result"] = 12,
+            ["\n"] = 13,
+            ["</think>"] = 14,
+            ["<tool_response>"] = 15,
+            ["</tool_response>"] = 16
+        };
+        var addedTokens = vocabulary
+            .Where(static item => item.Value <= 9)
+            .Select(static item => new { id = item.Value, content = item.Key, special = true })
+            .ToArray();
+        WriteTokenizer(path, new
+        {
+            added_tokens = addedTokens,
             model = new { type = "WordLevel", unk_token = "<unk>", vocab = vocabulary }
         });
     }

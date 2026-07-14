@@ -3,6 +3,7 @@ using System.Text.Json;
 namespace Tomur.Providers.Glm;
 
 internal sealed record GlmModelConfiguration(
+    string ModelType,
     int HiddenSize,
     int LayerCount,
     int AttentionHeadCount,
@@ -26,10 +27,17 @@ internal sealed record GlmModelConfiguration(
     float RoutedScalingFactor,
     float RopeTheta)
 {
+    public const string DsaModelType = "glm_moe_dsa";
+    public const string MoeLiteModelType = "glm4_moe_lite";
     private const int MaximumConfigBytes = 4 * 1024 * 1024;
 
-    public static GlmModelConfiguration Read(string path)
+    public static bool IsSupportedModelType(string modelType)
+        => modelType.Equals(DsaModelType, StringComparison.OrdinalIgnoreCase) ||
+            modelType.Equals(MoeLiteModelType, StringComparison.OrdinalIgnoreCase);
+
+    public static GlmModelConfiguration Read(string path, string expectedModelType)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(expectedModelType);
         var info = new FileInfo(path);
         if (!info.Exists)
         {
@@ -54,7 +62,20 @@ internal sealed record GlmModelConfiguration(
             throw new InvalidDataException("Model configuration root must be a JSON object.");
         }
 
+        var modelType = GetRequiredString(root, "model_type");
+        if (!IsSupportedModelType(modelType))
+        {
+            throw new InvalidDataException($"Managed GLM model type '{modelType}' is not supported.");
+        }
+
+        if (!modelType.Equals(expectedModelType, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidDataException(
+                $"Model configuration type '{modelType}' does not match manifest architecture '{expectedModelType}'.");
+        }
+
         var configuration = new GlmModelConfiguration(
+            modelType,
             GetRequiredInt(root, "hidden_size"),
             GetRequiredInt(root, "num_hidden_layers"),
             GetRequiredInt(root, "num_attention_heads"),
@@ -78,11 +99,11 @@ internal sealed record GlmModelConfiguration(
             GetOptionalFloat(root, "routed_scaling_factor", 1.0f),
             GetRopeTheta(root));
 
-        configuration.Validate();
+        configuration.Validate(root);
         return configuration;
     }
 
-    private void Validate()
+    private void Validate(JsonElement root)
     {
         RequireRange(HiddenSize, 1, 1 << 20, "hidden_size");
         RequireRange(LayerCount, 1, 128, "num_hidden_layers");
@@ -120,6 +141,82 @@ internal sealed record GlmModelConfiguration(
         {
             throw new InvalidDataException("Model floating-point configuration values must be finite and positive.");
         }
+
+        if (GetOptionalBool(root, "attention_bias", false))
+        {
+            throw new InvalidDataException("The current managed GLM provider requires attention_bias=false.");
+        }
+
+        if (!GetOptionalBool(root, "rope_interleave", true))
+        {
+            throw new InvalidDataException("The current managed GLM provider requires rope_interleave=true.");
+        }
+
+        RequireOptionalString(root, "hidden_act", "silu");
+        RequireOptionalString(root, "scoring_func", "sigmoid");
+        RequireOptionalString(root, "topk_method", "noaux_tc");
+
+        var queryKeyHeadSize = GetOptionalInt(root, "qk_head_dim");
+        if (queryKeyHeadSize.HasValue &&
+            queryKeyHeadSize.Value != checked(QueryKeyNopeHeadSize + QueryKeyRopeHeadSize))
+        {
+            throw new InvalidDataException(
+                "Model configuration property 'qk_head_dim' must equal qk_nope_head_dim + qk_rope_head_dim.");
+        }
+
+        var keyValueHeadCount = GetOptionalInt(root, "num_key_value_heads");
+        if (keyValueHeadCount.HasValue && keyValueHeadCount.Value != AttentionHeadCount)
+        {
+            throw new InvalidDataException(
+                "The current managed GLM MLA path requires num_key_value_heads to equal num_attention_heads.");
+        }
+
+        ValidateLayerTypes(root);
+        if (root.TryGetProperty("rope_parameters", out var rope) &&
+            !GetOptionalString(rope, "rope_type", "default").Equals("default", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidDataException("The current managed GLM provider requires default RoPE parameters.");
+        }
+    }
+
+    private void ValidateLayerTypes(JsonElement root)
+    {
+        if (!root.TryGetProperty("mlp_layer_types", out var layerTypes))
+        {
+            return;
+        }
+
+        if (layerTypes.ValueKind != JsonValueKind.Array || layerTypes.GetArrayLength() != LayerCount)
+        {
+            throw new InvalidDataException(
+                $"Model configuration property 'mlp_layer_types' must contain {LayerCount} entries.");
+        }
+
+        var layer = 0;
+        foreach (var layerType in layerTypes.EnumerateArray())
+        {
+            var expected = layer < FirstMoeLayer ? "dense" : "sparse";
+            if (layerType.ValueKind != JsonValueKind.String ||
+                !string.Equals(layerType.GetString(), expected, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException(
+                    $"Model layer {layer} must be declared '{expected}' in mlp_layer_types.");
+            }
+
+            layer++;
+        }
+    }
+
+    private static string GetRequiredString(JsonElement root, string name)
+    {
+        if (!root.TryGetProperty(name, out var property) ||
+            property.ValueKind != JsonValueKind.String ||
+            string.IsNullOrWhiteSpace(property.GetString()))
+        {
+            throw new InvalidDataException($"Model configuration property '{name}' must be a non-empty string.");
+        }
+
+        return property.GetString()!;
     }
 
     private static int GetRequiredInt(JsonElement root, string name)
@@ -132,6 +229,46 @@ internal sealed record GlmModelConfiguration(
         }
 
         return value;
+    }
+
+    private static int? GetOptionalInt(JsonElement root, string name)
+    {
+        if (!root.TryGetProperty(name, out var property))
+        {
+            return null;
+        }
+
+        if (property.ValueKind != JsonValueKind.Number || !property.TryGetInt32(out var value))
+        {
+            throw new InvalidDataException($"Model configuration property '{name}' must be an integer.");
+        }
+
+        return value;
+    }
+
+    private static string GetOptionalString(JsonElement root, string name, string fallback)
+    {
+        if (!root.TryGetProperty(name, out var property))
+        {
+            return fallback;
+        }
+
+        if (property.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(property.GetString()))
+        {
+            throw new InvalidDataException($"Model configuration property '{name}' must be a non-empty string.");
+        }
+
+        return property.GetString()!;
+    }
+
+    private static void RequireOptionalString(JsonElement root, string name, string expected)
+    {
+        var value = GetOptionalString(root, name, expected);
+        if (!value.Equals(expected, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidDataException(
+                $"The current managed GLM provider requires {name}='{expected}'.");
+        }
     }
 
     private static float GetOptionalFloat(JsonElement root, string name, float fallback)
@@ -166,9 +303,14 @@ internal sealed record GlmModelConfiguration(
 
     private static float GetRopeTheta(JsonElement root)
     {
-        if (!root.TryGetProperty("rope_parameters", out var rope) || rope.ValueKind != JsonValueKind.Object)
+        if (!root.TryGetProperty("rope_parameters", out var rope))
         {
             return 10000.0f;
+        }
+
+        if (rope.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidDataException("Model configuration property 'rope_parameters' must be an object.");
         }
 
         return GetOptionalFloat(rope, "rope_theta", 10000.0f);
