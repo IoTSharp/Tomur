@@ -128,29 +128,11 @@ internal static class MoeExecutor
         var up = activations.Slice(intermediateSize, intermediateSize);
         var activated = activations.Slice(checked(intermediateSize * 2), intermediateSize);
         var prefix = $"model.layers.{layer}.mlp.shared_experts.";
-        ScalarKernels.MatVec(
-            model.GetResidentWeight($"{prefix}gate_proj.weight"),
-            intermediateSize,
-            configuration.HiddenSize,
-            configuration.HiddenSize,
-            input.Span,
-            gate);
-        ScalarKernels.MatVec(
-            model.GetResidentWeight($"{prefix}up_proj.weight"),
-            intermediateSize,
-            configuration.HiddenSize,
-            configuration.HiddenSize,
-            input.Span,
-            up);
+        model.MultiplyResidentWeight($"{prefix}gate_proj.weight", input.Span, gate);
+        model.MultiplyResidentWeight($"{prefix}up_proj.weight", input.Span, up);
         ScalarKernels.SiLU(gate, activated);
         ScalarKernels.Multiply(activated, up, gate);
-        ScalarKernels.MatVec(
-            model.GetResidentWeight($"{prefix}down_proj.weight"),
-            configuration.HiddenSize,
-            intermediateSize,
-            intermediateSize,
-            gate,
-            destination);
+        model.MultiplyResidentWeight($"{prefix}down_proj.weight", gate, destination);
     }
 
     private static void RunRoutedExperts(

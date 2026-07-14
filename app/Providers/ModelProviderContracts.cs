@@ -50,3 +50,12 @@ public interface ITextGenerationSession : IDisposable
 
     SessionSnapshot GetSnapshot();
 }
+
+public interface IChatGenerationSession : ITextGenerationSession
+{
+    CompletionResult GenerateChat(
+        IReadOnlyList<ChatTurn> messages,
+        CompletionOptions options,
+        CancellationToken cancellationToken,
+        Action<string>? onToken = null);
+}

@@ -143,7 +143,10 @@ internal sealed class ExpertSlab : IDisposable
     {
         var actual = tensor.Shape;
         var expected = slot.Shape;
-        if (actual.Format != expected.Format || actual.Rows != expected.Rows || actual.Columns != expected.Columns)
+        if (actual.Format != expected.Format ||
+            actual.ValueEncoding != expected.ValueEncoding ||
+            actual.Rows != expected.Rows ||
+            actual.Columns != expected.Columns)
         {
             throw new InvalidDataException(
                 $"Expert {projection} tensor shape does not match the reusable slab layout.");

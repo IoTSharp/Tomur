@@ -113,6 +113,7 @@ Tomur/
   "tokenizer": "tokenizer.json",
   "tensor_pattern": "*.safetensors",
   "quantization": "int4",
+  "quantization_layout": "packed-offset",
   "capabilities": ["completion", "chat"]
 }
 ```
@@ -125,6 +126,8 @@ Tomur/
 4. tensor pattern 只在模型目录顶层展开，避免无边界递归。
 5. Catalog 可以展示通过基础清单验证的模型，但只有 provider 完成完整 probe 后才能创建 session。
 6. checksum 失败、张量缺失或 bundle 不完整时不得登记为 ready。
+7. `quantization_layout` 采用 extend-only 可选字段；默认 `separate-scales` 保持现有 `*.scales` 与 two's-complement int4 语义，`packed-offset` 显式选择 `*.qs` per-row scale、offset-binary int4 和量化 resident matrix 语义。
+8. 外部转换目录只有增加 Tomur 清单并通过 config、tokenizer、全部必要 tensor、shape、dtype、scale 和内存预算校验后才可被 provider 选择；不得仅按文件名猜测格式。
 
 ## 张量与量化约定
 
@@ -185,7 +188,7 @@ Disk
 | 07 | M7 | ✅ | MLA attention 与 compressed KV cache |
 | 08 | M8 | ✅ | MoE router、shared expert 与 expert streaming |
 | 09 | M9 | ✅ | 完整 forward、prefill、decode 与 sampling |
-| 10 | M10 | ⏳ | Tomur API、session、streaming 与诊断闭环 |
+| 10 | M10 | 🚧 | Tomur API、session、streaming 与诊断闭环 |
 | 11 | M11 | ⏳ | SIMD、并行、缓存与 I/O 优化 |
 | 12 | M12 | ⏳ | DSA、MTP、grammar draft 与 KV 持久化 |
 | 13 | M13 | ⏳ | 打包、版本兼容与 Native AOT 策略 |
@@ -417,7 +420,7 @@ forward 顺序：
 9. `managed_context_length_exceeded` 与 `managed_inference_failed` 已作为 M9 生成失败边界；现有 llama.cpp provider 的选择和执行路径不变。
 10. M9 独立测试项目已接入 solution，覆盖 tiny teacher forcing logits、多 token prefill、greedy token oracle、固定 seed sampling、penalty、session usage、上下文写入前失败、取消前零 expert I/O 和失败后 context 禁止复用；测试执行统一留在 M14。
 
-## 10. ⏳ M10：Tomur 集成闭环
+## 10. 🚧 M10：Tomur 集成闭环
 
 目标：让 managed provider 通过现有 OpenAI、Ollama 和 Anthropic Messages 入口工作，不增加另一套 API。
 
@@ -430,6 +433,12 @@ forward 顺序：
 5. `tomur doctor` 显示 provider DLL、manifest、配置、tokenizer、shards、内存预算和格式诊断。
 6. Runtime API/UI 区分 provider discovered、model metadata valid、model assets complete、forward verified 和 session loaded。
 7. unload 同时释放 session、file handles、pooled buffers 和 expert cache。
+8. 通过可选 Chat session 契约把结构化 role/content 直接交给 `GlmPromptTemplate.BuildChat`；不先套用 llama/ChatML 文本模板。
+9. 对显式声明 `packed-offset` 的目录加载量化 resident matrix 与 routed expert，统一解释 `*.qs` per-row scale、U8 int8 payload 和 offset-binary packed int4。
+10. 使用转换后的 tiny `glm_moe_dsa` 目录完成 Catalog、provider load、completion/chat、streaming callback 和兼容 API smoke；tiny 随机权重只证明格式与调用链，不作为自然语言质量证据。
+11. 完整 GLM-5.2 转换模型仍需独立记录约 370 GB 资产、内存预算、真实 prompt、首 token、token/s 和 expert I/O 证据。
+
+当前证据：`packed-offset` 格式、量化 resident/expert forward、OpenAI Chat 非流式与 SSE、Ollama Chat、Anthropic Messages 已通过转换后的随机 tiny 模型 smoke；默认 int8 embedding/lm_head 与 int4 dense/expert 的混合精度目录也已完成 OpenAI Chat smoke。完整模型、自然语言质量、完整 oracle、跨平台和性能验证仍未执行，记录见 [R15 packed GLM smoke](../../docs/r15-packed-glm-smoke.md)。
 
 错误码：
 

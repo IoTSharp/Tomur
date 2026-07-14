@@ -14,6 +14,14 @@ internal readonly record struct ExpertKey(
     int ExpertId,
     ExpertWeightFormat Format);
 
+internal sealed record ExpertLayoutConfiguration(
+    int HiddenSize,
+    int LayerCount,
+    int FirstMoeLayer,
+    int RoutedExpertCount,
+    int ExpertsPerToken,
+    int MoeIntermediateSize);
+
 internal sealed class ExpertDescriptor
 {
     public ExpertDescriptor(
@@ -67,20 +75,24 @@ internal sealed class ExpertDescriptorLayout
     private readonly ExpertDescriptor?[][] descriptors;
 
     private ExpertDescriptorLayout(
-        GlmModelConfiguration configuration,
+        ExpertLayoutConfiguration configuration,
         ExpertWeightFormat format,
+        QuantizedValueEncoding valueEncoding,
         ExpertDescriptor?[][] descriptors,
         long slotBudgetedBytes)
     {
         Configuration = configuration;
         Format = format;
+        ValueEncoding = valueEncoding;
         this.descriptors = descriptors;
         SlotBudgetedBytes = slotBudgetedBytes;
     }
 
-    public GlmModelConfiguration Configuration { get; }
+    public ExpertLayoutConfiguration Configuration { get; }
 
     public ExpertWeightFormat Format { get; }
+
+    public QuantizedValueEncoding ValueEncoding { get; }
 
     public int MoeLayerCount => Configuration.LayerCount - Configuration.FirstMoeLayer;
 
@@ -89,13 +101,35 @@ internal sealed class ExpertDescriptorLayout
     public static ExpertDescriptorLayout Create(
         GlmModelConfiguration configuration,
         string quantization,
+        string quantizationLayout,
+        SafeTensorCatalog tensors)
+        => Create(
+            new ExpertLayoutConfiguration(
+                configuration.HiddenSize,
+                configuration.LayerCount,
+                configuration.FirstMoeLayer,
+                configuration.RoutedExpertCount,
+                configuration.ExpertsPerToken,
+                configuration.MoeIntermediateSize),
+            quantization,
+            quantizationLayout,
+            tensors);
+
+    public static ExpertDescriptorLayout Create(
+        ExpertLayoutConfiguration configuration,
+        string quantization,
+        string quantizationLayout,
         SafeTensorCatalog tensors)
     {
         ArgumentNullException.ThrowIfNull(configuration);
         ArgumentException.ThrowIfNullOrWhiteSpace(quantization);
+        ArgumentException.ThrowIfNullOrWhiteSpace(quantizationLayout);
         ArgumentNullException.ThrowIfNull(tensors);
 
         var format = ParseFormat(quantization);
+        var valueEncoding = quantizationLayout.Equals("packed-offset", StringComparison.OrdinalIgnoreCase)
+            ? QuantizedValueEncoding.OffsetBinary
+            : QuantizedValueEncoding.TwosComplement;
         var descriptors = new ExpertDescriptor?[configuration.LayerCount][];
         for (var layer = configuration.FirstMoeLayer; layer < configuration.LayerCount; layer++)
         {
@@ -106,6 +140,7 @@ internal sealed class ExpertDescriptorLayout
                     configuration,
                     tensors,
                     format,
+                    quantizationLayout,
                     layer,
                     expertId);
             }
@@ -114,6 +149,7 @@ internal sealed class ExpertDescriptorLayout
         return new ExpertDescriptorLayout(
             configuration,
             format,
+            valueEncoding,
             descriptors,
             GetSlotBudgetedBytes(configuration, format));
     }
@@ -135,20 +171,28 @@ internal sealed class ExpertDescriptorLayout
     }
 
     public static string GetScaleTensorName(string weightName)
+        => GetScaleTensorName(weightName, "separate-scales");
+
+    public static string GetScaleTensorName(string weightName, string quantizationLayout)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(weightName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(quantizationLayout);
         if (!weightName.EndsWith(WeightSuffix, StringComparison.Ordinal))
         {
             throw new ArgumentException("Quantized expert tensor names must end in '.weight'.", nameof(weightName));
         }
 
-        return $"{weightName[..^WeightSuffix.Length]}.scales";
+        return quantizationLayout.Equals("packed-offset", StringComparison.OrdinalIgnoreCase) ||
+               quantizationLayout.Equals("rowwise-qs", StringComparison.OrdinalIgnoreCase)
+            ? $"{weightName}.qs"
+            : $"{weightName[..^WeightSuffix.Length]}.scales";
     }
 
     private static ExpertDescriptor CreateDescriptor(
-        GlmModelConfiguration configuration,
+        ExpertLayoutConfiguration configuration,
         SafeTensorCatalog tensors,
         ExpertWeightFormat format,
+        string quantizationLayout,
         int layer,
         int expertId)
     {
@@ -176,27 +220,36 @@ internal sealed class ExpertDescriptorLayout
         var quantizedFormat = format == ExpertWeightFormat.Int8
             ? QuantizedTensorFormat.Int8
             : QuantizedTensorFormat.Int4;
+        var valueEncoding = quantizationLayout.Equals("packed-offset", StringComparison.OrdinalIgnoreCase)
+            ? QuantizedValueEncoding.OffsetBinary
+            : QuantizedValueEncoding.TwosComplement;
         var quantizedGate = CreateQuantized(
             tensors,
             gate,
             new QuantizedTensorShape(
                 quantizedFormat,
                 configuration.MoeIntermediateSize,
-                configuration.HiddenSize));
+                configuration.HiddenSize,
+                valueEncoding),
+            quantizationLayout);
         var quantizedUp = CreateQuantized(
             tensors,
             up,
             new QuantizedTensorShape(
                 quantizedFormat,
                 configuration.MoeIntermediateSize,
-                configuration.HiddenSize));
+                configuration.HiddenSize,
+                valueEncoding),
+            quantizationLayout);
         var quantizedDown = CreateQuantized(
             tensors,
             down,
             new QuantizedTensorShape(
                 quantizedFormat,
                 configuration.HiddenSize,
-                configuration.MoeIntermediateSize));
+                configuration.MoeIntermediateSize,
+                valueEncoding),
+            quantizationLayout);
         return new ExpertDescriptor(
             key,
             gate,
@@ -210,9 +263,10 @@ internal sealed class ExpertDescriptorLayout
     private static QuantizedTensorDescriptor CreateQuantized(
         SafeTensorCatalog tensors,
         TensorDescriptor payload,
-        QuantizedTensorShape shape)
+        QuantizedTensorShape shape,
+        string quantizationLayout)
     {
-        var scales = tensors.GetRequired(GetScaleTensorName(payload.Name));
+        var scales = tensors.GetRequired(GetScaleTensorName(payload.Name, quantizationLayout));
         if (!scales.LogicalShape.SequenceEqual([shape.Rows]))
         {
             throw new InvalidDataException(
@@ -262,7 +316,7 @@ internal sealed class ExpertDescriptorLayout
         };
 
     private static long GetSlotBudgetedBytes(
-        GlmModelConfiguration configuration,
+        ExpertLayoutConfiguration configuration,
         ExpertWeightFormat format)
     {
         var gateElements = checked((long)configuration.MoeIntermediateSize * configuration.HiddenSize);

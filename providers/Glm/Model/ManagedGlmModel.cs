@@ -2,7 +2,7 @@ namespace Tomur.Providers.Glm;
 
 internal sealed class ManagedGlmModel : IDisposable
 {
-    private readonly Dictionary<string, ResidentTensor<float>> residentWeights;
+    private readonly Dictionary<string, ResidentWeight> residentWeights;
     private readonly object expertCacheGate = new();
     private ExpertCache? expertCache;
     private TensorDataSource? dataSource;
@@ -10,7 +10,7 @@ internal sealed class ManagedGlmModel : IDisposable
     private ManagedGlmModel(
         ModelProbe probe,
         TensorDataSource dataSource,
-        Dictionary<string, ResidentTensor<float>> residentWeights,
+        Dictionary<string, ResidentWeight> residentWeights,
         ExpertDescriptorLayout expertLayout,
         ModelMemoryPlan memoryPlan,
         long actualResidentBytes)
@@ -67,10 +67,15 @@ internal sealed class ManagedGlmModel : IDisposable
                 contextLimit: probe.Configuration.MaxPositionEmbeddings);
         }
 
-        var specs = ResidentWeightLayout.Create(probe.Configuration, probe.Tensors);
+        var specs = ResidentWeightLayout.Create(
+            probe.Configuration,
+            probe.Tensors,
+            probe.Manifest.Quantization,
+            probe.Manifest.QuantizationLayout);
         var expertLayout = ExpertDescriptorLayout.Create(
             probe.Configuration,
             probe.Manifest.Quantization,
+            probe.Manifest.QuantizationLayout,
             probe.Tensors);
         var memoryPlan = ModelMemoryPlan.Create(
             probe.Configuration,
@@ -81,7 +86,7 @@ internal sealed class ManagedGlmModel : IDisposable
         cancellationToken.ThrowIfCancellationRequested();
 
         TensorDataSource? source = null;
-        var weights = new Dictionary<string, ResidentTensor<float>>(specs.Count, StringComparer.Ordinal);
+        var weights = new Dictionary<string, ResidentWeight>(specs.Count, StringComparer.Ordinal);
         long actualResidentBytes = 0;
         try
         {
@@ -89,12 +94,12 @@ internal sealed class ManagedGlmModel : IDisposable
             foreach (var spec in specs)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var resident = source.LoadFloat32(spec.Descriptor, cancellationToken);
+                var resident = ResidentWeight.Load(source, spec, cancellationToken);
                 try
                 {
                     weights.Add(spec.Descriptor.Name, resident);
                     actualResidentBytes = checked(
-                        actualResidentBytes + checked((long)resident.Length * sizeof(float)));
+                        actualResidentBytes + resident.ResidentBytes);
                 }
                 catch
                 {
@@ -134,22 +139,38 @@ internal sealed class ManagedGlmModel : IDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         _ = GetDataSource();
         return residentWeights.TryGetValue(name, out var tensor)
-            ? tensor.ReadOnlySpan
+            ? tensor.GetFloatingValues()
+            : throw new KeyNotFoundException($"Resident model weight was not found: {name}");
+    }
+
+    public void MultiplyResidentWeight(
+        string name,
+        ReadOnlySpan<float> input,
+        Span<float> destination)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        _ = GetDataSource();
+        if (!residentWeights.TryGetValue(name, out var tensor))
+        {
+            throw new KeyNotFoundException($"Resident model weight was not found: {name}");
+        }
+
+        tensor.Multiply(input, destination);
+    }
+
+    public float GetResidentWeightValue(string name, int row, int column)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        _ = GetDataSource();
+        return residentWeights.TryGetValue(name, out var tensor)
+            ? tensor.GetValue(row, column)
             : throw new KeyNotFoundException($"Resident model weight was not found: {name}");
     }
 
     public void GatherEmbeddings(ReadOnlySpan<int> tokenIds, Span<float> destination)
     {
         _ = GetDataSource();
-        var configuration = Configuration;
-        ScalarKernels.GatherEmbeddings(
-            GetResidentWeight("model.embed_tokens.weight"),
-            configuration.VocabularySize,
-            configuration.HiddenSize,
-            configuration.HiddenSize,
-            tokenIds,
-            destination,
-            configuration.HiddenSize);
+        residentWeights["model.embed_tokens.weight"].GatherRows(tokenIds, destination);
     }
 
     public void NormalizeLayerInput(
@@ -191,13 +212,7 @@ internal sealed class ManagedGlmModel : IDisposable
     public void ProjectLogits(ReadOnlySpan<float> input, Span<float> destination)
     {
         _ = GetDataSource();
-        ScalarKernels.MatVec(
-            GetResidentWeight("lm_head.weight"),
-            Configuration.VocabularySize,
-            Configuration.HiddenSize,
-            Configuration.HiddenSize,
-            input,
-            destination);
+        MultiplyResidentWeight("lm_head.weight", input, destination);
     }
 
     public void RunDenseMlp(
@@ -236,29 +251,11 @@ internal sealed class ManagedGlmModel : IDisposable
         var activated = work.Slice(checked(intermediateSize * 2), intermediateSize);
         var prefix = $"model.layers.{layer}.mlp.";
 
-        ScalarKernels.MatVec(
-            GetResidentWeight($"{prefix}gate_proj.weight"),
-            intermediateSize,
-            Configuration.HiddenSize,
-            Configuration.HiddenSize,
-            input,
-            gate);
-        ScalarKernels.MatVec(
-            GetResidentWeight($"{prefix}up_proj.weight"),
-            intermediateSize,
-            Configuration.HiddenSize,
-            Configuration.HiddenSize,
-            input,
-            up);
+        MultiplyResidentWeight($"{prefix}gate_proj.weight", input, gate);
+        MultiplyResidentWeight($"{prefix}up_proj.weight", input, up);
         ScalarKernels.SiLU(gate, activated);
         ScalarKernels.Multiply(activated, up, gate);
-        ScalarKernels.MatVec(
-            GetResidentWeight($"{prefix}down_proj.weight"),
-            Configuration.HiddenSize,
-            intermediateSize,
-            intermediateSize,
-            gate,
-            destination);
+        MultiplyResidentWeight($"{prefix}down_proj.weight", gate, destination);
     }
 
     public KvCache CreateKvCache()

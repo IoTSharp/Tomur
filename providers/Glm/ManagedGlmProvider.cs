@@ -107,7 +107,7 @@ public sealed class ManagedGlmProvider : IModelFixtureProvider
         => TinyFixtureBundle.Verify(fixtureDirectory).ToResult(ProviderId);
 }
 
-internal sealed class ManagedGlmSession : ITextGenerationSession
+internal sealed class ManagedGlmSession : IChatGenerationSession
 {
     private readonly object gate = new();
     private readonly LocalModelDescriptor model;
@@ -128,7 +128,8 @@ internal sealed class ManagedGlmSession : ITextGenerationSession
     {
         this.model = model;
         this.options = options;
-        var candidate = ManagedGlmModel.Load(probe, options.ContextSize);
+        var effectiveContextSize = Math.Min(options.ContextSize, probe.Configuration.MaxPositionEmbeddings);
+        var candidate = ManagedGlmModel.Load(probe, effectiveContextSize);
         try
         {
             if (candidate.ExpertLayout.MoeLayerCount > 0)
@@ -175,70 +176,105 @@ internal sealed class ManagedGlmSession : ITextGenerationSession
         {
             ObjectDisposedException.ThrowIf(disposed, this);
             cancellationToken.ThrowIfCancellationRequested();
-            var stopwatch = Stopwatch.StartNew();
-            try
-            {
-                var preparedPrompt = new GlmPromptTemplate(loadedModel.Tokenizer)
-                    .BuildCompletion(prompt);
-                var result = generator.GenerateAsync(
-                        preparedPrompt,
-                        options,
-                        cancellationToken,
-                        onToken)
-                    .AsTask()
-                    .GetAwaiter()
-                    .GetResult();
-                stopwatch.Stop();
+            var preparedPrompt = new GlmPromptTemplate(loadedModel.Tokenizer)
+                .BuildCompletion(prompt);
+            return GeneratePrepared(preparedPrompt, options, cancellationToken, onToken);
+        }
+    }
 
-                var generatedCount = result.GeneratedTokenIds.Count;
-                Interlocked.Increment(ref requestCount);
-                Interlocked.Add(ref promptTokens, result.PromptTokenCount);
-                Interlocked.Add(ref completionTokens, generatedCount);
-                var diagnostics = BuildDiagnostics(
-                    $"prompt tokens: {result.PromptTokenCount}",
-                    $"completion tokens: {generatedCount}",
-                    $"stop reason: {result.StopReason}",
-                    $"sampling seed: {result.Seed}");
-                return new CompletionResult(
-                    result.Text,
-                    new TokenUsage(
-                        result.PromptTokenCount,
-                        generatedCount,
-                        checked(result.PromptTokenCount + generatedCount)),
-                    stopwatch.Elapsed,
-                    diagnostics);
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (InferenceException)
-            {
-                throw;
-            }
-            catch (ContextLengthExceededException exception)
-            {
-                throw new InferenceException(
-                    "managed_context_length_exceeded",
-                    exception.Message,
-                    [
-                        $"Request no more than {exception.ContextLimit} total prompt and output tokens.",
-                        "Reduce max_tokens, shorten the prompt, or create the session with a larger supported context."
-                    ],
-                    exception);
-            }
-            catch (Exception exception)
-            {
-                throw new InferenceException(
-                    "managed_inference_failed",
-                    $"Managed GLM forward execution failed: {exception.Message}",
-                    [
-                        "Verify the model manifest, tokenizer and tensor assets.",
-                        "Retry with a shorter context and inspect tomur doctor diagnostics.",
-                        "Use the existing llama.cpp provider for models that are not explicitly packaged for the managed provider."
-                    ],
-                    exception);
-            }
+    public CompletionResult GenerateChat(
+        IReadOnlyList<ChatTurn> messages,
+        CompletionOptions options,
+        CancellationToken cancellationToken,
+        Action<string>? onToken = null)
+    {
+        ArgumentNullException.ThrowIfNull(messages);
+        ArgumentNullException.ThrowIfNull(options);
+        if (!messages.Any(static message => !string.IsNullOrWhiteSpace(message.Content)))
+        {
+            throw new InferenceException(
+                "empty_prompt",
+                "The chat request does not contain a non-empty message.",
+                ["Provide at least one non-empty user message."]);
+        }
+
+        lock (gate)
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            cancellationToken.ThrowIfCancellationRequested();
+            var preparedPrompt = new GlmPromptTemplate(loadedModel.Tokenizer)
+                .BuildChat(messages);
+            return GeneratePrepared(preparedPrompt, options, cancellationToken, onToken);
+        }
+    }
+
+    private CompletionResult GeneratePrepared(
+        GlmPrompt preparedPrompt,
+        CompletionOptions options,
+        CancellationToken cancellationToken,
+        Action<string>? onToken)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            var result = generator.GenerateAsync(
+                    preparedPrompt,
+                    options,
+                    cancellationToken,
+                    onToken)
+                .AsTask()
+                .GetAwaiter()
+                .GetResult();
+            stopwatch.Stop();
+
+            var generatedCount = result.GeneratedTokenIds.Count;
+            Interlocked.Increment(ref requestCount);
+            Interlocked.Add(ref promptTokens, result.PromptTokenCount);
+            Interlocked.Add(ref completionTokens, generatedCount);
+            var diagnostics = BuildDiagnostics(
+                $"prompt tokens: {result.PromptTokenCount}",
+                $"completion tokens: {generatedCount}",
+                $"stop reason: {result.StopReason}",
+                $"sampling seed: {result.Seed}");
+            return new CompletionResult(
+                result.Text,
+                new TokenUsage(
+                    result.PromptTokenCount,
+                    generatedCount,
+                    checked(result.PromptTokenCount + generatedCount)),
+                stopwatch.Elapsed,
+                diagnostics);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (InferenceException)
+        {
+            throw;
+        }
+        catch (ContextLengthExceededException exception)
+        {
+            throw new InferenceException(
+                "managed_context_length_exceeded",
+                exception.Message,
+                [
+                    $"Request no more than {exception.ContextLimit} total prompt and output tokens.",
+                    "Reduce max_tokens, shorten the prompt, or create the session with a larger supported context."
+                ],
+                exception);
+        }
+        catch (Exception exception)
+        {
+            throw new InferenceException(
+                "managed_inference_failed",
+                $"Managed GLM forward execution failed: {exception.Message}",
+                [
+                    "Verify the model manifest, tokenizer and tensor assets.",
+                    "Retry with a shorter context and inspect tomur doctor diagnostics.",
+                    "Use the existing llama.cpp provider for models that are not explicitly packaged for the managed provider."
+                ],
+                exception);
         }
     }
 
@@ -280,6 +316,7 @@ internal sealed class ManagedGlmSession : ITextGenerationSession
         {
             $"provider: {ProviderId}",
             $"context limit requested: {options.ContextSize}",
+            $"context limit effective: {loadedModel.MemoryPlan.ContextSize}",
             $"layers: {loadedModel.Configuration.LayerCount}",
             $"routed experts: {loadedModel.Configuration.RoutedExpertCount}",
             $"tokenizer vocabulary: {loadedModel.Tokenizer.VocabularySize}",
@@ -296,6 +333,7 @@ internal sealed class ManagedGlmSession : ITextGenerationSession
             $"forward batch size: {loadedModel.MemoryPlan.ForwardBatchSize}",
             $"planned MoE workspace bytes: {loadedModel.MemoryPlan.MoeWorkspaceBytes}",
             $"expert storage format: {loadedModel.ExpertLayout.Format}",
+            $"quantization layout: {loadedModel.Manifest.QuantizationLayout}",
             $"expert cache slot bytes: {loadedModel.ExpertLayout.SlotBudgetedBytes}",
             $"load budget bytes: {loadedModel.MemoryPlan.RequiredBytes}/{loadedModel.MemoryPlan.AvailableBytes}"
         };

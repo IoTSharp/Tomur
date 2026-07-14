@@ -56,6 +56,12 @@ internal static class ModelDirectoryProbe
                 $"Managed GLM provider does not support quantization '{manifest.Quantization}'.");
         }
 
+        if (!IsSupportedQuantizationLayout(manifest.QuantizationLayout))
+        {
+            throw new InvalidDataException(
+                $"Managed GLM provider does not support quantization layout '{manifest.QuantizationLayout}'.");
+        }
+
         var modelDirectory = Path.GetDirectoryName(manifestPath)!;
         var configPath = ModelProviderManifestReader.ResolveAssetPath(modelDirectory, manifest.ConfigFile);
         var tokenizerPath = ModelProviderManifestReader.ResolveAssetPath(modelDirectory, manifest.TokenizerFile);
@@ -93,7 +99,11 @@ internal static class ModelDirectoryProbe
 
         tensorPaths.Sort(StringComparer.OrdinalIgnoreCase);
         var tensors = SafeTensorCatalog.Read(tensorPaths);
-        ValidateRequiredTensors(configuration, tensors, manifest.Quantization);
+        ValidateRequiredTensors(
+            configuration,
+            tensors,
+            manifest.Quantization,
+            manifest.QuantizationLayout);
         return new ModelProbe(
             manifest,
             configuration,
@@ -129,10 +139,15 @@ internal static class ModelDirectoryProbe
             quantization.Equals("int8", StringComparison.OrdinalIgnoreCase) ||
             quantization.Equals("int4", StringComparison.OrdinalIgnoreCase);
 
+    private static bool IsSupportedQuantizationLayout(string quantizationLayout)
+        => quantizationLayout.Equals("separate-scales", StringComparison.OrdinalIgnoreCase) ||
+            quantizationLayout.Equals("packed-offset", StringComparison.OrdinalIgnoreCase);
+
     private static void ValidateRequiredTensors(
         GlmModelConfiguration configuration,
         SafeTensorCatalog tensors,
-        string quantization)
+        string quantization,
+        string quantizationLayout)
     {
         RequireTensor(tensors, "model.embed_tokens.weight");
         RequireTensor(tensors, "model.norm.weight");
@@ -179,13 +194,19 @@ internal static class ModelDirectoryProbe
                 {
                     RequireTensor(
                         tensors,
-                        ExpertDescriptorLayout.GetScaleTensorName($"{expertPrefix}gate_proj.weight"));
+                        ExpertDescriptorLayout.GetScaleTensorName(
+                            $"{expertPrefix}gate_proj.weight",
+                            quantizationLayout));
                     RequireTensor(
                         tensors,
-                        ExpertDescriptorLayout.GetScaleTensorName($"{expertPrefix}up_proj.weight"));
+                        ExpertDescriptorLayout.GetScaleTensorName(
+                            $"{expertPrefix}up_proj.weight",
+                            quantizationLayout));
                     RequireTensor(
                         tensors,
-                        ExpertDescriptorLayout.GetScaleTensorName($"{expertPrefix}down_proj.weight"));
+                        ExpertDescriptorLayout.GetScaleTensorName(
+                            $"{expertPrefix}down_proj.weight",
+                            quantizationLayout));
                 }
             }
         }

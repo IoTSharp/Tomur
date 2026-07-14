@@ -1,5 +1,9 @@
 using System.Text;
+using Microsoft.Extensions.Logging.Abstractions;
+using Tomur.Config;
+using Tomur.Hardware;
 using Tomur.Inference;
+using Tomur.Native;
 using Tomur.Providers;
 using Tomur.Providers.Glm;
 using Tomur.Runtime;
@@ -101,6 +105,67 @@ public sealed class ForwardGenerationTests
         Assert.Equal((long)result.Usage.PromptTokens, snapshot.PromptTokens);
         Assert.Equal((long)result.Usage.CompletionTokens, snapshot.CompletionTokens);
         Assert.Contains(snapshot.Diagnostics, value => value.StartsWith("expert cache hit/miss/eviction:", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void LocalInferenceChatUsesManagedGlmRoleTemplate()
+    {
+        using var fixture = new GenerationFixture();
+        fixture.EnableChatRoleTokens();
+        var providerDirectory = Path.GetDirectoryName(typeof(ManagedGlmProvider).Assembly.Location)!;
+        var previousProviderPath = Environment.GetEnvironmentVariable(
+            ModelProviderRegistry.ProviderPathEnvironmentVariable);
+        Environment.SetEnvironmentVariable(
+            ModelProviderRegistry.ProviderPathEnvironmentVariable,
+            providerDirectory);
+
+        try
+        {
+            using var registry = ModelProviderRegistry.CreateDefault();
+            var paths = new DataPaths(new PathOptions { DataDirectory = fixture.Path });
+            var configurationStore = new ConfigurationStore(paths);
+            var nativeProbe = new NativeBundleProbe(paths);
+            var resolver = new NativeLibraryResolver(nativeProbe);
+            var importResolver = new LlamaImportResolver(resolver);
+            var backendInitializer = new LlamaBackendInitializer(
+                importResolver,
+                resolver,
+                configurationStore);
+            var accelerationService = new HardwareAccelerationService(
+                backendInitializer,
+                nativeProbe,
+                configurationStore);
+            using var sessionManager = new SessionManager(
+                backendInitializer,
+                accelerationService,
+                registry,
+                NullLogger<SessionManager>.Instance);
+            var inference = new LocalInferenceService(sessionManager);
+            ChatTurn[] messages =
+            [
+                new("system", "hello"),
+                new("user", "Tomur")
+            ];
+            var options = CreateOptions(1, temperature: 0, seed: 5);
+
+            var result = inference.Chat(
+                fixture.Descriptor,
+                messages,
+                options,
+                CancellationToken.None);
+
+            var tokenizer = ManagedTokenizer.Read(
+                Path.Combine(fixture.Path, TinyFixtureFiles.Tokenizer));
+            var expectedPrompt = new GlmPromptTemplate(tokenizer).BuildChat(messages);
+            Assert.Equal(expectedPrompt.TokenIds.Count, result.Usage.PromptTokens);
+            Assert.Contains(result.Diagnostics, value => value == "provider: managed-glm");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(
+                ModelProviderRegistry.ProviderPathEnvironmentVariable,
+                previousProviderPath);
+        }
     }
 
     [Fact]
@@ -261,6 +326,17 @@ internal sealed class GenerationFixture : IDisposable
             ModelDirectoryProbe.Read(Descriptor, ManagedGlmProvider.ProviderId),
             Oracle.ModelConfiguration.ContextSize,
             long.MaxValue);
+
+    public void EnableChatRoleTokens()
+    {
+        var tokenizerPath = System.IO.Path.Combine(Path, TinyFixtureFiles.Tokenizer);
+        var json = File.ReadAllText(tokenizerPath)
+            .Replace("\"world\": 5", "\"<|system|>\": 5", StringComparison.Ordinal)
+            .Replace("\"本地\": 7", "\"<|user|>\": 7", StringComparison.Ordinal)
+            .Replace("\"AI\": 8", "\"<|assistant|>\": 8", StringComparison.Ordinal)
+            .Replace("\"!\": 9", "\"<|observation|>\": 9", StringComparison.Ordinal);
+        File.WriteAllText(tokenizerPath, json);
+    }
 
     public void Dispose()
     {

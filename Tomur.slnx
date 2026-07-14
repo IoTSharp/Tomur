@@ -1,6 +1,7 @@
 <Solution>
   <Project Path="app/Tomur.csproj" />
   <Project Path="providers/Glm/Tomur.Providers.Glm.csproj" />
+  <Project Path="providers/Olmoe/Tomur.Providers.Olmoe.csproj" />
   <Project Path="tests/Tomur.Providers.M1.Tests/Tomur.Providers.M1.Tests.csproj" />
   <Project Path="tests/Tomur.Providers.M2.Tests/Tomur.Providers.M2.Tests.csproj" />
   <Project Path="tests/Tomur.Providers.M3.Tests/Tomur.Providers.M3.Tests.csproj" />
@@ -10,4 +11,5 @@
   <Project Path="tests/Tomur.Providers.M7.Tests/Tomur.Providers.M7.Tests.csproj" />
   <Project Path="tests/Tomur.Providers.M8.Tests/Tomur.Providers.M8.Tests.csproj" />
   <Project Path="tests/Tomur.Providers.M9.Tests/Tomur.Providers.M9.Tests.csproj" />
+  <Project Path="tests/Tomur.Providers.Olmoe.Tests/Tomur.Providers.Olmoe.Tests.csproj" />
 </Solution>

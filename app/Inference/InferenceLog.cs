@@ -4,7 +4,7 @@ namespace Tomur.Inference;
 
 /// <summary>
 /// Source-generated log messages for the inference domain (native backend init,
-/// llama session lifecycle, native model/context/generation). Using
+/// text-generation session lifecycle and native model/context/generation). Using
 /// <c>[LoggerMessage]</c> keeps these allocation-free and Native-AOT/trim safe.
 /// EventId range: 1000-1199.
 /// </summary>
@@ -31,20 +31,20 @@ internal static partial class InferenceLog
     public static partial void ImportResolverFallback(this ILogger logger, string library);
 
     [LoggerMessage(EventId = 1100, Level = LogLevel.Information,
-        Message = "loading llama session model={Model} ctx={ContextSize} gpuLayers={GpuLayers} accelerator={Accelerator}")]
+        Message = "loading text generation session model={Model} ctx={ContextSize} gpuLayers={GpuLayers} runtime={Runtime}")]
     public static partial void SessionLoading(
-        this ILogger logger, string model, int contextSize, int gpuLayers, string accelerator);
+        this ILogger logger, string model, int contextSize, int gpuLayers, string runtime);
 
     [LoggerMessage(EventId = 1101, Level = LogLevel.Information,
-        Message = "llama session ready model={Model} elapsedMs={ElapsedMs}")]
+        Message = "text generation session ready model={Model} elapsedMs={ElapsedMs}")]
     public static partial void SessionLoaded(this ILogger logger, string model, long elapsedMs);
 
     [LoggerMessage(EventId = 1102, Level = LogLevel.Error,
-        Message = "llama session load failed model={Model}")]
+        Message = "text generation session load failed model={Model}")]
     public static partial void SessionLoadFailed(this ILogger logger, string model, Exception exception);
 
     [LoggerMessage(EventId = 1103, Level = LogLevel.Information,
-        Message = "llama session unloaded model={Model}")]
+        Message = "text generation session unloaded model={Model}")]
     public static partial void SessionUnloaded(this ILogger logger, string model);
 
     [LoggerMessage(EventId = 1110, Level = LogLevel.Error,

@@ -42,7 +42,7 @@ internal sealed class FloatingExpertWeightBuffer : ExpertWeightBuffer
     private float[]? down;
     private bool loaded;
 
-    public FloatingExpertWeightBuffer(GlmModelConfiguration configuration)
+    public FloatingExpertWeightBuffer(ExpertLayoutConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(configuration);
         hiddenSize = configuration.HiddenSize;
@@ -198,15 +198,18 @@ internal sealed class QuantizedExpertWeightBuffer : ExpertWeightBuffer
             new QuantizedTensorShape(
                 quantizedFormat,
                 layout.Configuration.MoeIntermediateSize,
-                layout.Configuration.HiddenSize),
+                layout.Configuration.HiddenSize,
+                layout.ValueEncoding),
             new QuantizedTensorShape(
                 quantizedFormat,
                 layout.Configuration.MoeIntermediateSize,
-                layout.Configuration.HiddenSize),
+                layout.Configuration.HiddenSize,
+                layout.ValueEncoding),
             new QuantizedTensorShape(
                 quantizedFormat,
                 layout.Configuration.HiddenSize,
-                layout.Configuration.MoeIntermediateSize));
+                layout.Configuration.MoeIntermediateSize,
+                layout.ValueEncoding));
     }
 
     public override long BudgetedBytes => slab.BudgetedBytes;

@@ -119,6 +119,75 @@ public sealed class TensorStorageTests
     }
 
     [Fact]
+    public void PackedOffsetResidentWeightStaysCompressedAndUsesQsScales()
+    {
+        using var directory = new TemporaryDirectory();
+        var path = SafeTensorTestFile.Write(
+            directory.Path,
+            new TestTensor("matrix.weight", "U8", [2], [0x80, 0xf7]),
+            new TestTensor("matrix.weight.qs", "F32", [1], SafeTensorTestFile.Float32([0.5f])));
+        var catalog = SafeTensorCatalog.Read([path]);
+        var shape = new QuantizedTensorShape(
+            QuantizedTensorFormat.Int4,
+            rows: 1,
+            columns: 4,
+            QuantizedValueEncoding.OffsetBinary);
+        var quantized = new QuantizedTensorDescriptor(
+            catalog.GetRequired("matrix.weight"),
+            catalog.GetRequired("matrix.weight.qs"),
+            shape);
+        var spec = new ResidentWeightSpec(catalog.GetRequired("matrix.weight"), quantized);
+        using var source = new TensorDataSource(catalog);
+        using var resident = ResidentWeight.Load(source, spec, CancellationToken.None);
+        float[] product = [0];
+        var row = new float[4];
+
+        resident.Multiply([1, 1, 1, 1], product);
+        resident.GatherRows([0], row);
+
+        Assert.Equal(6L, resident.ResidentBytes);
+        Assert.Equal(-1.0f, product[0]);
+        Assert.Equal(new[] { -4.0f, 0.0f, -0.5f, 3.5f }, row);
+        Assert.Equal(3.5f, resident.GetValue(0, 3));
+        Assert.Equal("matrix.weight.qs", ExpertDescriptorLayout.GetScaleTensorName(
+            "matrix.weight",
+            "packed-offset"));
+        Assert.Equal(
+            QuantizedTensorFormat.Int4,
+            ResidentWeightLayout.ResolvePackedFormat(
+                catalog.GetRequired("matrix.weight"),
+                rows: 1,
+                columns: 4,
+                declaredQuantization: "int4"));
+    }
+
+    [Fact]
+    public void PackedResidentFormatDetectsMixedInt8AndInt4ByPayloadLength()
+    {
+        using var directory = new TemporaryDirectory();
+        var path = SafeTensorTestFile.Write(
+            directory.Path,
+            new TestTensor("io.weight", "U8", [4], [0xff, 0x00, 0x01, 0x02]),
+            new TestTensor("dense.weight", "U8", [2], [0x80, 0xf7]));
+        var catalog = SafeTensorCatalog.Read([path]);
+
+        Assert.Equal(
+            QuantizedTensorFormat.Int8,
+            ResidentWeightLayout.ResolvePackedFormat(
+                catalog.GetRequired("io.weight"),
+                rows: 1,
+                columns: 4,
+                declaredQuantization: "int4"));
+        Assert.Equal(
+            QuantizedTensorFormat.Int4,
+            ResidentWeightLayout.ResolvePackedFormat(
+                catalog.GetRequired("dense.weight"),
+                rows: 1,
+                columns: 4,
+                declaredQuantization: "int4"));
+    }
+
+    [Fact]
     public void BoundsOverflowTruncationAndDisposedStateFailExplicitly()
     {
         using var directory = new TemporaryDirectory();

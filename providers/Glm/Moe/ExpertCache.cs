@@ -98,11 +98,30 @@ internal sealed class ExpertCache : IDisposable
         TensorDataSource source,
         ModelMemoryPlan memoryPlan,
         ExpertCacheOptions options)
+        : this(layout, source, memoryPlan.AvailableBytes, memoryPlan.RequiredBytes, options)
+    {
+    }
+
+    public ExpertCache(
+        ExpertDescriptorLayout layout,
+        TensorDataSource source,
+        long availableMemoryBytes,
+        long requiredMemoryBytes,
+        ExpertCacheOptions options)
     {
         ArgumentNullException.ThrowIfNull(layout);
         ArgumentNullException.ThrowIfNull(source);
-        ArgumentNullException.ThrowIfNull(memoryPlan);
         ArgumentNullException.ThrowIfNull(options);
+        if (availableMemoryBytes < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(availableMemoryBytes));
+        }
+
+        if (requiredMemoryBytes < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(requiredMemoryBytes));
+        }
+
         options.Validate();
         this.layout = layout;
         this.source = source;
@@ -112,7 +131,7 @@ internal sealed class ExpertCache : IDisposable
             throw new InvalidOperationException("The model has no MoE layers and does not require an expert cache.");
         }
 
-        var afterModel = Math.Max(0, memoryPlan.AvailableBytes - memoryPlan.RequiredBytes);
+        var afterModel = Math.Max(0, availableMemoryBytes - requiredMemoryBytes);
         var available = Math.Max(0, afterModel - options.SafetyMarginBytes);
         var minimumBytes = checked(
             layout.SlotBudgetedBytes *

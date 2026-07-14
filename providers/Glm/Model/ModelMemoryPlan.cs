@@ -40,7 +40,7 @@ internal sealed record ModelMemoryPlan(
         long residentBytes = 0;
         foreach (var weight in residentWeights)
         {
-            residentBytes = checked(residentBytes + checked(weight.Descriptor.ElementCount * sizeof(float)));
+            residentBytes = checked(residentBytes + weight.ResidentBytes);
         }
 
         var kvElementsPerToken = checked(

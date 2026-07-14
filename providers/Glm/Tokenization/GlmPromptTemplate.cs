@@ -14,6 +14,8 @@ internal sealed class GlmPromptTemplate
     private static readonly string[] UserTokens = ["<|user|>"];
     private static readonly string[] AssistantTokens = ["<|assistant|>"];
     private static readonly string[] ObservationTokens = ["<|observation|>", "<|tool|>"];
+    private const string ThinkStartToken = "<think>";
+    private const string ThinkEndToken = "</think>";
     private readonly ManagedTokenizer tokenizer;
 
     public GlmPromptTemplate(ManagedTokenizer tokenizer)
@@ -50,13 +52,18 @@ internal sealed class GlmPromptTemplate
         foreach (var message in normalized)
         {
             tokens.Add(RequireRoleToken(message.Role));
-            tokens.AddRange(tokenizer.Encode(string.Concat("\n", message.Content)));
+            tokens.AddRange(tokenizer.Encode(message.Content));
         }
 
         if (!string.Equals(normalized[^1].Role, "assistant", StringComparison.Ordinal))
         {
             tokens.Add(RequireRoleToken("assistant"));
-            tokens.AddRange(tokenizer.Encode("\n"));
+            if (tokenizer.TryGetTokenId(ThinkStartToken, out var thinkStart) &&
+                tokenizer.TryGetTokenId(ThinkEndToken, out var thinkEnd))
+            {
+                tokens.Add(thinkStart);
+                tokens.Add(thinkEnd);
+            }
         }
 
         return new GlmPrompt(tokens, ResolveStopTokenIds());

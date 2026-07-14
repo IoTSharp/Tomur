@@ -307,8 +307,10 @@ internal static class ServeCommand
         }
 
         var paths = basePaths.WithConfiguration(configuration.Configuration);
+        using var providerRegistry = ModelProviderRegistry.CreateDefault();
+        var managedProviderAvailable = providerRegistry.Status.Loaded.Count > 0;
         var prepareResult = new NativeBundlePreparer(paths).Prepare();
-        if (prepareResult.Status == "error")
+        if (prepareResult.Status == "error" && !managedProviderAvailable)
         {
             error = $"Native runtime bundle could not be prepared. {prepareResult.Message}";
             return false;
@@ -327,10 +329,14 @@ internal static class ServeCommand
         };
         var nativeBundleProbe = new NativeBundleProbe(paths);
         var startupStatus = new RuntimeDiagnosticsProvider(configurationStore, paths, nativeBundleProbe, serverOptions).GetRuntimeStatus();
-        if (startupStatus.Status == "error")
+        var blockingDiagnostics = startupStatus.Diagnostics
+            .Where(item =>
+                item.Severity == "error" &&
+                (!managedProviderAvailable || !IsNativeOnlyStartupDiagnostic(item.Name)))
+            .ToArray();
+        if (blockingDiagnostics.Length > 0)
         {
-            var diagnostics = startupStatus.Diagnostics
-                .Where(static item => item.Severity == "error")
+            var diagnostics = blockingDiagnostics
                 .Select(static item => $"  - {item.Name}: {item.Message}");
             error = "Local runtime state could not be initialized." + Environment.NewLine + string.Join(Environment.NewLine, diagnostics);
             return false;
@@ -340,6 +346,10 @@ internal static class ServeCommand
         error = string.Empty;
         return true;
     }
+
+    private static bool IsNativeOnlyStartupDiagnostic(string name)
+        => name.Equals("runtime", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("acceleration", StringComparison.OrdinalIgnoreCase);
 
     private static string[] FilterHostArgs(string[] args)
     {

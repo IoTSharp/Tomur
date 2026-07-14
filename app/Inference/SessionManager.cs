@@ -58,23 +58,45 @@ public sealed class SessionManager : IDisposable
 
             if (string.Equals(model.Format, "managed-model", StringComparison.OrdinalIgnoreCase))
             {
-                var loaderDiagnostics = providerRegistry.Diagnostics
-                    .Select(static item => $"{item.Code}: {item.Message}")
-                    .ToArray();
-                throw new InferenceException(
-                    "managed_provider_unavailable",
-                    $"No managed model provider is available for architecture '{model.Family}'.",
-                    loaderDiagnostics.Length == 0
-                        ?
-                        [
-                            $"Place the matching provider DLL in '{Path.Combine(AppContext.BaseDirectory, "providers")}'.",
-                            $"Alternatively set {ModelProviderRegistry.ProviderPathEnvironmentVariable} to the provider output directory."
-                        ]
-                        : loaderDiagnostics);
+                ThrowManagedProviderUnavailable(model);
             }
 
             var session = GetOrLoadCore(model, embeddings: false, options.ContextSize);
             return session.Generate(prompt, options, cancellationToken, onToken);
+        }
+    }
+
+    internal CompletionResult Chat(
+        LocalModelDescriptor model,
+        IReadOnlyList<ChatTurn> messages,
+        string fallbackPrompt,
+        CompletionOptions managedOptions,
+        CompletionOptions fallbackOptions,
+        CancellationToken cancellationToken,
+        Action<string>? onToken = null)
+    {
+        ArgumentNullException.ThrowIfNull(messages);
+        ArgumentNullException.ThrowIfNull(managedOptions);
+        ArgumentNullException.ThrowIfNull(fallbackOptions);
+
+        lock (gate)
+        {
+            var provider = providerRegistry.FindTextProvider(model);
+            if (provider is not null)
+            {
+                var managedSession = GetOrLoadManagedCore(provider, model, managedOptions.ContextSize);
+                return managedSession is IChatGenerationSession chatSession
+                    ? chatSession.GenerateChat(messages, managedOptions, cancellationToken, onToken)
+                    : managedSession.Generate(fallbackPrompt, managedOptions, cancellationToken, onToken);
+            }
+
+            if (string.Equals(model.Format, "managed-model", StringComparison.OrdinalIgnoreCase))
+            {
+                ThrowManagedProviderUnavailable(model);
+            }
+
+            var session = GetOrLoadCore(model, embeddings: false, fallbackOptions.ContextSize);
+            return session.Generate(fallbackPrompt, fallbackOptions, cancellationToken, onToken);
         }
     }
 
@@ -179,7 +201,7 @@ public sealed class SessionManager : IDisposable
         int contextSize)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
-        var effectiveContextSize = Math.Clamp(contextSize, 512, 131072);
+        var effectiveContextSize = Math.Clamp(contextSize, 1, 131072);
         if (currentManagedSession is not null &&
             string.Equals(currentProviderId, provider.Id, StringComparison.OrdinalIgnoreCase) &&
             string.Equals(currentModelId, model.Id, StringComparison.OrdinalIgnoreCase) &&
@@ -272,6 +294,23 @@ public sealed class SessionManager : IDisposable
     private static bool IsNpuDeviceName(string? value)
         => !string.IsNullOrWhiteSpace(value) &&
             value.Trim().StartsWith("NPU", StringComparison.OrdinalIgnoreCase);
+
+    private void ThrowManagedProviderUnavailable(LocalModelDescriptor model)
+    {
+        var loaderDiagnostics = providerRegistry.Diagnostics
+            .Select(static item => $"{item.Code}: {item.Message}")
+            .ToArray();
+        throw new InferenceException(
+            "managed_provider_unavailable",
+            $"No managed model provider is available for architecture '{model.Family}'.",
+            loaderDiagnostics.Length == 0
+                ?
+                [
+                    $"Place the matching provider DLL in '{Path.Combine(AppContext.BaseDirectory, "providers")}'.",
+                    $"Alternatively set {ModelProviderRegistry.ProviderPathEnvironmentVariable} to the provider output directory."
+                ]
+                : loaderDiagnostics);
+    }
 
     public void Unload()
     {

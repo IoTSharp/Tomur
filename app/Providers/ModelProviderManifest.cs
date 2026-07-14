@@ -15,6 +15,7 @@ public sealed class ModelProviderManifest
         string tokenizerFile,
         string tensorPattern,
         string quantization,
+        string quantizationLayout,
         IReadOnlyList<string> capabilities)
     {
         SchemaVersion = schemaVersion;
@@ -25,6 +26,7 @@ public sealed class ModelProviderManifest
         TokenizerFile = tokenizerFile;
         TensorPattern = tensorPattern;
         Quantization = quantization;
+        QuantizationLayout = quantizationLayout;
         Capabilities = capabilities;
     }
 
@@ -43,6 +45,8 @@ public sealed class ModelProviderManifest
     public string TensorPattern { get; }
 
     public string Quantization { get; }
+
+    public string QuantizationLayout { get; }
 
     public IReadOnlyList<string> Capabilities { get; }
 }
@@ -106,6 +110,7 @@ public static class ModelProviderManifestReader
                 !TryGetOptionalString(root, "tokenizer", "tokenizer.json", out var tokenizerFile, out error) ||
                 !TryGetOptionalString(root, "tensor_pattern", "*.safetensors", out var tensorPattern, out error) ||
                 !TryGetOptionalString(root, "quantization", "unknown", out var quantization, out error) ||
+                !TryGetOptionalString(root, "quantization_layout", "separate-scales", out var quantizationLayout, out error) ||
                 !TryGetStringArray(root, "capabilities", out var capabilities, out error))
             {
                 return false;
@@ -138,6 +143,7 @@ public static class ModelProviderManifestReader
                 tokenizerFile,
                 tensorPattern,
                 quantization,
+                quantizationLayout,
                 capabilities);
             return true;
         }

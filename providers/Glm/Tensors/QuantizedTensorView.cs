@@ -6,9 +6,19 @@ internal enum QuantizedTensorFormat
     Int4
 }
 
+internal enum QuantizedValueEncoding
+{
+    TwosComplement,
+    OffsetBinary
+}
+
 internal readonly struct QuantizedTensorShape
 {
-    public QuantizedTensorShape(QuantizedTensorFormat format, int rows, int columns)
+    public QuantizedTensorShape(
+        QuantizedTensorFormat format,
+        int rows,
+        int columns,
+        QuantizedValueEncoding valueEncoding = QuantizedValueEncoding.TwosComplement)
     {
         if (rows <= 0)
         {
@@ -21,6 +31,7 @@ internal readonly struct QuantizedTensorShape
         }
 
         Format = format;
+        ValueEncoding = valueEncoding;
         Rows = rows;
         Columns = columns;
         var storedColumns = format switch
@@ -33,6 +44,8 @@ internal readonly struct QuantizedTensorShape
     }
 
     public QuantizedTensorFormat Format { get; }
+
+    public QuantizedValueEncoding ValueEncoding { get; }
 
     public int Rows { get; }
 
@@ -142,6 +155,8 @@ internal readonly ref struct QuantizedTensorView
         var storedColumns = (Shape.Columns + 1) / 2;
         var packed = Payload[(row * storedColumns) + (column / 2)];
         var nibble = (column & 1) == 0 ? packed & 0x0f : packed >> 4;
-        return nibble >= 8 ? nibble - 16 : nibble;
+        return Shape.ValueEncoding == QuantizedValueEncoding.OffsetBinary
+            ? nibble - 8
+            : nibble >= 8 ? nibble - 16 : nibble;
     }
 }

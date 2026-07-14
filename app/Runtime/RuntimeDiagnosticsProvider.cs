@@ -221,6 +221,24 @@ public sealed class RuntimeDiagnosticsProvider
 
     private RuntimeDiagnostic GetRuntimeDiagnostic(NativeBundleProbeResult nativeBundle)
     {
+        var snapshot = inferenceService?.GetSnapshot();
+        if (snapshot is { Loaded: true })
+        {
+            return new RuntimeDiagnostic(
+                "ok",
+                "runtime_loaded",
+                $"Local {snapshot.Mode ?? "model"} session is loaded for model '{snapshot.ModelId}'.",
+                snapshot.ModelId,
+                [
+                    $"Loaded at: {snapshot.LoadedAt:O}",
+                    $"Mode: {snapshot.Mode ?? "unknown"}",
+                    $"Requests handled: {snapshot.RequestCount}",
+                    $"Prompt tokens: {snapshot.PromptTokens}",
+                    $"Completion tokens: {snapshot.CompletionTokens}",
+                    .. snapshot.Diagnostics
+                ]);
+        }
+
         var llama = nativeBundle.Components.FirstOrDefault(static component =>
             string.Equals(component.Id, "llama", StringComparison.OrdinalIgnoreCase));
         if (llama is null || !string.Equals(llama.Status, "ok", StringComparison.OrdinalIgnoreCase))
@@ -236,44 +254,14 @@ public sealed class RuntimeDiagnosticsProvider
                 ]);
         }
 
-        var snapshot = inferenceService?.GetSnapshot();
-        if (snapshot is null)
-        {
-            return new RuntimeDiagnostic(
-                "available",
-                "runtime_ready",
-                "Local llama.cpp runtime is prepared. No model session is loaded yet.",
-                null,
-                [
-                    "Send a chat, completion or embedding request with a visible local GGUF model to load the first session.",
-                    "Use tomur ps to inspect visible model files."
-                ]);
-        }
-
-        if (!snapshot.Loaded)
-        {
-            return new RuntimeDiagnostic(
-                "available",
-                "runtime_ready",
-                "Local llama.cpp runtime is prepared. No model session is loaded yet.",
-                null,
-                [
-                    "Send a chat, completion or embedding request with a visible local GGUF model to load the first session.",
-                    "Use tomur ps to inspect visible model files."
-                ]);
-        }
-
         return new RuntimeDiagnostic(
-            "ok",
-            "runtime_loaded",
-            $"Local llama.cpp {snapshot.Mode ?? "session"} session is loaded for model '{snapshot.ModelId}'.",
-            snapshot.ModelId,
+            "available",
+            "runtime_ready",
+            "Local llama.cpp runtime is prepared. No model session is loaded yet.",
+            null,
             [
-                $"Loaded at: {snapshot.LoadedAt:O}",
-                $"Mode: {snapshot.Mode ?? "unknown"}",
-                $"Requests handled: {snapshot.RequestCount}",
-                $"Prompt tokens: {snapshot.PromptTokens}",
-                $"Completion tokens: {snapshot.CompletionTokens}"
+                "Send a chat, completion or embedding request with a visible local GGUF model to load the first session.",
+                "Use tomur ps to inspect visible model files."
             ]);
     }
 

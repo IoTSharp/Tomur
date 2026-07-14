@@ -11,14 +11,34 @@ internal sealed class MoeWorkspace : IDisposable
     private float[]? outputs;
 
     public MoeWorkspace(GlmModelConfiguration configuration)
+        : this(
+            configuration.HiddenSize,
+            configuration.RoutedExpertCount,
+            configuration.ExpertsPerToken,
+            configuration.MoeIntermediateSize,
+            checked(configuration.SharedExpertCount * configuration.MoeIntermediateSize))
     {
-        ArgumentNullException.ThrowIfNull(configuration);
-        HiddenSize = configuration.HiddenSize;
-        RoutedExpertCount = configuration.RoutedExpertCount;
-        ExpertsPerToken = configuration.ExpertsPerToken;
-        MoeIntermediateSize = configuration.MoeIntermediateSize;
-        SharedIntermediateSize = checked(
-            configuration.SharedExpertCount * configuration.MoeIntermediateSize);
+    }
+
+    public MoeWorkspace(
+        int hiddenSize,
+        int routedExpertCount,
+        int expertsPerToken,
+        int moeIntermediateSize,
+        int sharedIntermediateSize = 0)
+    {
+        if (hiddenSize <= 0 || routedExpertCount <= 0 ||
+            expertsPerToken <= 0 || expertsPerToken > routedExpertCount ||
+            moeIntermediateSize <= 0 || sharedIntermediateSize < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(hiddenSize), "MoE workspace dimensions are invalid.");
+        }
+
+        HiddenSize = hiddenSize;
+        RoutedExpertCount = routedExpertCount;
+        ExpertsPerToken = expertsPerToken;
+        MoeIntermediateSize = moeIntermediateSize;
+        SharedIntermediateSize = sharedIntermediateSize;
         ActivationIntermediateCapacity = Math.Max(MoeIntermediateSize, SharedIntermediateSize);
 
         float[]? rentedRouter = null;
@@ -96,18 +116,30 @@ internal sealed class MoeWorkspace : IDisposable
     internal Span<float> ExpertOutput => GetOutputs().AsSpan(checked(HiddenSize * 2), HiddenSize);
 
     internal void EnsureCompatible(GlmModelConfiguration configuration)
+        => EnsureCompatible(
+            configuration.HiddenSize,
+            configuration.RoutedExpertCount,
+            configuration.ExpertsPerToken,
+            configuration.MoeIntermediateSize,
+            checked(configuration.SharedExpertCount * configuration.MoeIntermediateSize));
+
+    internal void EnsureCompatible(
+        int hiddenSize,
+        int routedExpertCount,
+        int expertsPerToken,
+        int moeIntermediateSize,
+        int sharedIntermediateSize = 0)
     {
-        ArgumentNullException.ThrowIfNull(configuration);
         _ = GetRouterValues();
         _ = GetSelectedWeights();
         _ = GetSelectedExpertIds();
         _ = GetActivations();
         _ = GetOutputs();
-        if (HiddenSize != configuration.HiddenSize ||
-            RoutedExpertCount != configuration.RoutedExpertCount ||
-            ExpertsPerToken != configuration.ExpertsPerToken ||
-            MoeIntermediateSize != configuration.MoeIntermediateSize ||
-            SharedIntermediateSize != checked(configuration.SharedExpertCount * configuration.MoeIntermediateSize))
+        if (HiddenSize != hiddenSize ||
+            RoutedExpertCount != routedExpertCount ||
+            ExpertsPerToken != expertsPerToken ||
+            MoeIntermediateSize != moeIntermediateSize ||
+            SharedIntermediateSize != sharedIntermediateSize)
         {
             throw new ArgumentException("MoE workspace dimensions do not match the model configuration.");
         }
@@ -134,7 +166,14 @@ internal sealed class MoeWorkspace : IDisposable
                 checked(configuration.SharedExpertCount * configuration.MoeIntermediateSize)));
     }
 
-    private static long GetBudgetedBytes(
+    public static long GetBudgetedBytes(
+        int hiddenSize,
+        int routedExpertCount,
+        int expertsPerToken,
+        int intermediateSize)
+        => CalculateBudgetedBytes(hiddenSize, routedExpertCount, expertsPerToken, intermediateSize);
+
+    private static long CalculateBudgetedBytes(
         int hiddenSize,
         int routedExpertCount,
         int expertsPerToken,

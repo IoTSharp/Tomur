@@ -112,6 +112,31 @@ public sealed class ScalarKernelTests
     }
 
     [Fact]
+    public void OffsetBinaryInt4UsesMinusEightNibbleBias()
+    {
+        var shape = new QuantizedTensorShape(
+            QuantizedTensorFormat.Int4,
+            rows: 1,
+            columns: 4,
+            QuantizedValueEncoding.OffsetBinary);
+        byte[] payload = [0x80, 0xf7];
+        var view = new QuantizedTensorView(shape, payload, [0.5f]);
+        float[] output = [0];
+
+        ScalarKernels.Int4DequantMatVec(view, [1, 1, 1, 1], output);
+
+        int[] values =
+        [
+            view.GetQuantizedValue(0, 0),
+            view.GetQuantizedValue(0, 1),
+            view.GetQuantizedValue(0, 2),
+            view.GetQuantizedValue(0, 3)
+        ];
+        Assert.Equal(new[] { -8, 0, -1, 7 }, values);
+        Assert.Equal(-1.0f, output[0]);
+    }
+
+    [Fact]
     public void ActivationQuantizationUsesTiesToEvenAndStableZeroScale()
     {
         float[] input = [127.0f, 2.5f, 3.5f, -2.5f, -3.5f, 0.0f];

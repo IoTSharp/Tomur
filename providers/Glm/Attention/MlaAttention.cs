@@ -98,13 +98,7 @@ internal static class MlaAttention
 
             var prefix = $"model.layers.{layer}.self_attn.";
             var queryLatent = firstTemporary[..configuration.QueryLoraRank];
-            ScalarKernels.MatVec(
-                model.GetResidentWeight($"{prefix}q_a_proj.weight"),
-                configuration.QueryLoraRank,
-                configuration.HiddenSize,
-                configuration.HiddenSize,
-                input,
-                queryLatent);
+            model.MultiplyResidentWeight($"{prefix}q_a_proj.weight", input, queryLatent);
             var queryLatentTrace = trace is null ? null : queryLatent.ToArray();
 
             var normalizedQueryLatent = secondTemporary[..configuration.QueryLoraRank];
@@ -116,11 +110,8 @@ internal static class MlaAttention
             var normalizedQueryLatentTrace = trace is null
                 ? null
                 : normalizedQueryLatent.ToArray();
-            ScalarKernels.MatVec(
-                model.GetResidentWeight($"{prefix}q_b_proj.weight"),
-                queryProjectionSize,
-                configuration.QueryLoraRank,
-                configuration.QueryLoraRank,
+            model.MultiplyResidentWeight(
+                $"{prefix}q_b_proj.weight",
                 normalizedQueryLatent,
                 queryHeads);
             for (var head = 0; head < configuration.AttentionHeadCount; head++)
@@ -137,11 +128,8 @@ internal static class MlaAttention
             cancellationToken.ThrowIfCancellationRequested();
 
             var keyValueInput = firstTemporary[..keyValueInputSize];
-            ScalarKernels.MatVec(
-                model.GetResidentWeight($"{prefix}kv_a_proj_with_mqa.weight"),
-                keyValueInputSize,
-                configuration.HiddenSize,
-                configuration.HiddenSize,
+            model.MultiplyResidentWeight(
+                $"{prefix}kv_a_proj_with_mqa.weight",
                 input,
                 keyValueInput);
             var keyValueLatent = keyValueInput[..configuration.KeyValueLoraRank];
@@ -176,7 +164,7 @@ internal static class MlaAttention
                 : new float[checked(configuration.AttentionHeadCount * validTokenCount)];
             context.Clear();
             var inverseScale = 1.0 / Math.Sqrt(queryHeadSize);
-            var keyValueProjection = model.GetResidentWeight($"{prefix}kv_b_proj.weight");
+            var keyValueProjectionName = $"{prefix}kv_b_proj.weight";
             for (var head = 0; head < configuration.AttentionHeadCount; head++)
             {
                 var scores = workspace.GetScores(validTokenCount);
@@ -190,12 +178,12 @@ internal static class MlaAttention
                         double sum = 0;
                         for (var component = 0; component < configuration.QueryKeyNopeHeadSize; component++)
                         {
-                            var weightOffset = checked(
-                                ((keyValueOffset + component) * configuration.KeyValueLoraRank) +
-                                latent);
                             sum +=
                                 (double)queryHeads[queryOffset + component] *
-                                keyValueProjection[weightOffset];
+                                model.GetResidentWeightValue(
+                                    keyValueProjectionName,
+                                    keyValueOffset + component,
+                                    latent);
                         }
 
                         compressedQuery[latent] = (float)sum;
@@ -213,11 +201,8 @@ internal static class MlaAttention
                     var cachedCompressed = cache.GetCompressed(layer, tokenIndex);
                     if (mode == MlaAttentionMode.Reference)
                     {
-                        ScalarKernels.MatVec(
-                            keyValueProjection,
-                            keyValueProjectionSize,
-                            configuration.KeyValueLoraRank,
-                            configuration.KeyValueLoraRank,
+                        model.MultiplyResidentWeight(
+                            keyValueProjectionName,
                             cachedCompressed,
                             keyValueExpansion);
                         for (var component = 0; component < configuration.QueryKeyNopeHeadSize; component++)
@@ -284,11 +269,8 @@ internal static class MlaAttention
                                 cancellationToken.ThrowIfCancellationRequested();
                             }
 
-                            ScalarKernels.MatVec(
-                                keyValueProjection,
-                                keyValueProjectionSize,
-                                configuration.KeyValueLoraRank,
-                                configuration.KeyValueLoraRank,
+                            model.MultiplyResidentWeight(
+                                keyValueProjectionName,
                                 cache.GetCompressed(layer, tokenIndex),
                                 keyValueExpansion);
                             sum +=
@@ -324,13 +306,13 @@ internal static class MlaAttention
                     for (var component = 0; component < configuration.ValueHeadSize; component++)
                     {
                         double sum = 0;
-                        var rowOffset = checked(
-                            (keyValueOffset + configuration.QueryKeyNopeHeadSize + component) *
-                            configuration.KeyValueLoraRank);
                         for (var latent = 0; latent < configuration.KeyValueLoraRank; latent++)
                         {
                             sum +=
-                                (double)keyValueProjection[rowOffset + latent] *
+                                (double)model.GetResidentWeightValue(
+                                    keyValueProjectionName,
+                                    keyValueOffset + configuration.QueryKeyNopeHeadSize + component,
+                                    latent) *
                                 compressedContext[latent];
                         }
 
@@ -343,11 +325,8 @@ internal static class MlaAttention
             float[]? capturedValue = null;
             if (trace is not null)
             {
-                ScalarKernels.MatVec(
-                    keyValueProjection,
-                    keyValueProjectionSize,
-                    configuration.KeyValueLoraRank,
-                    configuration.KeyValueLoraRank,
+                model.MultiplyResidentWeight(
+                    keyValueProjectionName,
                     cache.GetCompressed(layer, validTokenCount - 1),
                     keyValueExpansion);
                 capturedKey = new float[queryProjectionSize];
@@ -373,13 +352,7 @@ internal static class MlaAttention
                 }
             }
 
-            ScalarKernels.MatVec(
-                model.GetResidentWeight($"{prefix}o_proj.weight"),
-                configuration.HiddenSize,
-                contextSize,
-                contextSize,
-                context,
-                projectedOutput);
+            model.MultiplyResidentWeight($"{prefix}o_proj.weight", context, projectedOutput);
             EnsureFinite(projectedOutput, layer);
             var capturedOutput = trace is null ? null : projectedOutput.ToArray();
             cancellationToken.ThrowIfCancellationRequested();

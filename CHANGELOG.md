@@ -23,6 +23,13 @@
 15. 已实现稳定 greedy、temperature、top-k/top-p、repeat/frequency/presence penalty、固定 seed sampling、多 EOS、跨 token 文本 stop、max output token、context limit、cancellation 和增量文本 callback。
 16. managed session 已切换到 `managed-glm-generation`，在 expert 读取前完成总上下文预检，只在成功后累计 usage，并通过 `managed_context_length_exceeded` 或 `managed_inference_failed` 返回失败，不生成占位 completion。
 17. forward batch、sampling、tensor、attention 与 MoE workspace 已纳入内存计划；session 级 expert cache 在 resident、KV 和 scratch 之后校验每层最小 top-k working set，并报告 cache/I/O 诊断。
+18. `model.tomur.json` 已增加 extend-only 的可选 `quantization_layout`；`packed-offset` 显式支持 `*.qs` F32 row scale、U8 int8、offset-binary packed int4 和按 matrix payload 长度识别 int8/int4，量化 resident 权重保持压缩存储。
+19. managed Chat 已通过可选 session 契约直接接收结构化 role/content，并按 GLM role token 语义构造 prompt；现有不实现该契约的 provider 行为保持不变。
+20. 服务启动时，已加载 managed provider 的情况下只降级 native `runtime` / `acceleration` 初始化错误，其他启动错误仍保持失败，不要求 packed managed 模型先准备 native bundle。
+21. 转换后的随机 tiny packed 模型已完成 Catalog、OpenAI Chat 非流式与 SSE、Ollama Chat、Anthropic Messages，以及 int8 embedding/lm_head + int4 dense/expert 混合精度 OpenAI Chat smoke；结果只证明格式与 forward 链路，不作为自然语言质量证据。记录见 `docs/r15-packed-glm-smoke.md`。
+22. 已建立独立 `Tomur.Providers.Olmoe` 纯 C# provider，接通 OLMoE config/probe、标准 causal attention、full KV cache、q/k RMSNorm、split-half RoPE、softmax top-k router、streamed experts、官方 chat template、生成与 session 诊断；tiny F32/BF16 与 signed-int8 `rowwise-qs` 路径纳入自动化测试。
+23. 原始 BF16 `allenai/OLMoE-1B-7B-0125-Instruct` 三个 safetensors shard 已通过 Catalog、动态 provider load、完整模型加载与中文 Ollama 非流式真实对话；`/api/runtime/status` 可报告 147 个 resident tensor、3 个打开的 shard、resident/KV/scratch 预算和 expert cache/I/O。记录见 `docs/r15-olmoe-smoke.md`。
+24. 文本 session 生命周期日志已从硬编码的 llama 文案改为中性 `text generation session`，并显示实际 `runtime`；Runtime 诊断会优先报告已加载的 managed session，不再被未使用的 llama.cpp native bundle 状态覆盖。
 
 ### R14 当前已接入
 

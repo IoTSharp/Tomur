@@ -40,7 +40,14 @@ public sealed class LocalInferenceService
         };
 
         var preparedPrompt = promptBuilder.PrepareCompletionPrompt(prompt, chatOptions.ContextSize);
-        return sessionManager.Generate(model, preparedPrompt, chatOptions, cancellationToken, onToken);
+        return sessionManager.Chat(
+            model,
+            messages,
+            preparedPrompt,
+            options,
+            chatOptions,
+            cancellationToken,
+            onToken);
     }
 
     public EmbeddingResult Embed(
