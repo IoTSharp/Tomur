@@ -30,7 +30,9 @@ export function RuntimeSettingsPanel({
     (item) => item.severity !== "info" || item.status !== "ok"
   );
   const nativeReady = runtimeStatus?.native_bundle.status === "ok";
-  const sessionLoaded = runtimeStatus?.runtime.code === "runtime_loaded";
+  const session = runtimeStatus?.session;
+  const sessionLoaded = session?.loaded === true;
+  const managedModels = runtimeStatus?.managed_models ?? [];
   const prepareChangedFiles =
     prepareResult?.files.filter((file) =>
       ["copied", "repaired", "aliased", "error"].includes(file.status)
@@ -135,13 +137,13 @@ export function RuntimeSettingsPanel({
           title={sessionLoaded ? "当前已有加载的 session" : "当前没有加载的 session"}
           description={
             sessionLoaded
-              ? "卸载会释放当前 llama.cpp session；下一次 Chat、completion 或 embedding 请求会按需重新加载。"
+              ? "卸载会取消当前生成并释放模型、KV、文件句柄、工作区与 expert cache。"
               : "Tomur 采用首个兼容请求按需加载 session。没有加载时无需手动 unload。"
           }
           nextStep={
             sessionLoaded
               ? "下一步：如果要切换模型或释放内存，先卸载 session，再发起新的请求。"
-              : "下一步：选择一个可见 GGUF 模型并发送 Chat 请求，runtime 会加载首个 session。"
+              : "下一步：选择一个 ready 模型并发送 Chat 请求，runtime 会加载首个 session。"
           }
           action={
             <Space wrap>
@@ -167,6 +169,70 @@ export function RuntimeSettingsPanel({
               </Button>
             </Space>
           }
+        />
+        {sessionLoaded && session && (
+          <Descriptions className="runtime-result" column={{ xs: 1, sm: 2 }} size="small" bordered>
+            <Descriptions.Item label="Provider">{session.provider_id ?? session.mode ?? "-"}</Descriptions.Item>
+            <Descriptions.Item label="Model">{session.model_id ?? "-"}</Descriptions.Item>
+            <Descriptions.Item label="State">{session.busy ? "generating" : "idle"}</Descriptions.Item>
+            <Descriptions.Item label="Context">{session.context_size ?? "-"}</Descriptions.Item>
+            <Descriptions.Item label="Resident">{formatBytes(session.resident_bytes)}</Descriptions.Item>
+            <Descriptions.Item label="KV">{formatBytes(session.kv_bytes)}</Descriptions.Item>
+            <Descriptions.Item label="Scratch">{formatBytes(session.scratch_bytes)}</Descriptions.Item>
+            <Descriptions.Item label="Expert cache">{formatBytes(session.expert_cache_bytes)}</Descriptions.Item>
+            <Descriptions.Item label="Requests">{session.request_count}</Descriptions.Item>
+            <Descriptions.Item label="Tokens">{session.prompt_tokens} / {session.completion_tokens}</Descriptions.Item>
+            <Descriptions.Item label="Cache hit/miss/evict">
+              {session.expert_cache_hits ?? 0} / {session.expert_cache_misses ?? 0} / {session.expert_cache_evictions ?? 0}
+            </Descriptions.Item>
+            <Descriptions.Item label="Expert I/O">
+              {session.expert_disk_reads ?? 0} / {formatBytes(session.expert_disk_bytes)}
+            </Descriptions.Item>
+          </Descriptions>
+        )}
+      </Card>
+
+      <Card
+        size="small"
+        title="Managed models"
+        extra={<Tag>{managedModels.length}</Tag>}
+      >
+        <List
+          size="small"
+          dataSource={managedModels}
+          locale={{ emptyText: "暂无 managed model" }}
+          renderItem={(model) => (
+            <List.Item>
+              <List.Item.Meta
+                title={
+                  <Space wrap>
+                    <Tag color={tagColor(model.status)}>{model.status}</Tag>
+                    <Typography.Text ellipsis={{ tooltip: model.model_id }} style={{ maxWidth: 240 }}>
+                      {model.model_id}
+                    </Typography.Text>
+                    <Typography.Text type="secondary">{model.provider_id ?? "provider unavailable"}</Typography.Text>
+                  </Space>
+                }
+                description={
+                  <Space direction="vertical" size={4}>
+                    <Typography.Text type="secondary">
+                      {model.architecture} / {model.quantization} / resident {formatBytes(model.resident_bytes)} / KV {formatBytes(model.kv_bytes)} / expert cache {formatBytes(model.expert_cache_bytes)}
+                    </Typography.Text>
+                    <Space wrap size={4}>
+                      <ReadinessTag label="provider" ready={model.provider_discovered} />
+                      <ReadinessTag label="metadata" ready={model.metadata_valid} />
+                      <ReadinessTag label="assets" ready={model.assets_complete} />
+                      <ReadinessTag label="forward" ready={model.forward_verified} />
+                      <ReadinessTag label="session" ready={model.session_loaded} />
+                    </Space>
+                    {model.diagnostics[0] && (
+                      <Typography.Text type="secondary">{model.diagnostics[0].message}</Typography.Text>
+                    )}
+                  </Space>
+                }
+              />
+            </List.Item>
+          )}
         />
       </Card>
 
@@ -370,6 +436,10 @@ function AccelerationStatus({ acceleration }: { acceleration?: AccelerationPlan 
       />
     </Space>
   );
+}
+
+function ReadinessTag({ label, ready }: { label: string; ready: boolean }) {
+  return <Tag color={ready ? "green" : "default"}>{label}: {ready ? "yes" : "no"}</Tag>;
 }
 
 function ActionBlock({

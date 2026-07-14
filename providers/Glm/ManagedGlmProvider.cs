@@ -6,7 +6,7 @@ using Tomur.Runtime;
 
 namespace Tomur.Providers.Glm;
 
-public sealed class ManagedGlmProvider : IModelFixtureProvider
+public sealed class ManagedGlmProvider : IModelFixtureProvider, IModelReadinessProvider
 {
     public const string ProviderId = "managed-glm";
 
@@ -88,15 +88,74 @@ public sealed class ManagedGlmProvider : IModelFixtureProvider
         catch (Exception exception) when (
             exception is InvalidDataException or IOException or UnauthorizedAccessException or JsonException or OverflowException)
         {
-            throw new InferenceException(
-                "managed_model_invalid",
-                $"The managed GLM model could not be prepared: {exception.Message}",
+            throw CreateModelException(exception, "prepared");
+        }
+    }
+
+    public ModelPreparationResult InspectModel(LocalModelDescriptor model, ModelSessionOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+        ArgumentNullException.ThrowIfNull(options);
+
+        try
+        {
+            var probe = ModelDirectoryProbe.Read(model, ProviderId);
+            var contextSize = Math.Min(options.ContextSize, probe.Configuration.MaxPositionEmbeddings);
+            var residentWeights = ResidentWeightLayout.Create(
+                probe.Configuration,
+                probe.Tensors,
+                probe.Manifest.Quantization,
+                probe.Manifest.QuantizationLayout);
+            var expertLayout = ExpertDescriptorLayout.Create(
+                probe.Configuration,
+                probe.Manifest.Quantization,
+                probe.Manifest.QuantizationLayout,
+                probe.Tensors);
+            var memoryPlan = ModelMemoryPlan.Create(
+                probe.Configuration,
+                residentWeights,
+                contextSize,
+                ModelMemoryPlan.GetAvailableMemoryBytes());
+            var expertCacheBytes = expertLayout.MoeLayerCount == 0
+                ? 0
+                : checked(
+                    expertLayout.SlotBudgetedBytes *
+                    expertLayout.MoeLayerCount *
+                    probe.Configuration.ExpertsPerToken);
+
+            return new ModelPreparationResult(
+                ProviderId,
+                probe.Configuration.ModelType,
+                probe.Manifest.Quantization,
+                probe.Manifest.QuantizationLayout,
+                contextSize,
+                probe.TensorFileCount,
+                probe.Tensors.Count,
+                memoryPlan.ResidentBytes,
+                memoryPlan.KvBytes,
+                memoryPlan.ScratchBytes,
+                expertCacheBytes,
+                checked(memoryPlan.RequiredBytes + expertCacheBytes),
+                memoryPlan.AvailableBytes,
                 [
-                    $"Verify {ModelProviderManifest.FileName}, config.json, tokenizer.json and every safetensors shard.",
-                    "Verify that all required dense, attention, router, shared-expert and routed-expert tensors are present.",
-                    "Do not mark a partially downloaded or failed checksum bundle as installed."
-                ],
-                exception);
+                    $"manifest: {model.AbsolutePath}",
+                    $"config: {probe.Manifest.ConfigFile}",
+                    $"tokenizer: {probe.Manifest.TokenizerFile}",
+                    $"tensor shards: {probe.TensorFileCount}",
+                    $"tokenizer vocabulary: {probe.Tokenizer.VocabularySize}",
+                    $"layers: {probe.Configuration.LayerCount}",
+                    $"routed experts: {probe.Configuration.RoutedExpertCount}",
+                    $"expert storage format: {expertLayout.Format}"
+                ]);
+        }
+        catch (InferenceException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is InvalidDataException or IOException or UnauthorizedAccessException or JsonException or OverflowException)
+        {
+            throw CreateModelException(exception, "inspected");
         }
     }
 
@@ -105,6 +164,29 @@ public sealed class ManagedGlmProvider : IModelFixtureProvider
 
     public ModelFixtureResult VerifyFixture(string fixtureDirectory)
         => TinyFixtureBundle.Verify(fixtureDirectory).ToResult(ProviderId);
+
+    private static InferenceException CreateModelException(Exception exception, string operation)
+    {
+        var assetsIncomplete = exception is FileNotFoundException or DirectoryNotFoundException ||
+            exception.Message.Contains("is missing", StringComparison.OrdinalIgnoreCase) ||
+            exception.Message.Contains("was not found", StringComparison.OrdinalIgnoreCase) ||
+            exception.Message.Contains("No tensor files", StringComparison.OrdinalIgnoreCase);
+        var quantizationUnsupported = exception.Message.Contains("does not support quantization", StringComparison.OrdinalIgnoreCase) ||
+            exception.Message.Contains("quantization layout", StringComparison.OrdinalIgnoreCase);
+        var code = assetsIncomplete
+            ? "managed_model_assets_incomplete"
+            : quantizationUnsupported
+                ? "managed_quantization_unsupported"
+                : "managed_model_invalid";
+        return new InferenceException(
+            code,
+            $"The managed GLM model could not be {operation}: {exception.Message}",
+            [
+                $"Verify {ModelProviderManifest.FileName}, config.json, tokenizer.json and every safetensors shard.",
+                "Complete model download and checksum verification before exposing the model through compatibility APIs."
+            ],
+            exception);
+    }
 }
 
 internal sealed class ManagedGlmSession : IChatGenerationSession
@@ -284,20 +366,33 @@ internal sealed class ManagedGlmSession : IChatGenerationSession
 
     public SessionSnapshot GetSnapshot()
     {
-        lock (gate)
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed), this);
+        var cache = expertCache?.GetSnapshot();
+        return new SessionSnapshot(
+            Loaded: true,
+            ModelId: model.Id,
+            ModelPath: model.AbsolutePath,
+            Mode: "managed-glm-generation",
+            LoadedAt: createdAt,
+            RequestCount: Interlocked.Read(ref requestCount),
+            PromptTokens: Interlocked.Read(ref promptTokens),
+            CompletionTokens: Interlocked.Read(ref completionTokens),
+            Diagnostics: BuildDiagnostics("forward execution: scalar reference"))
         {
-            ObjectDisposedException.ThrowIf(disposed, this);
-            return new SessionSnapshot(
-                Loaded: true,
-                ModelId: model.Id,
-                ModelPath: model.AbsolutePath,
-                Mode: "managed-glm-generation",
-                LoadedAt: createdAt,
-                RequestCount: Interlocked.Read(ref requestCount),
-                PromptTokens: Interlocked.Read(ref promptTokens),
-                CompletionTokens: Interlocked.Read(ref completionTokens),
-                Diagnostics: BuildDiagnostics("forward execution: scalar reference"));
-        }
+            ProviderId = ProviderId,
+            Architecture = loadedModel.Configuration.ModelType,
+            Quantization = loadedModel.Manifest.Quantization,
+            ContextSize = loadedModel.MemoryPlan.ContextSize,
+            ResidentBytes = loadedModel.ActualResidentBytes,
+            KvBytes = loadedModel.MemoryPlan.KvBytes,
+            ScratchBytes = loadedModel.MemoryPlan.ScratchBytes,
+            ExpertCacheBytes = cache?.BudgetedBytes,
+            ExpertCacheHits = cache?.Hits,
+            ExpertCacheMisses = cache?.Misses,
+            ExpertCacheEvictions = cache?.Evictions,
+            ExpertDiskReads = cache?.DiskReads,
+            ExpertDiskBytes = cache?.DiskBytes
+        };
     }
 
     public void Dispose()

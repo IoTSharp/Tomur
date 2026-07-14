@@ -241,7 +241,7 @@ GLM 基础代码顺序、性能计划、集中验证门槛与发布标准见 [pr
 9. ✅ 已实现 MLA q/kv projection、interleaved partial RoPE、reference/absorbed attention、单 token decode、多 token prefill、按层 compressed KV cache、上下文边界与失败回滚，并接入 M7 独立测试项目。
 10. ✅ 已实现 MoE router、shared/routed expert 合并、按层固定容量 LRU、lease 隔离、RAM 配额、有界异步磁盘读取、取消和 cache/I/O 诊断，并接入 M8 独立测试项目。
 11. ✅ 已接通有界批次完整 scalar forward、prompt prefill、compressed KV 增量 decode、greedy、temperature、top-k/top-p、penalty、多 EOS、文本 stop、context/cancellation 和增量 callback，并接入 M9 独立测试项目。
-12. 🚧 正在完成 M10 集成闭环：为显式标记的 packed rowwise safetensors 目录补齐 offset-binary int4、`*.qs` per-row scale、量化 resident 权重加载，并让兼容 API 的 Chat 请求直接使用 GLM role token 模板；转换后的随机 tiny 模型已完成三类兼容 API 链路 smoke，证据见 [R15 packed GLM smoke 记录](./docs/r15-packed-glm-smoke.md)。
+12. 🚧 正在完成 M10 集成闭环：已为显式标记的 packed rowwise safetensors 目录补齐 offset-binary int4、`*.qs` per-row scale、量化 resident 权重加载和 GLM role token Chat 路径；本轮进一步接入 managed model readiness、兼容 API 可见性校验、Ollama 增量 NDJSON、可取消 unload、结构化 session/resource 诊断以及 M10 独立测试代码。转换后的随机 tiny 模型已完成三类兼容 API 链路 smoke，证据见 [R15 packed GLM smoke 记录](./docs/r15-packed-glm-smoke.md)；新增 M10 代码尚未执行构建、测试与服务 smoke。
 13. 🚧 将 `glm4_moe_lite` 作为 managed GLM 的显式兼容架构目标，首个真实候选为 `cerebras/GLM-4.7-Flash-REAP-23B-A3B`。当前工作只实现 architecture/config/tensor/prompt 契约与可执行测试代码；完整模型转换、加载、自然语言质量和性能验证转移到具备充足存储与算力的独立机器执行。
 14. 🚧 独立 `managed-olmoe` provider 已接通标准 causal attention、q/k RMSNorm、softmax top-k router、BF16 与 rowwise int8 experts、官方 chat template 和生成链路；原始 BF16 `allenai/OLMoE-1B-7B-0125-Instruct` 已通过 Catalog、provider load 与中文 Ollama 非流式真实对话，证据见 [R15 OLMoE real-model smoke](./docs/r15-olmoe-smoke.md)。OpenAI、Anthropic、SSE、完整 int8 转换和性能优化仍待验证。
 

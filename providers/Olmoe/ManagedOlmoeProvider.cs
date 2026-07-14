@@ -7,7 +7,7 @@ using Tomur.Runtime;
 
 namespace Tomur.Providers.Olmoe;
 
-public sealed class ManagedOlmoeProvider : ITextGenerationProvider
+public sealed class ManagedOlmoeProvider : ITextGenerationProvider, IModelReadinessProvider
 {
     public const string ProviderId = "managed-olmoe";
 
@@ -73,15 +73,91 @@ public sealed class ManagedOlmoeProvider : ITextGenerationProvider
         catch (Exception exception) when (
             exception is InvalidDataException or IOException or UnauthorizedAccessException or JsonException or OverflowException)
         {
-            throw new InferenceException(
-                "managed_model_invalid",
-                $"The managed OLMoE model could not be prepared: {exception.Message}",
-                [
-                    $"Verify {ModelProviderManifest.FileName}, config.json, tokenizer.json and every safetensors shard.",
-                    "Verify all attention, router and routed-expert tensors and row scales."
-                ],
-                exception);
+            throw CreateModelException(exception, "prepared");
         }
+    }
+
+    public ModelPreparationResult InspectModel(LocalModelDescriptor model, ModelSessionOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+        ArgumentNullException.ThrowIfNull(options);
+
+        try
+        {
+            var probe = OlmoeModelDirectoryProbe.Read(model, ProviderId);
+            var contextSize = Math.Min(options.ContextSize, probe.Configuration.MaxPositionEmbeddings);
+            var residentWeights = OlmoeResidentWeightLayout.Create(probe.Configuration, probe.Tensors);
+            var expertLayout = ExpertDescriptorLayout.Create(
+                probe.Configuration.ExpertConfiguration,
+                probe.Manifest.Quantization,
+                probe.Manifest.QuantizationLayout,
+                probe.Tensors);
+            var memoryPlan = OlmoeMemoryPlan.Create(
+                probe.Configuration,
+                residentWeights,
+                contextSize,
+                ModelMemoryPlan.GetAvailableMemoryBytes());
+            var expertCacheBytes = checked(
+                expertLayout.SlotBudgetedBytes *
+                expertLayout.MoeLayerCount *
+                probe.Configuration.ExpertsPerToken);
+
+            return new ModelPreparationResult(
+                ProviderId,
+                probe.Manifest.Architecture,
+                probe.Manifest.Quantization,
+                probe.Manifest.QuantizationLayout,
+                contextSize,
+                probe.TensorFileCount,
+                probe.Tensors.Count,
+                memoryPlan.ResidentBytes,
+                memoryPlan.KvBytes,
+                memoryPlan.ScratchBytes,
+                expertCacheBytes,
+                checked(memoryPlan.RequiredBytes + expertCacheBytes),
+                memoryPlan.AvailableBytes,
+                [
+                    $"manifest: {model.AbsolutePath}",
+                    $"config: {probe.Manifest.ConfigFile}",
+                    $"tokenizer: {probe.Manifest.TokenizerFile}",
+                    $"tensor shards: {probe.TensorFileCount}",
+                    $"tokenizer vocabulary: {probe.Tokenizer.VocabularySize}",
+                    $"layers: {probe.Configuration.LayerCount}",
+                    $"routed experts: {probe.Configuration.RoutedExpertCount}",
+                    $"expert storage format: {expertLayout.Format}"
+                ]);
+        }
+        catch (InferenceException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is InvalidDataException or IOException or UnauthorizedAccessException or JsonException or OverflowException)
+        {
+            throw CreateModelException(exception, "inspected");
+        }
+    }
+
+    private static InferenceException CreateModelException(Exception exception, string operation)
+    {
+        var assetsIncomplete = exception is FileNotFoundException or DirectoryNotFoundException ||
+            exception.Message.Contains("is missing", StringComparison.OrdinalIgnoreCase) ||
+            exception.Message.Contains("was not found", StringComparison.OrdinalIgnoreCase) ||
+            exception.Message.Contains("No tensor files", StringComparison.OrdinalIgnoreCase);
+        var quantizationUnsupported = exception.Message.Contains("does not support quantization", StringComparison.OrdinalIgnoreCase) ||
+            exception.Message.Contains("quantization layout", StringComparison.OrdinalIgnoreCase);
+        return new InferenceException(
+            assetsIncomplete
+                ? "managed_model_assets_incomplete"
+                : quantizationUnsupported
+                    ? "managed_quantization_unsupported"
+                    : "managed_model_invalid",
+            $"The managed OLMoE model could not be {operation}: {exception.Message}",
+            [
+                $"Verify {ModelProviderManifest.FileName}, config.json, tokenizer.json and every safetensors shard.",
+                "Complete model download and checksum verification before exposing the model through compatibility APIs."
+            ],
+            exception);
     }
 }
 
@@ -176,20 +252,33 @@ internal sealed class ManagedOlmoeSession : IChatGenerationSession
 
     public SessionSnapshot GetSnapshot()
     {
-        lock (gate)
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed), this);
+        var cache = expertCache.GetSnapshot();
+        return new SessionSnapshot(
+            Loaded: true,
+            ModelId: descriptor.Id,
+            ModelPath: descriptor.AbsolutePath,
+            Mode: "managed-olmoe-generation",
+            LoadedAt: createdAt,
+            RequestCount: Interlocked.Read(ref requestCount),
+            PromptTokens: Interlocked.Read(ref promptTokens),
+            CompletionTokens: Interlocked.Read(ref completionTokens),
+            Diagnostics: BuildDiagnostics("forward execution: scalar reference"))
         {
-            ObjectDisposedException.ThrowIf(disposed, this);
-            return new SessionSnapshot(
-                Loaded: true,
-                ModelId: descriptor.Id,
-                ModelPath: descriptor.AbsolutePath,
-                Mode: "managed-olmoe-generation",
-                LoadedAt: createdAt,
-                RequestCount: Interlocked.Read(ref requestCount),
-                PromptTokens: Interlocked.Read(ref promptTokens),
-                CompletionTokens: Interlocked.Read(ref completionTokens),
-                Diagnostics: BuildDiagnostics("forward execution: scalar reference"));
-        }
+            ProviderId = ProviderId,
+            Architecture = model.Manifest.Architecture,
+            Quantization = model.Manifest.Quantization,
+            ContextSize = model.MemoryPlan.ContextSize,
+            ResidentBytes = model.ActualResidentBytes,
+            KvBytes = model.MemoryPlan.KvBytes,
+            ScratchBytes = model.MemoryPlan.ScratchBytes,
+            ExpertCacheBytes = cache.BudgetedBytes,
+            ExpertCacheHits = cache.Hits,
+            ExpertCacheMisses = cache.Misses,
+            ExpertCacheEvictions = cache.Evictions,
+            ExpertDiskReads = cache.DiskReads,
+            ExpertDiskBytes = cache.DiskBytes
+        };
     }
 
     public void Dispose()

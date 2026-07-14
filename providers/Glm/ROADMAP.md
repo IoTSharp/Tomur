@@ -441,6 +441,15 @@ forward 顺序：
 13. `GlmPromptTemplate` 按 architecture 保留既有 GLM-5.2 行为，并为 `glm4_moe_lite` 对齐官方 Jinja 的 prefix 换行、历史 assistant thinking closure、默认非 thinking generation prompt 与 tool response 包装。
 14. `cerebras/GLM-4.7-Flash-REAP-23B-A3B` 的 BF16 到 packed rowwise int4/int8 转换与完整模型 smoke 不在当前本机执行；异机证据形成前，`glm4_moe_lite` 保持代码已接入但完整模型待验证状态。
 
+本轮基础代码：
+
+1. ✅ 已增加可选 `IModelReadinessProvider` 契约；GLM 与 OLMoE 可在不读取 resident payload、不执行 forward 的情况下报告 architecture、quantization、tensor 数量、resident/KV/scratch/expert cache 计划和当前内存预算。
+2. ✅ `LocalModelCatalog` 已区分候选模型与兼容 API 可见模型；provider、metadata 或必要资产校验未通过的 managed 模型不会进入 `GET /v1/models`、`/api/tags` 和协议模型选择路径，但仍保留在 Runtime/doctor 诊断中。
+3. ✅ OpenAI 与 Anthropic 继续使用现有 SSE 增量回调；Ollama `generate` 与 `chat` 已从单条最终 NDJSON 调整为增量 `done=false` 与最终 usage/duration `done=true` 帧，流中错误保持 Ollama 结构化诊断。
+4. ✅ `SessionManager` 已拆分状态锁与单请求执行门；unload 会先取消活动生成，再释放 session、tensor file handle、KV/workspace 与 expert cache，并以 `session_unloaded` 返回仍连接的协议请求。
+5. ✅ session 快照已结构化报告 provider、architecture、context、resident/KV/scratch、expert cache hit/miss/eviction、expert I/O、busy、请求/token 计数与最近错误；`tomur ps`、`tomur doctor`、Runtime API 和 Web Runtime 复用同一状态。
+6. ✅ M10 独立测试项目已加入 solution，覆盖 Ollama 增量/终帧、readiness 内存计划、不完整 managed 模型可见性拦截、成功 session 的 forward verified 状态和 unload 取消/释放；本轮未执行构建或测试，验证仍归 M14 与 14.4。
+
 当前证据：`packed-offset` 格式、量化 resident/expert forward、OpenAI Chat 非流式与 SSE、Ollama Chat、Anthropic Messages 已通过转换后的随机 tiny 模型 smoke；默认 int8 embedding/lm_head 与 int4 dense/expert 的混合精度目录也已完成 OpenAI Chat smoke。完整模型、自然语言质量、完整 oracle、跨平台和性能验证仍未执行，记录见 [R15 packed GLM smoke](../../docs/r15-packed-glm-smoke.md)。
 
 错误码：
@@ -451,9 +460,12 @@ forward 顺序：
 4. `managed_model_invalid`
 5. `managed_model_assets_incomplete`
 6. `managed_quantization_unsupported`
-7. `managed_memory_budget_exceeded`
-8. `managed_context_length_exceeded`
-9. `managed_inference_failed`
+7. `managed_model_memory_budget_exceeded`
+8. `managed_model_out_of_memory`
+9. `managed_context_length_exceeded`
+10. `managed_inference_failed`
+11. `session_unloading`
+12. `session_unloaded`
 
 ## 11. ⏳ M11：性能优化
 

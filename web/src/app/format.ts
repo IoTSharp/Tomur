@@ -63,7 +63,7 @@ export function tagColor(status: string) {
     return "green";
   }
 
-  if (status === "error" || status === "blocked") {
+  if (status === "error" || status === "blocked" || status === "invalid") {
     return "red";
   }
 
@@ -71,6 +71,8 @@ export function tagColor(status: string) {
     status === "warning" ||
     status === "partial" ||
     status === "not_configured" ||
+    status === "provider_unavailable" ||
+    status === "memory_limited" ||
     status === "copied" ||
     status === "repaired" ||
     status === "aliased"

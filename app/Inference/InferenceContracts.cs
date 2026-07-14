@@ -53,7 +53,43 @@ public sealed record SessionSnapshot(
     long RequestCount,
     long PromptTokens,
     long CompletionTokens,
-    IReadOnlyList<string> Diagnostics);
+    IReadOnlyList<string> Diagnostics)
+{
+    public string? ProviderId { get; init; }
+
+    public string? Architecture { get; init; }
+
+    public string? Quantization { get; init; }
+
+    public bool Busy { get; init; }
+
+    public int? ContextSize { get; init; }
+
+    public long? ResidentBytes { get; init; }
+
+    public long? KvBytes { get; init; }
+
+    public long? ScratchBytes { get; init; }
+
+    public long? ExpertCacheBytes { get; init; }
+
+    public long? ExpertCacheHits { get; init; }
+
+    public long? ExpertCacheMisses { get; init; }
+
+    public long? ExpertCacheEvictions { get; init; }
+
+    public long? ExpertDiskReads { get; init; }
+
+    public long? ExpertDiskBytes { get; init; }
+
+    public SessionErrorSnapshot? LastError { get; init; }
+}
+
+public sealed record SessionErrorSnapshot(
+    string Code,
+    string Message,
+    DateTimeOffset OccurredAt);
 
 public sealed class InferenceException : Exception
 {

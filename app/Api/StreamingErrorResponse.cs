@@ -13,6 +13,7 @@ internal static class StreamingErrorResponse
         context.Response.StatusCode = StatusCodes.Status200OK;
         context.Response.ContentType = "text/event-stream; charset=utf-8";
         context.Response.Headers.CacheControl = "no-cache";
+        context.Response.Headers["X-Accel-Buffering"] = "no";
 
         await context.Response.WriteAsync("event: error\n", context.RequestAborted);
         await context.Response.WriteAsync("data: ", context.RequestAborted);
@@ -23,12 +24,15 @@ internal static class StreamingErrorResponse
             context.RequestAborted);
         await context.Response.WriteAsync("\n\n", context.RequestAborted);
         await context.Response.WriteAsync("data: [DONE]\n\n", context.RequestAborted);
+        await context.Response.Body.FlushAsync(context.RequestAborted);
     }
 
     public static async Task WriteOllamaAsync(HttpContext context, OllamaErrorResponse error)
     {
         context.Response.StatusCode = StatusCodes.Status200OK;
         context.Response.ContentType = "application/x-ndjson; charset=utf-8";
+        context.Response.Headers.CacheControl = "no-cache";
+        context.Response.Headers["X-Accel-Buffering"] = "no";
 
         await JsonSerializer.SerializeAsync(
             context.Response.Body,
@@ -36,5 +40,6 @@ internal static class StreamingErrorResponse
             AppJsonSerializerContext.Default.OllamaErrorResponse,
             context.RequestAborted);
         await context.Response.WriteAsync("\n", context.RequestAborted);
+        await context.Response.Body.FlushAsync(context.RequestAborted);
     }
 }

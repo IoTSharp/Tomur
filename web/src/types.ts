@@ -264,6 +264,8 @@ export interface RuntimeStatusResponse {
   acceleration: AccelerationPlan;
   native_bundle: NativeBundleStatus;
   managed_providers: ManagedProviderStatus;
+  managed_models: ModelReadinessStatus[];
+  session: SessionSnapshot;
   runtime: RuntimeDiagnostic;
   diagnostics: DiagnosticItem[];
 }
@@ -287,6 +289,69 @@ export interface ManagedProviderLoadDiagnostic {
   code: string;
   message: string;
   path?: string | null;
+}
+
+export interface ModelReadinessStatus {
+  model_id: string;
+  provider_id?: string | null;
+  architecture: string;
+  quantization: string;
+  quantization_layout?: string | null;
+  status: string;
+  provider_discovered: boolean;
+  metadata_valid: boolean;
+  assets_complete: boolean;
+  forward_verified: boolean;
+  session_loaded: boolean;
+  context_size?: number | null;
+  tensor_file_count?: number | null;
+  tensor_count?: number | null;
+  resident_bytes?: number | null;
+  kv_bytes?: number | null;
+  scratch_bytes?: number | null;
+  expert_cache_bytes?: number | null;
+  required_bytes?: number | null;
+  available_bytes?: number | null;
+  diagnostics: ModelReadinessDiagnostic[];
+}
+
+export interface ModelReadinessDiagnostic {
+  code: string;
+  message: string;
+  actions: string[];
+}
+
+export interface SessionSnapshot {
+  loaded: boolean;
+  model_id?: string | null;
+  model_path?: string | null;
+  mode?: string | null;
+  loaded_at?: string | null;
+  request_count: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  diagnostics: string[];
+  provider_id?: string | null;
+  architecture?: string | null;
+  quantization?: string | null;
+  busy: boolean;
+  context_size?: number | null;
+  resident_bytes?: number | null;
+  kv_bytes?: number | null;
+  scratch_bytes?: number | null;
+  expert_cache_bytes?: number | null;
+  expert_cache_hits?: number | null;
+  expert_cache_misses?: number | null;
+  expert_cache_evictions?: number | null;
+  expert_disk_reads?: number | null;
+  expert_disk_bytes?: number | null;
+  last_error?: SessionErrorSnapshot | null;
+}
+
+export interface SessionErrorSnapshot {
+  code: string;
+  message: string;
+  occurred_at: string;
 }
 
 export interface SystemSnapshot {

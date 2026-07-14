@@ -174,8 +174,10 @@ public sealed class RuntimeDiagnosticsProvider
         var port = GetPortState(ResolveServiceUrls(configuration.Configuration));
         var nativeBundle = nativeBundleProbe.Probe(paths.RuntimeDirectory);
         var acceleration = GetAccelerationPlan(nativeBundle);
-        var runtime = GetRuntimeDiagnostic(nativeBundle);
         var managedProviders = modelProviderRegistry?.Status ?? GetUncheckedManagedProviderStatus();
+        var session = inferenceService?.GetSnapshot() ?? CreateEmptySessionSnapshot();
+        var managedModels = GetManagedModelStatuses(paths, session);
+        var runtime = GetRuntimeDiagnostic(nativeBundle, session, managedModels);
         var diagnostics = BuildDiagnostics(
             configuration,
             directories,
@@ -187,7 +189,8 @@ public sealed class RuntimeDiagnosticsProvider
             nativeBundle,
             acceleration,
             runtime,
-            managedProviders);
+            managedProviders,
+            managedModels);
         var resolvedPathConfiguration = paths.ToPathConfiguration();
 
         return new RuntimeStatusResponse(
@@ -208,7 +211,9 @@ public sealed class RuntimeDiagnosticsProvider
             runtime,
             diagnostics)
         {
-            ManagedProviders = managedProviders
+            ManagedProviders = managedProviders,
+            ManagedModels = managedModels,
+            Session = session
         };
     }
 
@@ -219,10 +224,12 @@ public sealed class RuntimeDiagnosticsProvider
             : serverOptions.Urls;
     }
 
-    private RuntimeDiagnostic GetRuntimeDiagnostic(NativeBundleProbeResult nativeBundle)
+    private RuntimeDiagnostic GetRuntimeDiagnostic(
+        NativeBundleProbeResult nativeBundle,
+        SessionSnapshot snapshot,
+        IReadOnlyList<ModelReadinessStatus> managedModels)
     {
-        var snapshot = inferenceService?.GetSnapshot();
-        if (snapshot is { Loaded: true })
+        if (snapshot.Loaded)
         {
             return new RuntimeDiagnostic(
                 "ok",
@@ -236,6 +243,22 @@ public sealed class RuntimeDiagnosticsProvider
                     $"Prompt tokens: {snapshot.PromptTokens}",
                     $"Completion tokens: {snapshot.CompletionTokens}",
                     .. snapshot.Diagnostics
+                ]);
+        }
+
+        var readyManagedModels = managedModels
+            .Where(static model => model.Status is "ready" or "loaded")
+            .ToArray();
+        if (readyManagedModels.Length > 0)
+        {
+            return new RuntimeDiagnostic(
+                "available",
+                "managed_runtime_ready",
+                $"{readyManagedModels.Length} managed model(s) passed metadata and asset validation. No model session is loaded yet.",
+                null,
+                [
+                    "Send a chat or completion request with a ready managed model to load the first session.",
+                    "Use tomur ps to inspect provider, memory plan and model readiness."
                 ]);
         }
 
@@ -431,7 +454,8 @@ public sealed class RuntimeDiagnosticsProvider
         NativeBundleProbeResult nativeBundle,
         AccelerationPlan acceleration,
         RuntimeDiagnostic runtime,
-        ModelProviderStatus managedProviders)
+        ModelProviderStatus managedProviders,
+        IReadOnlyList<ModelReadinessStatus> managedModels)
     {
         var diagnostics = new List<DiagnosticItem>
         {
@@ -506,7 +530,11 @@ public sealed class RuntimeDiagnosticsProvider
         diagnostics.Add(ToDiagnostic(
             "acceleration",
             acceleration.Status,
-            acceleration.Status == "error" ? "error" : "ok",
+            acceleration.Status == "error"
+                ? managedModels.Any(static model => model.Status is "ready" or "loaded")
+                    ? "warning"
+                    : "error"
+                : "ok",
             BuildAccelerationDiagnosticMessage(acceleration),
             acceleration.SelectedAcceleratorKey ?? acceleration.EffectiveBackend,
             acceleration.Actions));
@@ -543,8 +571,56 @@ public sealed class RuntimeDiagnosticsProvider
                 GetManagedProviderDiagnosticActions(providerDiagnostic.Code)));
         }
 
+        foreach (var model in managedModels)
+        {
+            var modelDiagnostic = model.Diagnostics.FirstOrDefault();
+            var severity = model.Status is "invalid" or "provider_unavailable" or "memory_limited"
+                ? "warning"
+                : "ok";
+            diagnostics.Add(ToDiagnostic(
+                $"managed_model:{model.ModelId}",
+                model.Status,
+                severity,
+                modelDiagnostic?.Message ??
+                    $"Managed model metadata and assets are ready for provider '{model.ProviderId}'.",
+                model.ModelId,
+                modelDiagnostic?.Actions ?? []));
+        }
+
         return diagnostics;
     }
+
+    private IReadOnlyList<ModelReadinessStatus> GetManagedModelStatuses(
+        DataPaths paths,
+        SessionSnapshot session)
+    {
+        if (modelProviderRegistry is null)
+        {
+            return [];
+        }
+
+        var catalog = new LocalModelCatalog(paths, modelProviderRegistry);
+        return catalog
+            .ListModelCandidates()
+            .Where(static model => string.Equals(
+                model.Format,
+                "managed-model",
+                StringComparison.OrdinalIgnoreCase))
+            .Select(model => modelProviderRegistry.InspectModel(model, session))
+            .ToArray();
+    }
+
+    private static SessionSnapshot CreateEmptySessionSnapshot()
+        => new(
+            false,
+            null,
+            null,
+            null,
+            null,
+            0,
+            0,
+            0,
+            ["no active inference session"]);
 
     private static string BuildManagedProviderDiagnosticMessage(ModelProviderStatus status)
     {

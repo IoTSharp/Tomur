@@ -1,6 +1,10 @@
+using System.Text.Json;
 using Tomur.Config;
+using Tomur.Inference;
 using Tomur.Models;
+using Tomur.Providers;
 using Tomur.Runtime;
+using Tomur.Serialization;
 
 namespace Tomur.Cli;
 
@@ -105,9 +109,14 @@ internal static class ModelCommand
             return 1;
         }
 
-        var models = new LocalModelCatalog(paths).ListModels();
+        using var providerRegistry = ModelProviderRegistry.CreateDefault();
+        var catalog = new LocalModelCatalog(paths, providerRegistry);
+        var models = catalog.ListModelCandidates();
+        var runtimeStatus = TryGetRunningRuntimeStatus(paths);
+        var session = runtimeStatus?.Session;
         Console.WriteLine($"{Defaults.ProductName} ps");
         Console.WriteLine($"  Models directory: {paths.ModelsDirectory}");
+        Console.WriteLine($"  Service: {(runtimeStatus is null ? "not-reachable" : runtimeStatus.Port.Url)}");
         Console.WriteLine();
 
         if (models.Count == 0)
@@ -119,17 +128,99 @@ internal static class ModelCommand
 
         foreach (var model in models)
         {
+            var readiness = runtimeStatus?.ManagedModels.FirstOrDefault(status =>
+                    string.Equals(status.ModelId, model.Id, StringComparison.OrdinalIgnoreCase))
+                ?? providerRegistry.InspectModel(model, session);
             Console.WriteLine($"- {model.Id}");
             Console.WriteLine($"  package: {model.PackageId ?? "manual-import"}");
-            Console.WriteLine($"  status: available");
-            Console.WriteLine($"  runtime: load-on-first-request");
+            Console.WriteLine($"  status: {readiness.Status}");
+            Console.WriteLine($"  provider: {readiness.ProviderId ?? "unavailable"}");
+            Console.WriteLine($"  readiness: provider={readiness.ProviderDiscovered}, metadata={readiness.MetadataValid}, assets={readiness.AssetsComplete}, forward={readiness.ForwardVerified}");
+            Console.WriteLine($"  runtime: {(readiness.SessionLoaded ? "loaded" : "load-on-first-request")}");
             Console.WriteLine($"  file: {model.RelativePath}");
             Console.WriteLine($"  size: {CommandLineHelpers.FormatBytes(model.SizeBytes)}");
+            if (readiness.ResidentBytes is not null)
+            {
+                Console.WriteLine($"  resident plan: {CommandLineHelpers.FormatBytes(readiness.ResidentBytes.Value)}");
+                Console.WriteLine($"  KV plan: {CommandLineHelpers.FormatNullableBytes(readiness.KvBytes)}");
+                Console.WriteLine($"  scratch plan: {CommandLineHelpers.FormatNullableBytes(readiness.ScratchBytes)}");
+                Console.WriteLine($"  expert cache plan: {CommandLineHelpers.FormatNullableBytes(readiness.ExpertCacheBytes)}");
+            }
+
+            foreach (var diagnostic in readiness.Diagnostics)
+            {
+                Console.WriteLine($"  diagnostic: {diagnostic.Code}: {diagnostic.Message}");
+            }
+        }
+
+        if (session is { Loaded: true })
+        {
+            Console.WriteLine();
+            Console.WriteLine("Active session:");
+            Console.WriteLine($"  model: {session.ModelId}");
+            Console.WriteLine($"  provider: {session.ProviderId ?? session.Mode ?? "unknown"}");
+            Console.WriteLine($"  busy: {session.Busy}");
+            Console.WriteLine($"  context: {session.ContextSize?.ToString() ?? "unknown"}");
+            Console.WriteLine($"  resident: {CommandLineHelpers.FormatNullableBytes(session.ResidentBytes)}");
+            Console.WriteLine($"  KV: {CommandLineHelpers.FormatNullableBytes(session.KvBytes)}");
+            Console.WriteLine($"  scratch: {CommandLineHelpers.FormatNullableBytes(session.ScratchBytes)}");
+            Console.WriteLine($"  expert cache: {CommandLineHelpers.FormatNullableBytes(session.ExpertCacheBytes)}");
+            Console.WriteLine($"  requests: {session.RequestCount}");
+            Console.WriteLine($"  tokens: prompt={session.PromptTokens}, completion={session.CompletionTokens}");
         }
 
         Console.WriteLine();
-        Console.WriteLine("Tomur loads one local llama.cpp session on the first compatible API request. Use /api/runtime/status on the running service to inspect the active session.");
+        Console.WriteLine("Use /api/runtime/status on the running service for the full readiness and session snapshot.");
         return 0;
+    }
+
+    private static RuntimeStatusResponse? TryGetRunningRuntimeStatus(DataPaths paths)
+    {
+        try
+        {
+            var configuration = new ConfigurationStore(paths).EnsureConfiguration();
+            if (configuration.Status == "error")
+            {
+                return null;
+            }
+
+            var configuredUrl = configuration.Configuration.Server.Urls
+                .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .FirstOrDefault();
+            if (!Uri.TryCreate(configuredUrl, UriKind.Absolute, out var baseUri))
+            {
+                return null;
+            }
+
+            using var client = new HttpClient
+            {
+                BaseAddress = baseUri,
+                Timeout = TimeSpan.FromSeconds(2)
+            };
+            using var response = client.GetAsync("/api/runtime/status").GetAwaiter().GetResult();
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            using var stream = response.Content.ReadAsStream();
+            var status = JsonSerializer.Deserialize(
+                stream,
+                AppJsonSerializerContext.Default.RuntimeStatusResponse);
+            return status is not null &&
+                string.Equals(
+                    Path.GetFullPath(status.Paths.DataDirectory),
+                    Path.GetFullPath(paths.DataDirectory),
+                    StringComparison.OrdinalIgnoreCase)
+                ? status
+                : null;
+        }
+        catch (Exception exception) when (
+            exception is HttpRequestException or TaskCanceledException or JsonException or IOException or
+                UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return null;
+        }
     }
 
     private static void PrintCatalog(DataPaths paths, bool includeAll)
@@ -362,7 +453,7 @@ Options:
 Usage:
   tomur ps [--data-dir <path>]
 
-Shows model assets visible to Tomur. The running service loads a llama.cpp session on first compatible API request.
+Shows model readiness and, when the local service is reachable, the active inference session.
 """);
     }
 }

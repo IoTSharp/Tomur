@@ -16,14 +16,26 @@ public sealed class LocalModelCatalog
     };
 
     private readonly DataPaths paths;
+    private readonly ModelProviderRegistry? providerRegistry;
     private readonly ModelCatalog packageCatalog = new();
 
     public LocalModelCatalog(DataPaths paths)
+        : this(paths, null)
+    {
+    }
+
+    public LocalModelCatalog(DataPaths paths, ModelProviderRegistry? providerRegistry)
     {
         this.paths = paths;
+        this.providerRegistry = providerRegistry;
     }
 
     public IReadOnlyList<LocalModelDescriptor> ListModels()
+        => ListModelCandidates()
+            .Where(IsVisibleModel)
+            .ToArray();
+
+    public IReadOnlyList<LocalModelDescriptor> ListModelCandidates()
     {
         if (!Directory.Exists(paths.ModelsDirectory))
         {
@@ -93,6 +105,43 @@ public sealed class LocalModelCatalog
             .Select(static group => group.First())
             .OrderBy(static descriptor => descriptor.Id, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
+
+    private bool IsVisibleModel(LocalModelDescriptor model)
+    {
+        if (!string.Equals(model.Format, "managed-model", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (providerRegistry is not null)
+        {
+            var readiness = providerRegistry.InspectModel(model);
+            return readiness.MetadataValid && readiness.AssetsComplete;
+        }
+
+        if (!ModelProviderManifestReader.TryRead(model.AbsolutePath, out var manifest, out _) || manifest is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            var modelDirectory = Path.GetDirectoryName(model.AbsolutePath)!;
+            var configPath = ModelProviderManifestReader.ResolveAssetPath(modelDirectory, manifest.ConfigFile);
+            var tokenizerPath = ModelProviderManifestReader.ResolveAssetPath(modelDirectory, manifest.TokenizerFile);
+            return File.Exists(configPath) &&
+                File.Exists(tokenizerPath) &&
+                Directory.EnumerateFiles(
+                    modelDirectory,
+                    manifest.TensorPattern,
+                    SearchOption.TopDirectoryOnly).Any();
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or ArgumentException or InvalidDataException)
+        {
+            return false;
+        }
     }
 
     private LocalModelDescriptor? TryCreateProviderDescriptor(string manifestPath)

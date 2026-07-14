@@ -119,6 +119,33 @@ internal static class DoctorCommand
             Console.WriteLine($"  Managed provider search path: {directory}");
         }
 
+        foreach (var model in diagnostics.Details.ManagedModels)
+        {
+            Console.WriteLine($"  Managed model: {model.ModelId} [{model.Status}]");
+            Console.WriteLine($"    Provider: {model.ProviderId ?? "unavailable"}");
+            Console.WriteLine($"    Architecture: {model.Architecture}");
+            Console.WriteLine($"    Quantization: {model.Quantization} / {model.QuantizationLayout ?? "unknown"}");
+            Console.WriteLine($"    Readiness: provider={model.ProviderDiscovered}, metadata={model.MetadataValid}, assets={model.AssetsComplete}, forward={model.ForwardVerified}, session={model.SessionLoaded}");
+            Console.WriteLine($"    Tensor shards/indexed: {model.TensorFileCount?.ToString() ?? "unknown"} / {model.TensorCount?.ToString() ?? "unknown"}");
+            Console.WriteLine($"    Resident/KV/scratch: {CommandLineHelpers.FormatNullableBytes(model.ResidentBytes)} / {CommandLineHelpers.FormatNullableBytes(model.KvBytes)} / {CommandLineHelpers.FormatNullableBytes(model.ScratchBytes)}");
+            Console.WriteLine($"    Expert cache: {CommandLineHelpers.FormatNullableBytes(model.ExpertCacheBytes)}");
+            foreach (var modelDiagnostic in model.Diagnostics)
+            {
+                Console.WriteLine($"    Diagnostic: {modelDiagnostic.Code}: {modelDiagnostic.Message}");
+            }
+        }
+
+        if (diagnostics.Details.Session.Loaded)
+        {
+            var session = diagnostics.Details.Session;
+            Console.WriteLine($"  Session provider: {session.ProviderId ?? session.Mode ?? "unknown"}");
+            Console.WriteLine($"  Session model: {session.ModelId}");
+            Console.WriteLine($"  Session busy: {session.Busy}");
+            Console.WriteLine($"  Session resident/KV/scratch: {CommandLineHelpers.FormatNullableBytes(session.ResidentBytes)} / {CommandLineHelpers.FormatNullableBytes(session.KvBytes)} / {CommandLineHelpers.FormatNullableBytes(session.ScratchBytes)}");
+            Console.WriteLine($"  Session expert cache: {CommandLineHelpers.FormatNullableBytes(session.ExpertCacheBytes)}");
+            Console.WriteLine($"  Session requests/tokens: {session.RequestCount} / {session.PromptTokens} / {session.CompletionTokens}");
+        }
+
         Console.WriteLine();
         Console.WriteLine("Diagnostics:");
 

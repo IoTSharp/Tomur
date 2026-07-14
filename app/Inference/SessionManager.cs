@@ -15,8 +15,11 @@ public sealed class SessionManager : IDisposable
     private readonly ModelProviderRegistry providerRegistry;
     private readonly ILogger<SessionManager> logger;
     private readonly object gate = new();
+    private readonly SemaphoreSlim executionGate = new(1, 1);
     private LlamaNativeSession? currentSession;
     private ITextGenerationSession? currentManagedSession;
+    private CancellationTokenSource? activeRequestCancellation;
+    private SessionErrorSnapshot? lastError;
     private string? currentProviderId;
     private string? currentModelId;
     private string? currentModelPath;
@@ -24,6 +27,8 @@ public sealed class SessionManager : IDisposable
     private bool currentEmbeddings;
     private int currentGpuLayers;
     private string? currentAcceleratorKey;
+    private bool unloadRequested;
+    private int activeRequestCount;
     private bool disposed;
 
     public SessionManager(
@@ -47,23 +52,32 @@ public sealed class SessionManager : IDisposable
     {
         ArgumentNullException.ThrowIfNull(options);
 
-        lock (gate)
+        return Execute(cancellationToken, effectiveCancellationToken =>
         {
-            var provider = providerRegistry.FindTextProvider(model);
-            if (provider is not null)
+            ITextGenerationSession? managedSession = null;
+            LlamaNativeSession? nativeSession = null;
+            lock (gate)
             {
-                var managedSession = GetOrLoadManagedCore(provider, model, options.ContextSize);
-                return managedSession.Generate(prompt, options, cancellationToken, onToken);
+                var provider = providerRegistry.FindTextProvider(model);
+                if (provider is not null)
+                {
+                    managedSession = GetOrLoadManagedCore(provider, model, options.ContextSize);
+                }
+                else
+                {
+                    if (string.Equals(model.Format, "managed-model", StringComparison.OrdinalIgnoreCase))
+                    {
+                        ThrowManagedProviderUnavailable(model);
+                    }
+
+                    nativeSession = GetOrLoadCore(model, embeddings: false, options.ContextSize);
+                }
             }
 
-            if (string.Equals(model.Format, "managed-model", StringComparison.OrdinalIgnoreCase))
-            {
-                ThrowManagedProviderUnavailable(model);
-            }
-
-            var session = GetOrLoadCore(model, embeddings: false, options.ContextSize);
-            return session.Generate(prompt, options, cancellationToken, onToken);
-        }
+            return managedSession is not null
+                ? managedSession.Generate(prompt, options, effectiveCancellationToken, onToken)
+                : nativeSession!.Generate(prompt, options, effectiveCancellationToken, onToken);
+        });
     }
 
     internal CompletionResult Chat(
@@ -79,25 +93,37 @@ public sealed class SessionManager : IDisposable
         ArgumentNullException.ThrowIfNull(managedOptions);
         ArgumentNullException.ThrowIfNull(fallbackOptions);
 
-        lock (gate)
+        return Execute(cancellationToken, effectiveCancellationToken =>
         {
-            var provider = providerRegistry.FindTextProvider(model);
-            if (provider is not null)
+            ITextGenerationSession? managedSession = null;
+            LlamaNativeSession? nativeSession = null;
+            lock (gate)
             {
-                var managedSession = GetOrLoadManagedCore(provider, model, managedOptions.ContextSize);
-                return managedSession is IChatGenerationSession chatSession
-                    ? chatSession.GenerateChat(messages, managedOptions, cancellationToken, onToken)
-                    : managedSession.Generate(fallbackPrompt, managedOptions, cancellationToken, onToken);
+                var provider = providerRegistry.FindTextProvider(model);
+                if (provider is not null)
+                {
+                    managedSession = GetOrLoadManagedCore(provider, model, managedOptions.ContextSize);
+                }
+                else
+                {
+                    if (string.Equals(model.Format, "managed-model", StringComparison.OrdinalIgnoreCase))
+                    {
+                        ThrowManagedProviderUnavailable(model);
+                    }
+
+                    nativeSession = GetOrLoadCore(model, embeddings: false, fallbackOptions.ContextSize);
+                }
             }
 
-            if (string.Equals(model.Format, "managed-model", StringComparison.OrdinalIgnoreCase))
+            if (managedSession is IChatGenerationSession chatSession)
             {
-                ThrowManagedProviderUnavailable(model);
+                return chatSession.GenerateChat(messages, managedOptions, effectiveCancellationToken, onToken);
             }
 
-            var session = GetOrLoadCore(model, embeddings: false, fallbackOptions.ContextSize);
-            return session.Generate(fallbackPrompt, fallbackOptions, cancellationToken, onToken);
-        }
+            return managedSession is not null
+                ? managedSession.Generate(fallbackPrompt, managedOptions, effectiveCancellationToken, onToken)
+                : nativeSession!.Generate(fallbackPrompt, fallbackOptions, effectiveCancellationToken, onToken);
+        });
     }
 
     internal EmbeddingResult Embed(
@@ -108,10 +134,95 @@ public sealed class SessionManager : IDisposable
     {
         ArgumentNullException.ThrowIfNull(options);
 
+        return Execute(cancellationToken, effectiveCancellationToken =>
+        {
+            LlamaNativeSession session;
+            lock (gate)
+            {
+                session = GetOrLoadCore(model, embeddings: true, options.ContextSize);
+            }
+
+            return session.Embed(input, options, effectiveCancellationToken);
+        });
+    }
+
+    private T Execute<T>(CancellationToken cancellationToken, Func<CancellationToken, T> action)
+    {
+        executionGate.Wait(cancellationToken);
+        CancellationTokenSource? requestCancellation = null;
+        try
+        {
+            lock (gate)
+            {
+                ObjectDisposedException.ThrowIf(disposed, this);
+                if (unloadRequested)
+                {
+                    throw new InferenceException(
+                        "session_unloading",
+                        "The active inference session is being unloaded.",
+                        ["Retry the request after the unload operation completes."]);
+                }
+
+                requestCancellation = new CancellationTokenSource();
+                activeRequestCancellation = requestCancellation;
+                activeRequestCount = 1;
+            }
+
+            var activeCancellation = requestCancellation
+                ?? throw new InvalidOperationException("Inference request cancellation was not initialized.");
+            using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                activeCancellation.Token);
+            try
+            {
+                return action(linkedCancellation.Token);
+            }
+            catch (OperationCanceledException exception)
+                when (activeCancellation.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            {
+                var inferenceException = new InferenceException(
+                    "session_unloaded",
+                    "The inference request was cancelled because the active session was unloaded.",
+                    ["Retry the request to load a new session."],
+                    exception);
+                RecordError(inferenceException);
+                throw inferenceException;
+            }
+            catch (InferenceException exception)
+            {
+                RecordError(exception);
+                throw;
+            }
+        }
+        finally
+        {
+            if (requestCancellation is not null)
+            {
+                lock (gate)
+                {
+                    if (ReferenceEquals(activeRequestCancellation, requestCancellation))
+                    {
+                        activeRequestCancellation = null;
+                    }
+
+                    activeRequestCount = 0;
+                }
+
+                requestCancellation.Dispose();
+            }
+
+            executionGate.Release();
+        }
+    }
+
+    private void RecordError(InferenceException exception)
+    {
         lock (gate)
         {
-            var session = GetOrLoadCore(model, embeddings: true, options.ContextSize);
-            return session.Embed(input, options, cancellationToken);
+            lastError = new SessionErrorSnapshot(
+                exception.Code,
+                exception.Message,
+                DateTimeOffset.UtcNow);
         }
     }
 
@@ -192,6 +303,7 @@ public sealed class SessionManager : IDisposable
         currentEmbeddings = embeddings;
         currentGpuLayers = accelerationPlan.EffectiveGpuLayers;
         currentAcceleratorKey = accelerationPlan.SelectedAcceleratorKey;
+        lastError = null;
         return currentSession;
     }
 
@@ -252,6 +364,7 @@ public sealed class SessionManager : IDisposable
         currentModelPath = model.AbsolutePath;
         currentContextSize = effectiveContextSize;
         currentEmbeddings = false;
+        lastError = null;
         return managedSession;
     }
 
@@ -314,19 +427,44 @@ public sealed class SessionManager : IDisposable
 
     public void Unload()
     {
+        CancellationTokenSource? cancellation;
         lock (gate)
         {
-            if (currentSession is not null || currentManagedSession is not null)
+            ObjectDisposedException.ThrowIf(disposed, this);
+            unloadRequested = true;
+            cancellation = activeRequestCancellation;
+        }
+
+        try
+        {
+            try
             {
-                logger.SessionUnloaded(currentModelId ?? "unknown");
+                cancellation?.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // The request completed between observing and cancelling its token.
             }
 
-            currentSession?.Dispose();
-            currentSession = null;
-            currentManagedSession?.Dispose();
-            currentManagedSession = null;
-            currentProviderId = null;
-            ResetSessionMetadata();
+            executionGate.Wait();
+            try
+            {
+                lock (gate)
+                {
+                    UnloadCore();
+                }
+            }
+            finally
+            {
+                executionGate.Release();
+            }
+        }
+        finally
+        {
+            lock (gate)
+            {
+                unloadRequested = false;
+            }
         }
     }
 
@@ -334,14 +472,18 @@ public sealed class SessionManager : IDisposable
     {
         lock (gate)
         {
+            SessionSnapshot snapshot;
             if (currentManagedSession is not null)
             {
-                return currentManagedSession.GetSnapshot();
+                snapshot = currentManagedSession.GetSnapshot();
             }
-
-            if (currentSession is null)
+            else if (currentSession is not null)
             {
-                return new SessionSnapshot(
+                snapshot = currentSession.GetSnapshot();
+            }
+            else
+            {
+                snapshot = new SessionSnapshot(
                     Loaded: false,
                     ModelId: null,
                     ModelPath: null,
@@ -353,12 +495,17 @@ public sealed class SessionManager : IDisposable
                     Diagnostics: ["no active inference session"]);
             }
 
-            return currentSession.GetSnapshot();
+            return snapshot with
+            {
+                Busy = activeRequestCount > 0,
+                LastError = lastError
+            };
         }
     }
 
     public void Dispose()
     {
+        CancellationTokenSource? cancellation;
         lock (gate)
         {
             if (disposed)
@@ -366,14 +513,59 @@ public sealed class SessionManager : IDisposable
                 return;
             }
 
-            currentSession?.Dispose();
-            currentSession = null;
-            currentManagedSession?.Dispose();
-            currentManagedSession = null;
-            currentProviderId = null;
-            ResetSessionMetadata();
-            disposed = true;
+            unloadRequested = true;
+            cancellation = activeRequestCancellation;
         }
+
+        try
+        {
+            try
+            {
+                cancellation?.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+
+            executionGate.Wait();
+            try
+            {
+                lock (gate)
+                {
+                    UnloadCore();
+                    disposed = true;
+                    unloadRequested = false;
+                }
+            }
+            finally
+            {
+                executionGate.Release();
+            }
+        }
+        catch
+        {
+            lock (gate)
+            {
+                unloadRequested = false;
+            }
+
+            throw;
+        }
+    }
+
+    private void UnloadCore()
+    {
+        if (currentSession is not null || currentManagedSession is not null)
+        {
+            logger.SessionUnloaded(currentModelId ?? "unknown");
+        }
+
+        currentSession?.Dispose();
+        currentSession = null;
+        currentManagedSession?.Dispose();
+        currentManagedSession = null;
+        currentProviderId = null;
+        ResetSessionMetadata();
     }
 
     private void ResetSessionMetadata()

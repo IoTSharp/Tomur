@@ -8,7 +8,7 @@
 
 1. 已建立 `Tomur.Providers.Glm` 独立纯 C# 类库、extend-only provider 契约、非 AOT 动态发现边界与 `SessionManager` 选择路径；未匹配的现有模型继续使用 llama.cpp。
 2. 已建立 `model.tomur.json`、GLM 配置、tokenizer 基础结构和 safetensors header/tensor index 的有界只读探测，并接入 provider discovery、Catalog、doctor、Runtime API 与 Web Runtime 诊断。
-3. 已建立固定 seed 的 tiny F32 fixture、版本化 oracle、tensor manifest、SHA-256 校验、隐藏 generate/verify 入口与 M1-M9 独立测试项目；fixture generator 1.1.0 增加 dense MLP checkpoint，同时保留既有 MoE teacher-forcing 基线。
+3. 已建立固定 seed 的 tiny F32 fixture、版本化 oracle、tensor manifest、SHA-256 校验、隐藏 generate/verify 入口与 M1-M10 独立测试项目；fixture generator 1.1.0 增加 dense MLP checkpoint，同时保留既有 MoE teacher-forcing 基线。
 4. 已建立统一 tensor descriptor、只读 shard 随机访问、F32/F16/BF16 resident 转换、int4/int8 量化视图、池化 workspace 与 expert slab 基础层。
 5. 已建立无并行、无 intrinsics 的 scalar reference kernels，覆盖 embedding、normalization、F32 与 int8/int4 矩阵乘、activation int8 量化、基础激活、elementwise、residual 和 stable top-k，并显式校验 shape、stride、buffer、alias 与量化边界。
 6. 已实现 WordLevel/BPE tokenizer、必要的 normalizer/pre-tokenizer/decoder 子集、byte-level UTF-8 映射、added/special token、GLM role prompt template、多个 token stop，以及跨 token UTF-8 和文本 stop 增量解码。
@@ -31,6 +31,12 @@
 23. 原始 BF16 `allenai/OLMoE-1B-7B-0125-Instruct` 三个 safetensors shard 已通过 Catalog、动态 provider load、完整模型加载与中文 Ollama 非流式真实对话；`/api/runtime/status` 可报告 147 个 resident tensor、3 个打开的 shard、resident/KV/scratch 预算和 expert cache/I/O。记录见 `docs/r15-olmoe-smoke.md`。
 24. 文本 session 生命周期日志已从硬编码的 llama 文案改为中性 `text generation session`，并显示实际 `runtime`；Runtime 诊断会优先报告已加载的 managed session，不再被未使用的 llama.cpp native bundle 状态覆盖。
 25. managed GLM 以 extend-only 方式增加 `glm4_moe_lite` architecture/config 契约，要求 manifest 与 `model_type` 一致，并校验当前实现所需的 MLA head、interleaved RoPE、SwiGLU、sigmoid/noaux router 与 dense/sparse layer 边界；GLM-4.7 prompt 分支已对齐 prefix 换行、默认非 thinking assistant closure 和 tool response 包装。真实 REAP 权重转换与完整模型 smoke 尚未执行，异机步骤记录在 `docs/r15-glm4-moe-lite-validation.md`。
+26. 已增加可选 managed model readiness 契约；GLM 与 OLMoE 可只读探测 metadata、必要资产、tensor 数量、resident/KV/scratch/expert cache 计划和当前内存预算，不读取 resident payload，不执行 forward。
+27. `LocalModelCatalog` 已区分候选模型与兼容 API 可见模型；provider、metadata 或必要资产校验失败的 managed 模型不再进入 `/v1/models`、`/api/tags` 和协议模型选择路径，并通过 Runtime/doctor 保留结构化诊断。
+28. Ollama `generate` 与 `chat` streaming 已接入 provider 增量 callback，按 NDJSON 输出 `done=false` 文本增量和带 usage/duration 的 `done=true` 终帧；流中失败继续返回 Ollama 风格结构化错误。
+29. `SessionManager` 已拆分状态锁与单请求执行门；session unload 会取消活动生成，等待请求退出后再释放 session，并通过 `session_unloading` / `session_unloaded` 保持并发请求和协议错误边界。
+30. session 快照已增加 provider、architecture、context、busy、resident/KV/scratch、expert cache、expert I/O、请求/token 统计与最近错误；`tomur ps`、`tomur doctor`、Runtime API 和 Web Runtime 使用同一 readiness/session 状态。
+31. M10 独立测试项目已加入 solution，覆盖 Ollama 增量/终帧、readiness 内存计划、不完整资产可见性拦截、forward verified 状态与 unload 取消/释放；本轮未执行构建、测试或服务 smoke。
 
 ### R14 当前已接入
 

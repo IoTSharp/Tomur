@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using Tomur.Config;
 using Tomur.Hardware;
+using Tomur.Inference;
 using Tomur.Native;
 using Tomur.Providers;
 using Tomur.Storage;
@@ -32,4 +33,19 @@ public sealed record RuntimeStatusResponse(
         [],
         [],
         []);
+
+    [JsonPropertyName("managed_models")]
+    public IReadOnlyList<ModelReadinessStatus> ManagedModels { get; init; } = [];
+
+    [JsonPropertyName("session")]
+    public SessionSnapshot Session { get; init; } = new(
+        false,
+        null,
+        null,
+        null,
+        null,
+        0,
+        0,
+        0,
+        ["no active inference session"]);
 }

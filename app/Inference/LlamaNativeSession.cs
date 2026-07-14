@@ -310,7 +310,12 @@ internal sealed class LlamaNativeSession : IDisposable
             RequestCount: Interlocked.Read(ref requestCount),
             PromptTokens: Interlocked.Read(ref promptTokens),
             CompletionTokens: Interlocked.Read(ref completionTokens),
-            Diagnostics: BuildSessionDiagnostics($"mode: {(embeddings ? "embeddings" : "generation")}"));
+            Diagnostics: BuildSessionDiagnostics($"mode: {(embeddings ? "embeddings" : "generation")}"))
+        {
+            ProviderId = "llama.cpp",
+            Architecture = "llama",
+            ContextSize = contextSize
+        };
     }
 
     public void Dispose()

@@ -2049,8 +2049,23 @@ public static class ApiRouteExtensions
 
         try
         {
+            if (stream)
+            {
+                await WriteOllamaGenerateStreamAsync(
+                    context,
+                    model.Id,
+                    onGenerate: emit => inferenceService.Complete(
+                        model,
+                        prompt,
+                        options,
+                        context.RequestAborted,
+                        emit),
+                    onInferenceError: exception => diagnosticsProvider.GetRuntimeFailure(model.Id, exception));
+                return;
+            }
+
             var result = inferenceService.Complete(model, prompt, options, context.RequestAborted);
-            await WriteOllamaGenerateSuccessAsync(context, model.Id, result, stream);
+            await WriteOllamaGenerateSuccessAsync(context, model.Id, result, stream: false);
         }
         catch (InferenceException exception)
         {
@@ -2107,8 +2122,23 @@ public static class ApiRouteExtensions
 
         try
         {
+            if (stream)
+            {
+                await WriteOllamaChatStreamAsync(
+                    context,
+                    model.Id,
+                    onGenerate: emit => inferenceService.Chat(
+                        model,
+                        messages,
+                        options,
+                        context.RequestAborted,
+                        emit),
+                    onInferenceError: exception => diagnosticsProvider.GetRuntimeFailure(model.Id, exception));
+                return;
+            }
+
             var result = inferenceService.Chat(model, messages, options, context.RequestAborted);
-            await WriteOllamaChatSuccessAsync(context, model.Id, result, stream);
+            await WriteOllamaChatSuccessAsync(context, model.Id, result, stream: false);
         }
         catch (InferenceException exception)
         {
@@ -3260,6 +3290,7 @@ public static class ApiRouteExtensions
         context.Response.StatusCode = StatusCodes.Status200OK;
         context.Response.ContentType = "text/event-stream; charset=utf-8";
         context.Response.Headers.CacheControl = "no-cache";
+        context.Response.Headers["X-Accel-Buffering"] = "no";
     }
 
     private static async Task WriteLogEventAsync(HttpContext context, LogStreamEntry entry)
@@ -3287,6 +3318,7 @@ public static class ApiRouteExtensions
         context.Response.StatusCode = StatusCodes.Status200OK;
         context.Response.ContentType = "text/event-stream; charset=utf-8";
         context.Response.Headers.CacheControl = "no-cache";
+        context.Response.Headers["X-Accel-Buffering"] = "no";
     }
 
     private static async Task WriteAnthropicEventAsync<T>(
@@ -3338,6 +3370,179 @@ public static class ApiRouteExtensions
             "error",
             error,
             AppJsonSerializerContext.Default.AnthropicErrorResponse);
+    }
+
+    internal static async Task WriteOllamaGenerateStreamAsync(
+        HttpContext context,
+        string model,
+        Func<Action<string>, CompletionResult> onGenerate,
+        Func<InferenceException, RuntimeDiagnostic> onInferenceError)
+    {
+        StartOllamaStream(context);
+        var wroteText = false;
+        CompletionResult result;
+        try
+        {
+            result = onGenerate(chunk =>
+            {
+                if (string.IsNullOrEmpty(chunk))
+                {
+                    return;
+                }
+
+                wroteText = true;
+                WriteOllamaGenerateChunkAsync(
+                    context,
+                    new OllamaGenerateResponse(
+                        model,
+                        DateTimeOffset.UtcNow,
+                        chunk,
+                        false,
+                        null,
+                        0,
+                        0,
+                        0,
+                        0)).GetAwaiter().GetResult();
+            });
+        }
+        catch (InferenceException exception)
+        {
+            await WriteOllamaStreamErrorAsync(
+                context,
+                OllamaErrorResponse.RuntimeUnavailable(onInferenceError(exception)));
+            return;
+        }
+        catch (Exception exception) when (IsNativeRuntimeException(exception))
+        {
+            await WriteOllamaStreamErrorAsync(
+                context,
+                OllamaErrorResponse.RuntimeUnavailable(onInferenceError(CreateNativeRuntimeException(exception))));
+            return;
+        }
+
+        await WriteOllamaGenerateChunkAsync(
+            context,
+            new OllamaGenerateResponse(
+                model,
+                DateTimeOffset.UtcNow,
+                wroteText ? string.Empty : result.Text,
+                true,
+                null,
+                ToNanoseconds(result.Elapsed),
+                0,
+                result.Usage.PromptTokens,
+                result.Usage.CompletionTokens));
+    }
+
+    internal static async Task WriteOllamaChatStreamAsync(
+        HttpContext context,
+        string model,
+        Func<Action<string>, CompletionResult> onGenerate,
+        Func<InferenceException, RuntimeDiagnostic> onInferenceError)
+    {
+        StartOllamaStream(context);
+        var wroteText = false;
+        CompletionResult result;
+        try
+        {
+            result = onGenerate(chunk =>
+            {
+                if (string.IsNullOrEmpty(chunk))
+                {
+                    return;
+                }
+
+                wroteText = true;
+                WriteOllamaChatChunkAsync(
+                    context,
+                    new OllamaChatResponse(
+                        model,
+                        DateTimeOffset.UtcNow,
+                        new OllamaChatMessage("assistant", chunk),
+                        false,
+                        0,
+                        0,
+                        0,
+                        0)).GetAwaiter().GetResult();
+            });
+        }
+        catch (InferenceException exception)
+        {
+            await WriteOllamaStreamErrorAsync(
+                context,
+                OllamaErrorResponse.RuntimeUnavailable(onInferenceError(exception)));
+            return;
+        }
+        catch (Exception exception) when (IsNativeRuntimeException(exception))
+        {
+            await WriteOllamaStreamErrorAsync(
+                context,
+                OllamaErrorResponse.RuntimeUnavailable(onInferenceError(CreateNativeRuntimeException(exception))));
+            return;
+        }
+
+        await WriteOllamaChatChunkAsync(
+            context,
+            new OllamaChatResponse(
+                model,
+                DateTimeOffset.UtcNow,
+                new OllamaChatMessage("assistant", wroteText ? string.Empty : result.Text),
+                true,
+                ToNanoseconds(result.Elapsed),
+                0,
+                result.Usage.PromptTokens,
+                result.Usage.CompletionTokens));
+    }
+
+    private static void StartOllamaStream(HttpContext context)
+    {
+        context.Response.StatusCode = StatusCodes.Status200OK;
+        context.Response.ContentType = "application/x-ndjson; charset=utf-8";
+        context.Response.Headers.CacheControl = "no-cache";
+        context.Response.Headers["X-Accel-Buffering"] = "no";
+    }
+
+    private static async Task WriteOllamaGenerateChunkAsync(
+        HttpContext context,
+        OllamaGenerateResponse response)
+    {
+        await JsonSerializer.SerializeAsync(
+            context.Response.Body,
+            response,
+            AppJsonSerializerContext.Default.OllamaGenerateResponse,
+            context.RequestAborted);
+        await context.Response.WriteAsync("\n", context.RequestAborted);
+        await context.Response.Body.FlushAsync(context.RequestAborted);
+    }
+
+    private static async Task WriteOllamaChatChunkAsync(
+        HttpContext context,
+        OllamaChatResponse response)
+    {
+        await JsonSerializer.SerializeAsync(
+            context.Response.Body,
+            response,
+            AppJsonSerializerContext.Default.OllamaChatResponse,
+            context.RequestAborted);
+        await context.Response.WriteAsync("\n", context.RequestAborted);
+        await context.Response.Body.FlushAsync(context.RequestAborted);
+    }
+
+    private static async Task WriteOllamaStreamErrorAsync(HttpContext context, OllamaErrorResponse error)
+    {
+        if (!context.Response.HasStarted)
+        {
+            await StreamingErrorResponse.WriteOllamaAsync(context, error);
+            return;
+        }
+
+        await JsonSerializer.SerializeAsync(
+            context.Response.Body,
+            error,
+            AppJsonSerializerContext.Default.OllamaErrorResponse,
+            context.RequestAborted);
+        await context.Response.WriteAsync("\n", context.RequestAborted);
+        await context.Response.Body.FlushAsync(context.RequestAborted);
     }
 
     private static async Task WriteOllamaGenerateSuccessAsync(
