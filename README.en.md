@@ -182,7 +182,7 @@ Tomur/
     src/
 ```
 
-`Tomur.csproj` hosts the CLI, local HTTP API, service-mode startup, runtime management, and web static assets. `Program.cs` owns process entry, top-level command dispatch, and global help; concrete CLI implementations live under `app/Cli/`. `providers/` is limited to independent pure C# model providers and does not create a second service or product entry point; `tests/` only contains stage-specific validation projects.
+`Tomur.csproj` hosts the CLI, local HTTP API, service-mode startup, runtime management, web static assets, and non-AOT managed provider packaging. `Program.cs` owns process entry, top-level command dispatch, and global help; concrete CLI implementations live under `app/Cli/`. `providers/` is limited to independent pure C# model providers and does not create a second service or product entry point; `tests/` only contains stage-specific validation projects.
 
 `native/` contains native backend source code, CMake projects, and release packaging boundaries. `app/Native/` only contains C# dynamic library loading, P/Invoke, and native adapter code. Pure managed providers do not replace the existing llama.cpp path and are selected explicitly by model format and architecture. The web source lives under `web/`; its build output goes to `app/wwwroot` and is served by the Tomur local HTTP service.
 
@@ -212,7 +212,7 @@ Override the data directory with `--data-dir <path>` or `TOMUR_DATA_DIR`. If the
 
 Tomur release artifacts should carry the required C++ native dynamic libraries and prepare them into Tomur's managed runtime directory on first run or version change. Model weights are not packaged into the executable; `tomur pull` downloads them into the local model directory and records them in `<data>/models/models.manifest.json`.
 
-Independent managed provider DLLs belong to the non-AOT self-contained release surface. Native AOT releases must statically reference compatible providers or clearly report that dynamic managed providers are unavailable. This distinction does not remove or downgrade existing native providers.
+Independent managed provider DLLs belong to the non-AOT self-contained release surface. Publish places approved providers beside the main application under `providers/` and writes `providers.manifest.json` with the locked contract version, assembly version, and SHA-256; discovery verifies those values before loading. Native AOT releases do not dynamically load independent managed assemblies and report the boundary as `dynamic_managed_providers_unavailable`. This distinction does not remove or downgrade existing native providers.
 
 `tomur native prepare` extracts or repairs the native runtime bundle. `tomur doctor` checks runtime, models, SQLite, ports, proxy, and hardware status. Missing or damaged native libraries are reported through clear CLI, API, and UI diagnostics.
 

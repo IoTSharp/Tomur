@@ -4,6 +4,10 @@
 
 ## 未发布
 
+### M13 发布与兼容
+
+已完成 managed provider 发布与兼容基础代码：非 AOT 发布会构建批准的 `Tomur.Providers.Glm.dll` 并复制到主程序旁的 `providers/`，生成包含契约版本、程序集版本、provider ID 和 SHA-256 的 `providers.manifest.json`。provider discovery 会校验 `Tomur` 契约程序集版本，并在发布清单存在时拒绝缺失或 checksum 不匹配的 provider；失败只影响对应 managed provider，native provider 保持可用。Native AOT 继续返回 `dynamic_managed_providers_unavailable`，未引入未经验证的动态托管程序集加载。M13 测试项目已接入 solution；本轮未执行构建、测试或发布 smoke，跨平台证据归 M14。
+
 ### M12 高级能力
 
 已完成 managed GLM 高级能力基础代码：DSA/MTP 配置与 tensor probe、接收 indexer score 的稳定 DSA top-k selection、dense-equivalent runtime 路径、可选 MTP resident head 与单步 draft、speculative rejection sampling、grammar forced spans、router lookahead prefetch、live expert repin，以及带模型身份、维度检查和 SHA-256 的 compressed KV 快照/恢复与 isolated KV fork。未验证的稀疏 DSA 不使用 attention score 冒充 indexer score。M12 独立测试项目已接入 solution；本轮未执行构建或测试，真实模型语义、采样分布、性能、完整模型和跨平台验证仍归 M14。
@@ -16,7 +20,7 @@
 
 1. 已建立 `Tomur.Providers.Glm` 独立纯 C# 类库、extend-only provider 契约、非 AOT 动态发现边界与 `SessionManager` 选择路径；未匹配的现有模型继续使用 llama.cpp。
 2. 已建立 `model.tomur.json`、GLM 配置、tokenizer 基础结构和 safetensors header/tensor index 的有界只读探测，并接入 provider discovery、Catalog、doctor、Runtime API 与 Web Runtime 诊断。
-3. 已建立固定 seed 的 tiny F32 fixture、版本化 oracle、tensor manifest、SHA-256 校验、隐藏 generate/verify 入口与 M1-M12 独立测试项目；fixture generator 1.1.0 增加 dense MLP checkpoint，同时保留既有 MoE teacher-forcing 基线。
+3. 已建立固定 seed 的 tiny F32 fixture、版本化 oracle、tensor manifest、SHA-256 校验、隐藏 generate/verify 入口与 M1-M13 独立测试项目；fixture generator 1.1.0 增加 dense MLP checkpoint，同时保留既有 MoE teacher-forcing 基线。
 4. 已建立统一 tensor descriptor、只读 shard 随机访问、F32/F16/BF16 resident 转换、int4/int8 量化视图、池化 workspace 与 expert slab 基础层。
 5. 已建立无并行、无 intrinsics 的 scalar reference kernels，覆盖 embedding、normalization、F32 与 int8/int4 矩阵乘、activation int8 量化、基础激活、elementwise、residual 和 stable top-k，并显式校验 shape、stride、buffer、alias 与量化边界。
 6. 已实现 WordLevel/BPE tokenizer、必要的 normalizer/pre-tokenizer/decoder 子集、byte-level UTF-8 映射、added/special token、GLM role prompt template、多个 token stop，以及跨 token UTF-8 和文本 stop 增量解码。

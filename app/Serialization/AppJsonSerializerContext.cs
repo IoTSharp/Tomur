@@ -9,6 +9,7 @@ using Tomur.Config;
 using Tomur.Conversations;
 using Tomur.Diagnostics;
 using Tomur.Hardware;
+using Tomur.Inference;
 using Tomur.Multimodal;
 using Tomur.Native;
 using Tomur.Providers;

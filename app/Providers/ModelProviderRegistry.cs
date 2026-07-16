@@ -406,9 +406,38 @@ public sealed class ModelProviderRegistry : IDisposable
                     .EnumerateFiles(directory, "Tomur.Providers.*.dll", SearchOption.TopDirectoryOnly)
                     .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
                     .ToArray();
+                ManagedProviderReleaseManifest? releaseManifest = null;
+                var releaseManifestPath = Path.Combine(directory, ManagedProviderReleaseManifest.FileName);
+                if (File.Exists(releaseManifestPath))
+                {
+                    if (!ManagedProviderReleaseManifest.TryRead(
+                            releaseManifestPath,
+                            out releaseManifest,
+                            out var manifestError))
+                    {
+                        diagnostics.Add(new ModelProviderLoadDiagnostic(
+                            "managed_provider_release_manifest_invalid",
+                            manifestError ?? "Managed provider release manifest is invalid.",
+                            releaseManifestPath));
+                        continue;
+                    }
+
+                    foreach (var releaseEntry in releaseManifest!.Providers)
+                    {
+                        var releaseAssetPath = Path.Combine(directory, releaseEntry.Assembly);
+                        if (!File.Exists(releaseAssetPath))
+                        {
+                            diagnostics.Add(new ModelProviderLoadDiagnostic(
+                                "managed_provider_release_asset_invalid",
+                                $"Provider release asset is missing: {releaseEntry.Assembly}.",
+                                releaseAssetPath));
+                        }
+                    }
+                }
+
                 foreach (var path in assemblyPaths)
                 {
-                    TryLoadAssembly(path, providers, loadedProviders, providerIds, diagnostics);
+                    TryLoadAssembly(path, releaseManifest, providers, loadedProviders, providerIds, diagnostics);
                 }
             }
             catch (Exception exception) when (
@@ -426,6 +455,7 @@ public sealed class ModelProviderRegistry : IDisposable
 
     private static void TryLoadAssembly(
         string path,
+        ManagedProviderReleaseManifest? releaseManifest,
         ICollection<ITextGenerationProvider> providers,
         ICollection<ModelProviderInfo> loadedProviders,
         ISet<string> providerIds,
@@ -434,7 +464,56 @@ public sealed class ModelProviderRegistry : IDisposable
         try
         {
             var fullPath = Path.GetFullPath(path);
+            ManagedProviderReleaseEntry? releaseEntry = null;
+            if (releaseManifest is not null &&
+                !releaseManifest.TryVerify(
+                    Path.GetDirectoryName(fullPath) ?? string.Empty,
+                    Path.GetFileName(fullPath),
+                    out releaseEntry,
+                    out var releaseError))
+            {
+                diagnostics.Add(new ModelProviderLoadDiagnostic(
+                    "managed_provider_release_asset_invalid",
+                    releaseError ?? "Managed provider release asset failed manifest verification.",
+                    fullPath));
+                return;
+            }
+
             var assembly = LoadProviderAssembly(fullPath);
+            var assemblyVersion = assembly.GetName().Version?.ToString();
+            if (releaseEntry is not null &&
+                !string.Equals(assemblyVersion, releaseEntry.Version, StringComparison.Ordinal))
+            {
+                diagnostics.Add(new ModelProviderLoadDiagnostic(
+                    "managed_provider_release_asset_invalid",
+                    $"Provider assembly version {assemblyVersion ?? "unknown"} does not match release manifest version {releaseEntry.Version}.",
+                    fullPath));
+                return;
+            }
+
+            var contractAssembly = assembly
+                .GetReferencedAssemblies()
+                .FirstOrDefault(static reference =>
+                    string.Equals(reference.Name, ModelProviderContract.AssemblyName, StringComparison.Ordinal));
+            if (contractAssembly is null)
+            {
+                diagnostics.Add(new ModelProviderLoadDiagnostic(
+                    "managed_provider_contract_not_found",
+                    $"The provider does not reference the '{ModelProviderContract.AssemblyName}' contract assembly.",
+                    fullPath));
+                return;
+            }
+
+            if (!ModelProviderContract.IsCompatible(contractAssembly))
+            {
+                var expectedVersion = ModelProviderContract.AssemblyVersion?.ToString() ?? "unknown";
+                diagnostics.Add(new ModelProviderLoadDiagnostic(
+                    "managed_provider_contract_incompatible",
+                    $"The provider references contract assembly version {contractAssembly.Version}, but this Tomur release requires {expectedVersion}.",
+                    fullPath));
+                return;
+            }
+
             var providerTypes = GetLoadableTypes(assembly, fullPath, diagnostics)
                 .Where(static type =>
                     !type.IsAbstract &&
@@ -452,7 +531,14 @@ public sealed class ModelProviderRegistry : IDisposable
 
             foreach (var type in providerTypes)
             {
-                TryActivateProvider(type, fullPath, providers, loadedProviders, providerIds, diagnostics);
+                TryActivateProvider(
+                    type,
+                    fullPath,
+                    releaseEntry?.Id,
+                    providers,
+                    loadedProviders,
+                    providerIds,
+                    diagnostics);
             }
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
@@ -467,6 +553,7 @@ public sealed class ModelProviderRegistry : IDisposable
     private static void TryActivateProvider(
         Type type,
         string path,
+        string? expectedProviderId,
         ICollection<ITextGenerationProvider> providers,
         ICollection<ModelProviderInfo> loadedProviders,
         ISet<string> providerIds,
@@ -492,6 +579,17 @@ public sealed class ModelProviderRegistry : IDisposable
                 diagnostics.Add(new ModelProviderLoadDiagnostic(
                     "managed_provider_id_invalid",
                     "Managed provider ID must be a non-empty string.",
+                    path));
+                return;
+            }
+
+            if (expectedProviderId is not null &&
+                !string.Equals(providerId, expectedProviderId, StringComparison.OrdinalIgnoreCase))
+            {
+                DisposeRejectedProvider(provider);
+                diagnostics.Add(new ModelProviderLoadDiagnostic(
+                    "managed_provider_release_asset_invalid",
+                    $"Provider ID '{providerId}' does not match release manifest ID '{expectedProviderId}'.",
                     path));
                 return;
             }

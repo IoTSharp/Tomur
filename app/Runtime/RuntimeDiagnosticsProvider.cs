@@ -656,6 +656,14 @@ public sealed class RuntimeDiagnosticsProvider
                 ["Assign the provider a stable, non-empty provider ID."],
             "managed_provider_id_duplicate" =>
                 ["Remove the duplicate provider assembly or assign it a unique provider ID."],
+            "managed_provider_contract_incompatible" =>
+                ["Publish the provider against the locked Tomur contract assembly version."],
+            "managed_provider_contract_not_found" =>
+                ["Publish a provider that references the Tomur provider contract assembly."],
+            "managed_provider_release_manifest_invalid" =>
+                ["Regenerate the provider release manifest and verify its schema and contract version."],
+            "managed_provider_release_asset_invalid" =>
+                ["Restore the provider DLL from the same release package or regenerate the checksum manifest."],
             "dynamic_managed_providers_unavailable" =>
                 ["Use the non-AOT self-contained release for independent provider DLLs, or a release that statically includes the provider."],
             _ => ["Inspect the provider assembly and model manifest before retrying."]

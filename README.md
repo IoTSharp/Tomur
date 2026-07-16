@@ -233,7 +233,7 @@ Tomur 使用稳定的数据目录保存配置、模型、runtime 缓存、SQLite
 
 Tomur 的发布产物应携带必要的 C++ native dynamic libraries，并在首次运行或版本变化时准备到 Tomur 管理的 runtime 目录。模型权重不会被打包进程序二进制，而是由 `tomur pull` 下载到本地模型目录，并登记到 `<data>/models/models.manifest.json`。
 
-独立纯托管 provider DLL 属于非 AOT 自包含发布面；Native AOT 发布需要静态引用兼容 provider，或明确报告动态托管 provider 不可用。该差异不影响现有 native provider 的发布和使用。
+独立纯托管 provider DLL 属于非 AOT 自包含发布面。发布时批准的 provider 会放入主程序旁的 `providers/`，并由 `providers.manifest.json` 记录契约版本、程序集版本和 SHA-256；运行时会在加载前校验这些信息。Native AOT 发布不动态加载独立托管程序集，并通过 `dynamic_managed_providers_unavailable` 明确报告该边界。该差异不影响现有 native provider 的发布和使用。
 
 `tomur native prepare` 用于释放或修复 native runtime bundle；`tomur doctor` 用于检查 runtime、模型、SQLite、端口、代理与硬件状态。缺失或损坏的 native library 会通过 CLI、API 和 UI 返回明确诊断。
 

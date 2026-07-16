@@ -191,7 +191,7 @@ Disk
 | 10 | M10 | ✅ | Tomur API、session、streaming 与诊断闭环 |
 | 11 | M11 | ✅ | SIMD、并行、缓存与 I/O 优化 |
 | 12 | M12 | ✅ | DSA、MTP、grammar draft 与 KV 持久化 |
-| 13 | M13 | ⏳ | 打包、版本兼容与 Native AOT 策略 |
+| 13 | M13 | ✅ | 打包、版本兼容与 Native AOT 策略 |
 | 14 | M14 | ⏳ | 集中测试、完整模型验证与发布证据 |
 
 ## 00. ✅ M0：分支与工程决策
@@ -508,20 +508,20 @@ M14 性能验证仍待执行：
 
 M14 验证仍待执行：真实 DSA indexer oracle、MTP 完整层语义、speculative 分布、grammar API 接入、KV 中断恢复一致性、吞吐/内存收益和跨平台快照兼容均不得由本阶段代码状态替代。
 
-## 13. ⏳ M13：发布与兼容
+## 13. ✅ M13：发布与兼容
 
 非 AOT 自包含发布：
 
-1. 将批准的 provider DLL 放入主程序旁的 `providers/`。
-2. 锁定 provider contract assembly version。
-3. provider 加载失败只影响对应模型。
-4. 发布清单记录 provider DLL checksum。
+1. 非 AOT `Publish` target 会构建批准的 `Tomur.Providers.Glm` provider，并将 DLL 放入主程序旁的 `providers/`。
+2. `ModelProviderContract.Version=1` 与 `Tomur` assembly version 作为加载前契约检查；版本不兼容时返回 `managed_provider_contract_incompatible`。
+3. provider 加载失败、清单无效或 checksum 不匹配只影响对应 provider/model，native provider 继续可用。
+4. `providers/providers.manifest.json` 记录 provider ID、程序集版本、契约版本与 SHA-256；运行时会在存在清单时校验资产。
 
 Native AOT 发布：
 
 1. 不假定能动态加载任意托管程序集。
-2. 评估静态引用 provider 的 profile。
-3. 若静态引用不可接受，保留清晰的 `dynamic_managed_providers_unavailable` 诊断。
+2. 当前保留独立 provider 的非 AOT 发布面；Native AOT 不动态加载任意托管程序集。
+3. 静态引用 profile 尚未纳入发布包；AOT 路径保留清晰的 `dynamic_managed_providers_unavailable` 诊断。
 4. 不通过 blanket suppression 绕过 trimming 或反射警告。
 
 兼容策略：
@@ -529,7 +529,9 @@ Native AOT 发布：
 1. provider contract 采用 extend-only 设计。
 2. 新能力通过新接口或可选 capability 增加，不向现有接口添加必须实现的方法。
 3. `model.tomur.json` schema 先扩 reader，再启用 writer。
-4. 诊断 code 一经公开不改名，只增加新 code。
+4. 诊断 code 一经公开不改名，只增加新 code；M13 新增契约和发布资产诊断保持稳定。
+
+M13 独立测试项目已加入 solution，覆盖锁定契约版本、版本拒绝、发布清单解析、checksum 校验和损坏清单拒绝。本轮未执行构建、测试或发布 smoke；跨平台发布矩阵统一归 M14。
 
 ## 14. ⏳ M14：集中测试、完整模型验证与发布证据
 

@@ -3,6 +3,20 @@ using Tomur.Runtime;
 
 namespace Tomur.Providers;
 
+public static class ModelProviderContract
+{
+    public const int Version = 1;
+    public const string AssemblyName = "Tomur";
+
+    public static Version? AssemblyVersion
+        => typeof(ITextGenerationProvider).Assembly.GetName().Version;
+
+    internal static bool IsCompatible(System.Reflection.AssemblyName? referencedAssembly)
+        => referencedAssembly is not null &&
+            string.Equals(referencedAssembly.Name, AssemblyName, StringComparison.Ordinal) &&
+            referencedAssembly.Version == AssemblyVersion;
+}
+
 public sealed class ModelSessionOptions
 {
     public ModelSessionOptions(int contextSize)

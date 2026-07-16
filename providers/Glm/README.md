@@ -29,6 +29,6 @@ Each model directory must contain `model.tomur.json`:
 
 Targeted format and API evidence is recorded in [R15 packed GLM smoke](../../docs/r15-packed-glm-smoke.md). The pre-converted full GLM-5.2 model is 357.4 GiB and has not been loaded on the current machine because no local disk has enough free space. GLM4 MoE Lite real-model conversion and smoke are also pending on a separate machine.
 
-For development, point `TOMUR_PROVIDER_PATH` at the directory containing `Tomur.Providers.Glm.dll`. Non-AOT release packaging will later copy approved provider assemblies into the `providers` directory beside the main application.
+For development, point `TOMUR_PROVIDER_PATH` at the directory containing `Tomur.Providers.Glm.dll`. Non-AOT `Publish` builds the approved provider into the `providers` directory beside the main application and writes `providers.manifest.json` with the locked contract version, assembly version, provider ID, and SHA-256. Native AOT keeps independent managed providers unavailable unless a future profile statically references them.
 
 Kernel selection defaults to `auto`. Set `TOMUR_GLM_KERNEL_MODE=scalar` to force the scalar oracle path. `TOMUR_GLM_PARALLELISM` limits F32 matvec parallelism (`0` uses the processor count and `1` disables it); `TOMUR_GLM_PARALLEL_ROW_THRESHOLD` and `TOMUR_GLM_PARALLEL_WORK_THRESHOLD` control shape dispatch. These switches do not change model assets or compatibility API contracts.
