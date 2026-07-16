@@ -153,7 +153,24 @@ internal static class OptimizedKernels
         ReadOnlySpan<float> input,
         Span<float> firstDestination,
         Span<float> secondDestination)
+        => DequantMatVecPair(
+            firstMatrix,
+            secondMatrix,
+            input,
+            firstDestination,
+            secondDestination,
+            options);
+
+    internal static void DequantMatVecPair(
+        QuantizedTensorView firstMatrix,
+        QuantizedTensorView secondMatrix,
+        ReadOnlySpan<float> input,
+        Span<float> firstDestination,
+        Span<float> secondDestination,
+        KernelExecutionOptions executionOptions)
     {
+        ArgumentNullException.ThrowIfNull(executionOptions);
+        executionOptions.Validate();
         if (firstMatrix.Shape.Format != secondMatrix.Shape.Format ||
             firstMatrix.Shape.Rows != secondMatrix.Shape.Rows ||
             firstMatrix.Shape.Columns != secondMatrix.Shape.Columns)
@@ -176,10 +193,25 @@ internal static class OptimizedKernels
             throw new ArgumentException("Projection destinations cannot overlap.", nameof(secondDestination));
         }
 
-        if (!CanVectorize(firstMatrix.Shape.Columns, options))
+        if (!CanVectorize(firstMatrix.Shape.Columns, executionOptions))
         {
             DequantScalar(firstMatrix, input, firstDestination);
             DequantScalar(secondMatrix, input, secondDestination);
+            return;
+        }
+
+        if (ShouldParallelize(
+                firstMatrix.Shape.Rows,
+                checked(firstMatrix.Shape.Columns * 2),
+                executionOptions))
+        {
+            ParallelDequantMatVecPair(
+                firstMatrix,
+                secondMatrix,
+                input,
+                firstDestination,
+                secondDestination,
+                executionOptions);
             return;
         }
 
@@ -190,7 +222,7 @@ internal static class OptimizedKernels
         }
     }
 
-    private static void DequantMatVec(
+    internal static void DequantMatVec(
         QuantizedTensorView matrix,
         QuantizedTensorFormat expectedFormat,
         ReadOnlySpan<float> input,
@@ -201,6 +233,12 @@ internal static class OptimizedKernels
         if (!CanVectorize(matrix.Shape.Columns, executionOptions))
         {
             DequantScalar(matrix, input, destination);
+            return;
+        }
+
+        if (ShouldParallelize(matrix.Shape.Rows, matrix.Shape.Columns, executionOptions))
+        {
+            ParallelDequantMatVec(matrix, input, destination, executionOptions);
             return;
         }
 
@@ -379,6 +417,96 @@ internal static class OptimizedKernels
                     secondOutput[row] = Dot(
                         new ReadOnlySpan<float>((void*)(secondMatrixAddress + offset), columns),
                         vector);
+                });
+        }
+    }
+
+    private static unsafe void ParallelDequantMatVec(
+        QuantizedTensorView matrix,
+        ReadOnlySpan<float> input,
+        Span<float> destination,
+        KernelExecutionOptions executionOptions)
+    {
+        fixed (byte* payloadPointer = matrix.Payload)
+        fixed (float* scalesPointer = matrix.Scales)
+        fixed (float* inputPointer = input)
+        fixed (float* destinationPointer = destination)
+        {
+            var payloadAddress = (nint)payloadPointer;
+            var scalesAddress = (nint)scalesPointer;
+            var inputAddress = (nint)inputPointer;
+            var destinationAddress = (nint)destinationPointer;
+            var shape = matrix.Shape;
+            Parallel.For(
+                0,
+                shape.Rows,
+                new ParallelOptions
+                {
+                    MaxDegreeOfParallelism = executionOptions.EffectiveMaxDegreeOfParallelism
+                },
+                row =>
+                {
+                    var localMatrix = new QuantizedTensorView(
+                        shape,
+                        new ReadOnlySpan<byte>((void*)payloadAddress, shape.PayloadByteLength),
+                        new ReadOnlySpan<float>((void*)scalesAddress, shape.ScaleCount));
+                    var localInput = new ReadOnlySpan<float>((void*)inputAddress, shape.Columns);
+                    var localDestination = new Span<float>((void*)destinationAddress, shape.Rows);
+                    localDestination[row] =
+                        DotQuantized(localMatrix, row, localInput) * localMatrix.Scales[row];
+                });
+        }
+    }
+
+    private static unsafe void ParallelDequantMatVecPair(
+        QuantizedTensorView firstMatrix,
+        QuantizedTensorView secondMatrix,
+        ReadOnlySpan<float> input,
+        Span<float> firstDestination,
+        Span<float> secondDestination,
+        KernelExecutionOptions executionOptions)
+    {
+        fixed (byte* firstPayloadPointer = firstMatrix.Payload)
+        fixed (float* firstScalesPointer = firstMatrix.Scales)
+        fixed (byte* secondPayloadPointer = secondMatrix.Payload)
+        fixed (float* secondScalesPointer = secondMatrix.Scales)
+        fixed (float* inputPointer = input)
+        fixed (float* firstDestinationPointer = firstDestination)
+        fixed (float* secondDestinationPointer = secondDestination)
+        {
+            var firstPayloadAddress = (nint)firstPayloadPointer;
+            var firstScalesAddress = (nint)firstScalesPointer;
+            var secondPayloadAddress = (nint)secondPayloadPointer;
+            var secondScalesAddress = (nint)secondScalesPointer;
+            var inputAddress = (nint)inputPointer;
+            var firstDestinationAddress = (nint)firstDestinationPointer;
+            var secondDestinationAddress = (nint)secondDestinationPointer;
+            var firstShape = firstMatrix.Shape;
+            var secondShape = secondMatrix.Shape;
+            Parallel.For(
+                0,
+                firstShape.Rows,
+                new ParallelOptions
+                {
+                    MaxDegreeOfParallelism = executionOptions.EffectiveMaxDegreeOfParallelism
+                },
+                row =>
+                {
+                    var localFirstMatrix = new QuantizedTensorView(
+                        firstShape,
+                        new ReadOnlySpan<byte>((void*)firstPayloadAddress, firstShape.PayloadByteLength),
+                        new ReadOnlySpan<float>((void*)firstScalesAddress, firstShape.ScaleCount));
+                    var localSecondMatrix = new QuantizedTensorView(
+                        secondShape,
+                        new ReadOnlySpan<byte>((void*)secondPayloadAddress, secondShape.PayloadByteLength),
+                        new ReadOnlySpan<float>((void*)secondScalesAddress, secondShape.ScaleCount));
+                    var localInput = new ReadOnlySpan<float>((void*)inputAddress, firstShape.Columns);
+                    var localFirstDestination = new Span<float>((void*)firstDestinationAddress, firstShape.Rows);
+                    var localSecondDestination = new Span<float>((void*)secondDestinationAddress, secondShape.Rows);
+                    localFirstDestination[row] =
+                        DotQuantized(localFirstMatrix, row, localInput) * localFirstMatrix.Scales[row];
+                    localSecondDestination[row] =
+                        DotQuantized(localSecondMatrix, row, localInput) * localSecondMatrix.Scales[row];
                 });
         }
     }

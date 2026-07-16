@@ -648,7 +648,7 @@ public sealed class RuntimeDiagnosticsProvider
                 [$"Set {ModelProviderRegistry.ProviderPathEnvironmentVariable} to one or more valid provider directories."],
             "managed_provider_directory_unavailable" =>
                 ["Verify that the provider directory exists and is readable by the current user."],
-            "managed_provider_load_failed" or "managed_provider_type_load_failed" or "managed_provider_contract_not_found" =>
+            "managed_provider_load_failed" or "managed_provider_type_load_failed" =>
                 ["Verify that the provider assembly targets this Tomur build and that all managed dependencies are present."],
             "managed_provider_activation_failed" =>
                 ["Verify that the provider type is concrete and has a public parameterless constructor."],

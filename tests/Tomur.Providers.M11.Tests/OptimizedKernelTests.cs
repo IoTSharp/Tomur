@@ -82,9 +82,17 @@ public sealed class OptimizedKernelTests
             scales);
         var int8Expected = new float[rows];
         var int8Actual = new float[rows];
+        var int8Parallel = new float[rows];
         ScalarKernels.Int8DequantMatVec(int8, input, int8Expected);
         OptimizedKernels.Int8DequantMatVec(int8, input, int8Actual);
+        OptimizedKernels.DequantMatVec(
+            int8,
+            QuantizedTensorFormat.Int8,
+            input,
+            int8Parallel,
+            ForcedParallelOptions());
         AssertClose(int8Expected, int8Actual);
+        AssertClose(int8Expected, int8Parallel);
 
         var storedColumns = (columns + 1) / 2;
         var int4Payload = new byte[rows * storedColumns];
@@ -103,9 +111,33 @@ public sealed class OptimizedKernelTests
             scales);
         var int4Expected = new float[rows];
         var int4Actual = new float[rows];
+        var int4Parallel = new float[rows];
         ScalarKernels.Int4DequantMatVec(int4, input, int4Expected);
         OptimizedKernels.Int4DequantMatVec(int4, input, int4Actual);
+        OptimizedKernels.DequantMatVec(
+            int4,
+            QuantizedTensorFormat.Int4,
+            input,
+            int4Parallel,
+            ForcedParallelOptions());
         AssertClose(int4Expected, int4Actual);
+        AssertClose(int4Expected, int4Parallel);
+
+        var secondInt4Payload = int4Payload.Select(static value => (byte)(value ^ 0xff)).ToArray();
+        var secondInt4 = new QuantizedTensorView(int4.Shape, secondInt4Payload, scales);
+        var secondInt4Expected = new float[rows];
+        var pairedFirst = new float[rows];
+        var pairedSecond = new float[rows];
+        ScalarKernels.Int4DequantMatVec(secondInt4, input, secondInt4Expected);
+        OptimizedKernels.DequantMatVecPair(
+            int4,
+            secondInt4,
+            input,
+            pairedFirst,
+            pairedSecond,
+            ForcedParallelOptions());
+        AssertClose(int4Expected, pairedFirst);
+        AssertClose(secondInt4Expected, pairedSecond);
     }
 
     [Fact]
@@ -174,6 +206,13 @@ public sealed class OptimizedKernelTests
             .Select(_ => (float)((random.NextDouble() * 2) - 1))
             .ToArray();
     }
+
+    private static KernelExecutionOptions ForcedParallelOptions()
+        => new(
+            EnableParallel: true,
+            ParallelRowThreshold: 1,
+            ParallelWorkThreshold: 1,
+            MaxDegreeOfParallelism: 2);
 
     private static void AssertClose(IReadOnlyList<float> expected, IReadOnlyList<float> actual)
     {

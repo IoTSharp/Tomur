@@ -20,6 +20,7 @@ internal sealed class ManagedTokenizer
     private readonly int? unknownTokenId;
     private readonly bool byteFallback;
     private readonly bool fuseUnknown;
+    private readonly bool ignoreMerges;
 
     private ManagedTokenizer(
         IReadOnlyDictionary<string, int> vocabulary,
@@ -31,7 +32,8 @@ internal sealed class ManagedTokenizer
         string modelType,
         int? unknownTokenId,
         bool byteFallback,
-        bool fuseUnknown)
+        bool fuseUnknown,
+        bool ignoreMerges)
     {
         this.vocabulary = vocabulary;
         this.tokensById = tokensById;
@@ -43,6 +45,7 @@ internal sealed class ManagedTokenizer
         this.unknownTokenId = unknownTokenId;
         this.byteFallback = byteFallback;
         this.fuseUnknown = fuseUnknown;
+        this.ignoreMerges = ignoreMerges;
         var addedTokens = tokensById.Values.Where(static token => token.IsAdded).ToArray();
         preNormalizationAddedTokenMatcher = new AddedTokenMatcher(
             addedTokens.Where(static token => !token.Normalized).ToArray());
@@ -121,6 +124,7 @@ internal sealed class ManagedTokenizer
 
         var byteFallback = GetOptionalBoolean(model, "byte_fallback", false);
         var fuseUnknown = GetOptionalBoolean(model, "fuse_unk", false);
+        var ignoreMerges = GetOptionalBoolean(model, "ignore_merges", false);
         ValidateBpeOptions(model, modelType);
         var mergeRanks = modelType.Equals("BPE", StringComparison.Ordinal)
             ? ReadMerges(model, vocabulary)
@@ -150,7 +154,8 @@ internal sealed class ManagedTokenizer
             modelType,
             unknownTokenId,
             byteFallback,
-            fuseUnknown);
+            fuseUnknown,
+            ignoreMerges);
     }
 
     public IReadOnlyList<int> Encode(string text, bool addBos = false, bool parseSpecialTokens = false)
@@ -300,6 +305,14 @@ internal sealed class ManagedTokenizer
     {
         if (piece.Length == 0)
         {
+            return;
+        }
+
+        if (ignoreMerges &&
+            vocabulary.TryGetValue(piece, out var wholePieceTokenId) &&
+            !IsSpecialToken(wholePieceTokenId))
+        {
+            output.Add(wholePieceTokenId);
             return;
         }
 
@@ -645,10 +658,7 @@ internal sealed class ManagedTokenizer
             }
         }
 
-        if (GetOptionalBoolean(model, "ignore_merges", false))
-        {
-            throw new InvalidDataException("Tokenizer BPE ignore_merges=true is not supported.");
-        }
+        _ = GetOptionalBoolean(model, "ignore_merges", false);
     }
 
     private static ITextNormalizer ReadNormalizer(JsonElement element)

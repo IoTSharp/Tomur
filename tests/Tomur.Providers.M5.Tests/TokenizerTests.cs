@@ -75,6 +75,39 @@ public sealed class TokenizerTests
     }
 
     [Fact]
+    public void BpeIgnoreMergesPrefersWholeVocabularyEntryAndRetainsMergeFallback()
+    {
+        using var root = new TemporaryDirectory();
+        var tokenizerPath = Path.Combine(root.Path, "tokenizer.json");
+        WriteTokenizer(tokenizerPath, new
+        {
+            pre_tokenizer = new { type = "WhitespaceSplit" },
+            model = new
+            {
+                type = "BPE",
+                unk_token = "<unk>",
+                ignore_merges = true,
+                vocab = new Dictionary<string, int>
+                {
+                    ["<unk>"] = 0,
+                    ["h"] = 1,
+                    ["e"] = 2,
+                    ["l"] = 3,
+                    ["o"] = 4,
+                    ["he"] = 5,
+                    ["hello"] = 6,
+                    ["x"] = 7
+                },
+                merges = new[] { "h e" }
+            }
+        });
+        var tokenizer = ManagedTokenizer.Read(tokenizerPath);
+
+        Assert.Equal(new[] { 6 }, tokenizer.Encode("hello"));
+        Assert.Equal(new[] { 5, 7 }, tokenizer.Encode("hex"));
+    }
+
+    [Fact]
     public void ByteLevelRoundTripsUnicodeAndStreamsOnlyCompleteUtf8Characters()
     {
         using var root = new TemporaryDirectory();
