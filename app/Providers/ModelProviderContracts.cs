@@ -48,6 +48,39 @@ public interface IModelReadinessProvider : ITextGenerationProvider
     ModelPreparationResult InspectModel(LocalModelDescriptor model, ModelSessionOptions options);
 }
 
+public interface IModelConversionProvider : ITextGenerationProvider
+{
+    ModelConversionResult ConvertModel(
+        ModelConversionRequest request,
+        Action<ModelConversionProgress>? onProgress = null,
+        CancellationToken cancellationToken = default);
+}
+
+public sealed record ModelConversionRequest(
+    string SourceDirectory,
+    string OutputDirectory);
+
+public sealed record ModelConversionProgress(
+    string Stage,
+    string? TensorName,
+    int CompletedTensors,
+    int TotalTensors,
+    long WrittenBytes,
+    long EstimatedBytes);
+
+public sealed record ModelConversionResult(
+    string ProviderId,
+    string SourceDirectory,
+    string OutputDirectory,
+    string Quantization,
+    string QuantizationLayout,
+    int SourceTensorCount,
+    int OutputTensorCount,
+    long SourceBytes,
+    long OutputBytes,
+    string OutputSha256,
+    TimeSpan Elapsed);
+
 public sealed record ModelPreparationResult(
     string ProviderId,
     string Architecture,

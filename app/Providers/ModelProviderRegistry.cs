@@ -350,6 +350,14 @@ public sealed class ModelProviderRegistry : IDisposable
             .FirstOrDefault(provider => string.Equals(provider.Id, providerId, StringComparison.OrdinalIgnoreCase));
     }
 
+    public IModelConversionProvider? FindConversionProvider(string providerId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(providerId);
+        return textProviders
+            .OfType<IModelConversionProvider>()
+            .FirstOrDefault(provider => string.Equals(provider.Id, providerId, StringComparison.OrdinalIgnoreCase));
+    }
+
     public void Dispose()
     {
         foreach (var disposable in textProviders.OfType<IDisposable>())

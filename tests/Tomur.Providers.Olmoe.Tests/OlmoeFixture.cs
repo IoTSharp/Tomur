@@ -6,6 +6,8 @@ namespace Tomur.Providers.Olmoe.Tests;
 
 internal sealed class OlmoeFixture : IDisposable
 {
+    private readonly Dictionary<string, float[]> logicalWeights = new(StringComparer.Ordinal);
+
     public OlmoeFixture(bool quantizedExperts = true)
     {
         Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"tomur-olmoe-{Guid.NewGuid():N}");
@@ -68,8 +70,9 @@ internal sealed class OlmoeFixture : IDisposable
             }
             """);
 
-        var tensors = CreateTensors(quantizedExperts);
-        WriteSafeTensors(System.IO.Path.Combine(Path, "model.safetensors"), tensors);
+        var tensors = CreateTensors(quantizedExperts, logicalWeights);
+        TensorPath = System.IO.Path.Combine(Path, "model.safetensors");
+        WriteSafeTensors(TensorPath, tensors);
         var manifestPath = System.IO.Path.Combine(Path, ModelProviderManifest.FileName);
         var info = new FileInfo(manifestPath);
         Descriptor = new LocalModelDescriptor(
@@ -87,13 +90,22 @@ internal sealed class OlmoeFixture : IDisposable
     }
 
     public string Path { get; }
+    public string TensorPath { get; }
     public LocalModelDescriptor Descriptor { get; }
+    public IReadOnlyDictionary<string, float[]> LogicalWeights => logicalWeights;
 
-    public ManagedOlmoeModel LoadModel(int contextSize = 8)
+    public OlmoeModelProbe ReadProbe()
+        => OlmoeModelDirectoryProbe.Read(Descriptor, ManagedOlmoeProvider.ProviderId);
+
+    public ManagedOlmoeModel LoadModel(
+        int contextSize = 8,
+        long availableMemoryBytes = long.MaxValue,
+        CancellationToken cancellationToken = default)
         => ManagedOlmoeModel.Load(
-            OlmoeModelDirectoryProbe.Read(Descriptor, ManagedOlmoeProvider.ProviderId),
+            ReadProbe(),
             contextSize,
-            long.MaxValue);
+            availableMemoryBytes,
+            cancellationToken);
 
     public void Dispose()
     {
@@ -112,30 +124,32 @@ internal sealed class OlmoeFixture : IDisposable
     private void WriteText(string name, string content)
         => File.WriteAllText(System.IO.Path.Combine(Path, name), content);
 
-    private static IReadOnlyList<TensorFixture> CreateTensors(bool quantizedExperts)
+    private static IReadOnlyList<TensorFixture> CreateTensors(
+        bool quantizedExperts,
+        IDictionary<string, float[]> logicalWeights)
     {
         var tensors = new List<TensorFixture>
         {
-            Float("model.embed_tokens.weight", [8, 4], index => 0.05f * (1 + (index % 7))),
-            Float("model.norm.weight", [4], _ => 1.0f),
-            Float("lm_head.weight", [8, 4], index => index / 4 == 4 ? 1.0f : 0.01f * (index / 4)),
-            Float("model.layers.0.input_layernorm.weight", [4], _ => 1.0f),
-            Float("model.layers.0.post_attention_layernorm.weight", [4], _ => 1.0f),
-            Float("model.layers.0.self_attn.q_proj.weight", [4, 4], Identity),
-            Float("model.layers.0.self_attn.k_proj.weight", [4, 4], Identity),
-            Float("model.layers.0.self_attn.v_proj.weight", [4, 4], Identity),
-            Float("model.layers.0.self_attn.o_proj.weight", [4, 4], Identity),
-            Float("model.layers.0.self_attn.q_norm.weight", [4], _ => 1.0f),
-            Float("model.layers.0.self_attn.k_norm.weight", [4], _ => 1.0f),
-            Float("model.layers.0.mlp.gate.weight", [2, 4], index => index < 4 ? 0.2f : -0.2f)
+            Float(logicalWeights, "model.embed_tokens.weight", [8, 4], index => 0.05f * (1 + (index % 7))),
+            Float(logicalWeights, "model.norm.weight", [4], _ => 1.0f),
+            Float(logicalWeights, "lm_head.weight", [8, 4], index => index / 4 == 4 ? 1.0f : 0.01f * (index / 4)),
+            Float(logicalWeights, "model.layers.0.input_layernorm.weight", [4], _ => 1.0f),
+            Float(logicalWeights, "model.layers.0.post_attention_layernorm.weight", [4], _ => 1.0f),
+            Float(logicalWeights, "model.layers.0.self_attn.q_proj.weight", [4, 4], Identity),
+            Float(logicalWeights, "model.layers.0.self_attn.k_proj.weight", [4, 4], Identity),
+            Float(logicalWeights, "model.layers.0.self_attn.v_proj.weight", [4, 4], Identity),
+            Float(logicalWeights, "model.layers.0.self_attn.o_proj.weight", [4, 4], Identity),
+            Float(logicalWeights, "model.layers.0.self_attn.q_norm.weight", [4], _ => 1.0f),
+            Float(logicalWeights, "model.layers.0.self_attn.k_norm.weight", [4], _ => 1.0f),
+            Float(logicalWeights, "model.layers.0.mlp.gate.weight", [2, 4], index => index < 4 ? 0.2f : -0.2f)
         };
 
         for (var expert = 0; expert < 2; expert++)
         {
             var prefix = $"model.layers.0.mlp.experts.{expert}.";
-            AddExpert(tensors, $"{prefix}gate_proj.weight", [3, 4], quantizedExperts, expert);
-            AddExpert(tensors, $"{prefix}up_proj.weight", [3, 4], quantizedExperts, expert + 1);
-            AddExpert(tensors, $"{prefix}down_proj.weight", [4, 3], quantizedExperts, expert + 2);
+            AddExpert(tensors, logicalWeights, $"{prefix}gate_proj.weight", [3, 4], quantizedExperts, expert);
+            AddExpert(tensors, logicalWeights, $"{prefix}up_proj.weight", [3, 4], quantizedExperts, expert + 1);
+            AddExpert(tensors, logicalWeights, $"{prefix}down_proj.weight", [4, 3], quantizedExperts, expert + 2);
         }
 
         return tensors;
@@ -143,6 +157,7 @@ internal sealed class OlmoeFixture : IDisposable
 
     private static void AddExpert(
         ICollection<TensorFixture> tensors,
+        IDictionary<string, float[]> logicalWeights,
         string name,
         int[] shape,
         bool quantized,
@@ -150,33 +165,44 @@ internal sealed class OlmoeFixture : IDisposable
     {
         if (!quantized)
         {
-            tensors.Add(Float(name, shape, index => 0.02f * (1 + ((index + seed) % 5))));
+            tensors.Add(Float(logicalWeights, name, shape, index => 0.02f * (1 + ((index + seed) % 5))));
             return;
         }
 
         var count = shape.Aggregate(1, static (product, value) => checked(product * value));
         var payload = new byte[count];
+        var values = new float[count];
         for (var index = 0; index < payload.Length; index++)
         {
-            payload[index] = unchecked((byte)(sbyte)(1 + ((index + seed) % 5)));
+            var quantizedValue = (sbyte)(1 + ((index + seed) % 5));
+            payload[index] = unchecked((byte)quantizedValue);
+            values[index] = quantizedValue * 0.02f;
         }
 
+        logicalWeights.Add(name, values);
         tensors.Add(new TensorFixture(name, "I8", shape, payload));
-        tensors.Add(Float($"{name}.qs", [shape[0]], _ => 0.02f));
+        tensors.Add(Float(logicalWeights, $"{name}.qs", [shape[0]], _ => 0.02f));
     }
 
     private static float Identity(int index)
         => index / 4 == index % 4 ? 1.0f : 0.0f;
 
-    private static TensorFixture Float(string name, int[] shape, Func<int, float> value)
+    private static TensorFixture Float(
+        IDictionary<string, float[]> logicalWeights,
+        string name,
+        int[] shape,
+        Func<int, float> value)
     {
         var count = shape.Aggregate(1, static (product, item) => checked(product * item));
+        var values = new float[count];
         var bytes = new byte[checked(count * sizeof(float))];
         for (var index = 0; index < count; index++)
         {
-            BitConverter.TryWriteBytes(bytes.AsSpan(index * sizeof(float), sizeof(float)), value(index));
+            values[index] = value(index);
+            BitConverter.TryWriteBytes(bytes.AsSpan(index * sizeof(float), sizeof(float)), values[index]);
         }
 
+        logicalWeights.Add(name, values);
         return new TensorFixture(name, "F32", shape, bytes);
     }
 

@@ -144,6 +144,9 @@ internal static class DoctorCommand
             Console.WriteLine($"  Session resident/KV/scratch: {CommandLineHelpers.FormatNullableBytes(session.ResidentBytes)} / {CommandLineHelpers.FormatNullableBytes(session.KvBytes)} / {CommandLineHelpers.FormatNullableBytes(session.ScratchBytes)}");
             Console.WriteLine($"  Session expert cache: {CommandLineHelpers.FormatNullableBytes(session.ExpertCacheBytes)}");
             Console.WriteLine($"  Session requests/tokens: {session.RequestCount} / {session.PromptTokens} / {session.CompletionTokens}");
+            Console.WriteLine($"  Session load/first-token ms: {session.LoadElapsedMilliseconds?.ToString() ?? "unknown"} / {FormatMetric(session.LastFirstTokenMilliseconds)}");
+            Console.WriteLine($"  Session generation ms: {FormatMetric(session.LastGenerationMilliseconds)}");
+            Console.WriteLine($"  Session output/decode tokens/s: {FormatMetric(session.LastOutputTokensPerSecond)} / {FormatMetric(session.LastDecodeTokensPerSecond)}");
         }
 
         Console.WriteLine();
@@ -165,6 +168,9 @@ internal static class DoctorCommand
 
         return 0;
     }
+
+    private static string FormatMetric(double? value)
+        => value is null ? "unknown" : value.Value.ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
 
     private static void WriteHelp()
     {

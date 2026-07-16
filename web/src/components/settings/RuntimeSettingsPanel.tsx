@@ -182,6 +182,15 @@ export function RuntimeSettingsPanel({
             <Descriptions.Item label="Expert cache">{formatBytes(session.expert_cache_bytes)}</Descriptions.Item>
             <Descriptions.Item label="Requests">{session.request_count}</Descriptions.Item>
             <Descriptions.Item label="Tokens">{session.prompt_tokens} / {session.completion_tokens}</Descriptions.Item>
+            <Descriptions.Item label="Load / first token">
+              {formatMilliseconds(session.load_elapsed_milliseconds)} / {formatMilliseconds(session.last_first_token_milliseconds)}
+            </Descriptions.Item>
+            <Descriptions.Item label="Generation">
+              {formatMilliseconds(session.last_generation_milliseconds)}
+            </Descriptions.Item>
+            <Descriptions.Item label="Output / decode tokens/s">
+              {formatRate(session.last_output_tokens_per_second)} / {formatRate(session.last_decode_tokens_per_second)}
+            </Descriptions.Item>
             <Descriptions.Item label="Cache hit/miss/evict">
               {session.expert_cache_hits ?? 0} / {session.expert_cache_misses ?? 0} / {session.expert_cache_evictions ?? 0}
             </Descriptions.Item>
@@ -295,6 +304,14 @@ export function RuntimeSettingsPanel({
       />
     </Space>
   );
+}
+
+function formatMilliseconds(value?: number | null) {
+  return value == null ? "-" : `${value.toFixed(1)} ms`;
+}
+
+function formatRate(value?: number | null) {
+  return value == null ? "-" : value.toFixed(3);
 }
 
 function AccelerationSummary({ acceleration }: { acceleration?: AccelerationPlan }) {

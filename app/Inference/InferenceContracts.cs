@@ -83,6 +83,16 @@ public sealed record SessionSnapshot(
 
     public long? ExpertDiskBytes { get; init; }
 
+    public long? LoadElapsedMilliseconds { get; init; }
+
+    public double? LastFirstTokenMilliseconds { get; init; }
+
+    public double? LastGenerationMilliseconds { get; init; }
+
+    public double? LastOutputTokensPerSecond { get; init; }
+
+    public double? LastDecodeTokensPerSecond { get; init; }
+
     public SessionErrorSnapshot? LastError { get; init; }
 }
 

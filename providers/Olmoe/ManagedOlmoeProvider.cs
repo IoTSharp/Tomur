@@ -7,7 +7,7 @@ using Tomur.Runtime;
 
 namespace Tomur.Providers.Olmoe;
 
-public sealed class ManagedOlmoeProvider : ITextGenerationProvider, IModelReadinessProvider
+public sealed class ManagedOlmoeProvider : ITextGenerationProvider, IModelReadinessProvider, IModelConversionProvider
 {
     public const string ProviderId = "managed-olmoe";
 
@@ -77,6 +77,12 @@ public sealed class ManagedOlmoeProvider : ITextGenerationProvider, IModelReadin
         }
     }
 
+    public ModelConversionResult ConvertModel(
+        ModelConversionRequest request,
+        Action<ModelConversionProgress>? onProgress = null,
+        CancellationToken cancellationToken = default)
+        => OlmoeModelConverter.Convert(request, onProgress, cancellationToken);
+
     public ModelPreparationResult InspectModel(LocalModelDescriptor model, ModelSessionOptions options)
     {
         ArgumentNullException.ThrowIfNull(model);
@@ -142,6 +148,7 @@ public sealed class ManagedOlmoeProvider : ITextGenerationProvider, IModelReadin
     {
         var assetsIncomplete = exception is FileNotFoundException or DirectoryNotFoundException ||
             exception.Message.Contains("is missing", StringComparison.OrdinalIgnoreCase) ||
+            exception.Message.Contains("must exist", StringComparison.OrdinalIgnoreCase) ||
             exception.Message.Contains("was not found", StringComparison.OrdinalIgnoreCase) ||
             exception.Message.Contains("No tensor files", StringComparison.OrdinalIgnoreCase);
         var quantizationUnsupported = exception.Message.Contains("does not support quantization", StringComparison.OrdinalIgnoreCase) ||
@@ -173,6 +180,11 @@ internal sealed class ManagedOlmoeSession : IChatGenerationSession
     private long requestCount;
     private long promptTokens;
     private long completionTokens;
+    private readonly long loadElapsedMilliseconds;
+    private double lastFirstTokenMilliseconds;
+    private double lastGenerationMilliseconds;
+    private double lastOutputTokensPerSecond;
+    private double lastDecodeTokensPerSecond = double.NaN;
     private bool disposed;
 
     public ManagedOlmoeSession(
@@ -180,6 +192,7 @@ internal sealed class ManagedOlmoeSession : IChatGenerationSession
         ModelSessionOptions sessionOptions,
         OlmoeModelProbe probe)
     {
+        var loadStopwatch = Stopwatch.StartNew();
         this.descriptor = descriptor;
         this.sessionOptions = sessionOptions;
         var effectiveContextSize = Math.Min(
@@ -198,6 +211,8 @@ internal sealed class ManagedOlmoeSession : IChatGenerationSession
                 QueueCapacity: Math.Max(8, candidate.Configuration.ExpertsPerToken)));
             model = candidate;
             generator = new OlmoeTextGenerator(candidate, expertCache);
+            loadStopwatch.Stop();
+            loadElapsedMilliseconds = loadStopwatch.ElapsedMilliseconds;
         }
         catch
         {
@@ -254,13 +269,14 @@ internal sealed class ManagedOlmoeSession : IChatGenerationSession
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed), this);
         var cache = expertCache.GetSnapshot();
+        var completedRequests = Interlocked.Read(ref requestCount);
         return new SessionSnapshot(
             Loaded: true,
             ModelId: descriptor.Id,
             ModelPath: descriptor.AbsolutePath,
             Mode: "managed-olmoe-generation",
             LoadedAt: createdAt,
-            RequestCount: Interlocked.Read(ref requestCount),
+            RequestCount: completedRequests,
             PromptTokens: Interlocked.Read(ref promptTokens),
             CompletionTokens: Interlocked.Read(ref completionTokens),
             Diagnostics: BuildDiagnostics("forward execution: scalar reference"))
@@ -277,7 +293,14 @@ internal sealed class ManagedOlmoeSession : IChatGenerationSession
             ExpertCacheMisses = cache.Misses,
             ExpertCacheEvictions = cache.Evictions,
             ExpertDiskReads = cache.DiskReads,
-            ExpertDiskBytes = cache.DiskBytes
+            ExpertDiskBytes = cache.DiskBytes,
+            LoadElapsedMilliseconds = loadElapsedMilliseconds,
+            LastFirstTokenMilliseconds = completedRequests == 0 ? null : Volatile.Read(ref lastFirstTokenMilliseconds),
+            LastGenerationMilliseconds = completedRequests == 0 ? null : Volatile.Read(ref lastGenerationMilliseconds),
+            LastOutputTokensPerSecond = completedRequests == 0 ? null : Volatile.Read(ref lastOutputTokensPerSecond),
+            LastDecodeTokensPerSecond = completedRequests == 0 || double.IsNaN(Volatile.Read(ref lastDecodeTokensPerSecond))
+                ? null
+                : Volatile.Read(ref lastDecodeTokensPerSecond)
         };
     }
 
@@ -310,6 +333,10 @@ internal sealed class ManagedOlmoeSession : IChatGenerationSession
             Interlocked.Increment(ref requestCount);
             Interlocked.Add(ref promptTokens, result.PromptTokenCount);
             Interlocked.Add(ref completionTokens, result.GeneratedTokenIds.Count);
+            Volatile.Write(ref lastFirstTokenMilliseconds, result.FirstTokenElapsed.TotalMilliseconds);
+            Volatile.Write(ref lastGenerationMilliseconds, result.GenerationElapsed.TotalMilliseconds);
+            Volatile.Write(ref lastOutputTokensPerSecond, result.OutputTokensPerSecond);
+            Volatile.Write(ref lastDecodeTokensPerSecond, result.DecodeTokensPerSecond ?? double.NaN);
             return new CompletionResult(
                 result.Text,
                 new TokenUsage(
@@ -321,7 +348,13 @@ internal sealed class ManagedOlmoeSession : IChatGenerationSession
                     $"prompt tokens: {result.PromptTokenCount}",
                     $"completion tokens: {result.GeneratedTokenIds.Count}",
                     $"stop reason: {result.StopReason}",
-                    $"sampling seed: {result.Seed}"));
+                    $"sampling seed: {result.Seed}",
+                    $"first token ms: {result.FirstTokenElapsed.TotalMilliseconds:F3}",
+                    $"generation ms: {result.GenerationElapsed.TotalMilliseconds:F3}",
+                    $"output tokens/s: {result.OutputTokensPerSecond:F6}",
+                    result.DecodeTokensPerSecond is null
+                        ? "decode tokens/s: unavailable (requires at least two output tokens)"
+                        : $"decode tokens/s: {result.DecodeTokensPerSecond.Value:F6}"));
         }
         catch (OperationCanceledException)
         {
@@ -371,7 +404,8 @@ internal sealed class ManagedOlmoeSession : IChatGenerationSession
             $"expert cache bytes/slots per layer: {cache.BudgetedBytes}/{cache.SlotCapacityPerLayer}",
             $"expert cache hit/miss/eviction: {cache.Hits}/{cache.Misses}/{cache.Evictions}",
             $"expert disk reads/bytes: {cache.DiskReads}/{cache.DiskBytes}",
-            $"load budget bytes: {model.MemoryPlan.RequiredBytes}/{model.MemoryPlan.AvailableBytes}"
+            $"load budget bytes: {model.MemoryPlan.RequiredBytes}/{model.MemoryPlan.AvailableBytes}",
+            $"load elapsed ms: {loadElapsedMilliseconds}"
         };
         diagnostics.AddRange(requestDiagnostics);
         return diagnostics;

@@ -57,6 +57,8 @@
 37. expert cache 已增加上一 token router lookahead prefetch、usage 驱动的 live repin 和 repin 诊断；所有预取继续受 slot capacity、RAM budget 与取消约束。
 38. compressed KV 已增加版本化快照、模型身份/维度/上下文/有限值校验和 SHA-256 完整性校验，并提供不共享可变 buffer、共同受模型剩余内存预算约束的 isolated KV context fork。
 39. M12 独立测试项目已加入 solution，覆盖 DSA dense-equivalent/stable top-k、speculative 接受与拒绝、forced spans、lookahead/repin、KV checksum 恢复、context fork 隔离和共享内存预算；本轮未执行构建、测试、完整模型或跨平台验证。
+40. OLMoE O4 已在现有测试项目中增加确定性 tiny fixture 与独立 scalar reference，覆盖 embedding、attention、softmax top-k router、MoE、逐 token teacher forcing、greedy decode、F32/signed-int8 等价路径、预算先于 payload 读取、损坏或缺失资产、上下文/token/取消、faulted forward、重复 dispose、shard handle 释放，以及 readiness/session 的 resident/KV/scratch/minimum expert cache 总账；provider 内部增加只读 MoE trace 和明确的 disposed/缺失资产诊断。本轮未执行构建或测试。
+41. OLMoE O5 已增加 extend-only managed model 转换契约与隐藏转换命令；转换器以有界逐行读取把 floating routed expert gate/up/down 投影写为 signed int8 `rowwise-qs`，保留 dense dtype，使用同盘临时目录、输出 probe、源/产物 SHA-256 清单和原子发布。现有测试项目已增加转换取消/不覆盖、真实 tiny session 三协议非流式与 streaming 矩阵，以及加载、首 token、总生成、output token/s 和 decode token/s 诊断回归代码。本轮未执行构建、测试、完整模型转换或服务 smoke。
 
 ### R14 当前已接入
 

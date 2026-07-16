@@ -24,8 +24,91 @@ internal static class InternalCommand
         {
             "image-worker" => RunImageWorker(args[1..]),
             "model-fixture" => RunModelFixture(args[1..]),
+            "model-convert" => RunModelConvert(args[1..]),
             _ => RunUnknownCommand(args[0])
         };
+    }
+
+    private static int RunModelConvert(IReadOnlyList<string> args)
+    {
+        if (args.Count == 0 || CommandLineHelpers.HasHelp(args))
+        {
+            Console.Error.WriteLine(
+                "Usage: tomur internal model-convert --provider <id> --source <directory> --output <directory>");
+            return args.Count == 0 ? 1 : 0;
+        }
+
+        if (!CommandLineHelpers.TryReadOption(args, "--provider", out var providerId, out var providerError))
+        {
+            return WriteError(providerError);
+        }
+
+        if (!CommandLineHelpers.TryReadOption(args, "--source", out var sourceDirectory, out var sourceError))
+        {
+            return WriteError(sourceError);
+        }
+
+        if (!CommandLineHelpers.TryReadOption(args, "--output", out var outputDirectory, out var outputError))
+        {
+            return WriteError(outputError);
+        }
+
+        if (string.IsNullOrWhiteSpace(providerId) ||
+            string.IsNullOrWhiteSpace(sourceDirectory) ||
+            string.IsNullOrWhiteSpace(outputDirectory))
+        {
+            return WriteError("model-convert requires --provider, --source and --output values.");
+        }
+
+        using var registry = ModelProviderRegistry.CreateDefault();
+        var provider = registry.FindConversionProvider(providerId);
+        if (provider is null)
+        {
+            return WriteError(
+                $"Managed conversion provider '{providerId}' was not found. " +
+                $"Set {ModelProviderRegistry.ProviderPathEnvironmentVariable} to the provider output directory.");
+        }
+
+        using var cancellation = new CancellationTokenSource();
+        ConsoleCancelEventHandler cancelHandler = (_, eventArgs) =>
+        {
+            eventArgs.Cancel = true;
+            cancellation.Cancel();
+        };
+        Console.CancelKeyPress += cancelHandler;
+        try
+        {
+            var result = provider.ConvertModel(
+                new ModelConversionRequest(sourceDirectory, outputDirectory),
+                progress =>
+                {
+                    var tensor = progress.TensorName is null ? string.Empty : $" tensor={progress.TensorName}";
+                    Console.WriteLine(
+                        $"[{progress.Stage}] {progress.CompletedTensors}/{progress.TotalTensors}" +
+                        $" bytes={progress.WrittenBytes}/{progress.EstimatedBytes}{tensor}");
+                },
+                cancellation.Token);
+            Console.WriteLine("Conversion complete.");
+            Console.WriteLine($"  Provider: {result.ProviderId}");
+            Console.WriteLine($"  Source: {result.SourceDirectory}");
+            Console.WriteLine($"  Output: {result.OutputDirectory}");
+            Console.WriteLine($"  Layout: {result.Quantization}/{result.QuantizationLayout}");
+            Console.WriteLine($"  Tensors: {result.SourceTensorCount} -> {result.OutputTensorCount}");
+            Console.WriteLine($"  Bytes: {result.SourceBytes} -> {result.OutputBytes}");
+            Console.WriteLine($"  SHA-256: {result.OutputSha256}");
+            Console.WriteLine($"  Elapsed: {result.Elapsed}");
+            return 0;
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or ArgumentException or
+            InvalidDataException or JsonException or OverflowException or NotSupportedException)
+        {
+            return WriteError($"Model conversion failed: {exception.Message}");
+        }
+        finally
+        {
+            Console.CancelKeyPress -= cancelHandler;
+        }
     }
 
     private static int RunModelFixture(IReadOnlyList<string> args)

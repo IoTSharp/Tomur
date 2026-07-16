@@ -167,12 +167,20 @@ internal static class ModelCommand
             Console.WriteLine($"  expert cache: {CommandLineHelpers.FormatNullableBytes(session.ExpertCacheBytes)}");
             Console.WriteLine($"  requests: {session.RequestCount}");
             Console.WriteLine($"  tokens: prompt={session.PromptTokens}, completion={session.CompletionTokens}");
+            Console.WriteLine($"  load ms: {session.LoadElapsedMilliseconds?.ToString() ?? "unknown"}");
+            Console.WriteLine($"  first token ms: {FormatMetric(session.LastFirstTokenMilliseconds)}");
+            Console.WriteLine($"  generation ms: {FormatMetric(session.LastGenerationMilliseconds)}");
+            Console.WriteLine($"  output tokens/s: {FormatMetric(session.LastOutputTokensPerSecond)}");
+            Console.WriteLine($"  decode tokens/s: {FormatMetric(session.LastDecodeTokensPerSecond)}");
         }
 
         Console.WriteLine();
         Console.WriteLine("Use /api/runtime/status on the running service for the full readiness and session snapshot.");
         return 0;
     }
+
+    private static string FormatMetric(double? value)
+        => value is null ? "unknown" : value.Value.ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
 
     private static RuntimeStatusResponse? TryGetRunningRuntimeStatus(DataPaths paths)
     {

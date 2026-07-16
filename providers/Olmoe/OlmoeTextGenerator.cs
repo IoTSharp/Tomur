@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Tomur.Inference;
 using Tomur.Providers.Glm;
 
@@ -8,7 +9,11 @@ internal sealed record OlmoeGenerationResult(
     int PromptTokenCount,
     IReadOnlyList<int> GeneratedTokenIds,
     string StopReason,
-    int Seed);
+    int Seed,
+    TimeSpan FirstTokenElapsed,
+    TimeSpan GenerationElapsed,
+    double OutputTokensPerSecond,
+    double? DecodeTokensPerSecond);
 
 internal sealed class OlmoeTextGenerator(
     ManagedOlmoeModel model,
@@ -20,6 +25,7 @@ internal sealed class OlmoeTextGenerator(
         CancellationToken cancellationToken = default,
         Action<string>? onToken = null)
     {
+        var generationStopwatch = Stopwatch.StartNew();
         ArgumentNullException.ThrowIfNull(prompt);
         ArgumentNullException.ThrowIfNull(options);
         if (prompt.TokenIds.Count == 0)
@@ -57,11 +63,13 @@ internal sealed class OlmoeTextGenerator(
 
         var logits = await forward.ForwardAsync(promptTokenIds, cancellationToken).ConfigureAwait(false);
         var stopReason = "length";
+        TimeSpan? firstTokenElapsed = null;
         var nextToken = new int[1];
         for (var step = 0; step < options.MaxOutputTokens; step++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var tokenId = sampler.Sample(logits.Span, history);
+            firstTokenElapsed ??= generationStopwatch.Elapsed;
             decoder.AppendToken(tokenId);
             if (decoder.StopTokenId.HasValue)
             {
@@ -87,11 +95,24 @@ internal sealed class OlmoeTextGenerator(
         }
 
         decoder.Complete();
+        generationStopwatch.Stop();
+        var firstToken = firstTokenElapsed ?? generationStopwatch.Elapsed;
+        var outputTokensPerSecond = generated.Count == 0 || generationStopwatch.Elapsed.TotalSeconds <= 0
+            ? 0
+            : generated.Count / generationStopwatch.Elapsed.TotalSeconds;
+        var decodeElapsed = generationStopwatch.Elapsed - firstToken;
+        double? decodeTokensPerSecond = generated.Count > 1 && decodeElapsed.TotalSeconds > 0
+            ? (generated.Count - 1) / decodeElapsed.TotalSeconds
+            : null;
         return new OlmoeGenerationResult(
             decoder.Text,
             promptTokenIds.Length,
             generated.ToArray(),
             stopReason,
-            sampler.Seed);
+            sampler.Seed,
+            firstToken,
+            generationStopwatch.Elapsed,
+            outputTokensPerSecond,
+            decodeTokensPerSecond);
     }
 }

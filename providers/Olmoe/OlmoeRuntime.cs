@@ -390,7 +390,8 @@ internal static class OlmoeMoeExecutor
         ExpertCache cache,
         MoeWorkspace workspace,
         Memory<float> destination,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        OlmoeMoeTrace? trace = null)
     {
         var configuration = model.Configuration;
         if ((uint)layer >= (uint)configuration.LayerCount ||
@@ -437,6 +438,8 @@ internal static class OlmoeMoeExecutor
             }
         }
 
+        trace?.CaptureRouting(workspace.SelectedExpertIds, workspace.SelectedWeights);
+
         using var operation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var acquisition = cache.AcquireLayerAsync(
             layer,
@@ -470,6 +473,7 @@ internal static class OlmoeMoeExecutor
             }
 
             routed.CopyTo(destination.Span);
+            trace?.CaptureOutput(routed);
         }
         catch
         {
@@ -493,6 +497,24 @@ internal static class OlmoeMoeExecutor
             leases?.Dispose();
         }
     }
+}
+
+internal sealed class OlmoeMoeTrace
+{
+    public IReadOnlyList<int> SelectedExpertIds { get; private set; } = [];
+
+    public IReadOnlyList<float> SelectedWeights { get; private set; } = [];
+
+    public IReadOnlyList<float> Output { get; private set; } = [];
+
+    internal void CaptureRouting(ReadOnlySpan<int> expertIds, ReadOnlySpan<float> weights)
+    {
+        SelectedExpertIds = expertIds.ToArray();
+        SelectedWeights = weights.ToArray();
+    }
+
+    internal void CaptureOutput(ReadOnlySpan<float> output)
+        => Output = output.ToArray();
 }
 
 internal sealed class OlmoeForwardContext : IDisposable

@@ -345,6 +345,11 @@ export interface SessionSnapshot {
   expert_cache_evictions?: number | null;
   expert_disk_reads?: number | null;
   expert_disk_bytes?: number | null;
+  load_elapsed_milliseconds?: number | null;
+  last_first_token_milliseconds?: number | null;
+  last_generation_milliseconds?: number | null;
+  last_output_tokens_per_second?: number | null;
+  last_decode_tokens_per_second?: number | null;
   last_error?: SessionErrorSnapshot | null;
 }
 

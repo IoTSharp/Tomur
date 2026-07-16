@@ -9,6 +9,7 @@ internal sealed record OlmoeMemoryPlan(
     long KvBytes,
     long ScratchBytes,
     long MoeWorkspaceBytes,
+    long ForwardWorkspaceBytes,
     long SamplingWorkspaceBytes,
     long RequiredBytes,
     long AvailableBytes,
@@ -81,6 +82,7 @@ internal sealed record OlmoeMemoryPlan(
             kvBytes,
             scratchBytes,
             moeWorkspaceBytes,
+            forwardWorkspaceBytes,
             samplingWorkspaceBytes,
             checked(residentBytes + kvBytes + scratchBytes),
             availableBytes,
@@ -281,12 +283,16 @@ internal sealed class ManagedOlmoeModel : IDisposable
     }
 
     public ReadOnlySpan<float> GetResidentWeight(string name)
-        => residentWeights.TryGetValue(name, out var weight)
+    {
+        _ = GetDataSource();
+        return residentWeights.TryGetValue(name, out var weight)
             ? weight.GetFloatingValues()
             : throw new KeyNotFoundException($"Resident model weight was not found: {name}");
+    }
 
     public void MultiplyResidentWeight(string name, ReadOnlySpan<float> input, Span<float> destination)
     {
+        _ = GetDataSource();
         if (!residentWeights.TryGetValue(name, out var weight))
         {
             throw new KeyNotFoundException($"Resident model weight was not found: {name}");
@@ -297,6 +303,7 @@ internal sealed class ManagedOlmoeModel : IDisposable
 
     public void GatherEmbedding(int tokenId, Span<float> destination)
     {
+        _ = GetDataSource();
         Span<int> token = stackalloc int[1] { tokenId };
         residentWeights["model.embed_tokens.weight"].GatherRows(token, destination);
     }

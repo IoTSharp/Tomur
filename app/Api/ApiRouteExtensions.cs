@@ -2857,7 +2857,7 @@ public static class ApiRouteExtensions
             AppJsonSerializerContext.Default.MultimodalTextResponse);
     }
 
-    private static async Task WriteOpenAiChatCompletionSuccessAsync(
+    internal static async Task WriteOpenAiChatCompletionSuccessAsync(
         HttpContext context,
         string model,
         CompletionResult result,
@@ -2965,7 +2965,7 @@ public static class ApiRouteExtensions
             AppJsonSerializerContext.Default.OpenAiCompletionResponse);
     }
 
-    private static async Task WriteAnthropicMessageSuccessAsync(
+    internal static async Task WriteAnthropicMessageSuccessAsync(
         HttpContext context,
         string model,
         CompletionResult result)
@@ -3581,7 +3581,7 @@ public static class ApiRouteExtensions
             AppJsonSerializerContext.Default.OllamaGenerateResponse);
     }
 
-    private static async Task WriteOllamaChatSuccessAsync(
+    internal static async Task WriteOllamaChatSuccessAsync(
         HttpContext context,
         string model,
         CompletionResult result,
