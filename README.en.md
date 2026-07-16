@@ -13,6 +13,18 @@ Tomur supports two local large-model runtime paths: managed model providers impl
 
 Both paths share the same model catalog, install manifests, session management, OpenAI / Ollama / Anthropic Messages-compatible APIs, runtime diagnostics, and web chat workspace. Model weights, SQLite data, logs, user files, and generated artifacts are managed consistently as local assets.
 
+## 🧮 Pure C# Real-Model Evidence
+
+Tomur's pure C# managed providers have loaded real GLM-4.7 and OLMoE models and completed non-streaming Web Chat conversations inside the single Tomur process, without an external inference process or third-party inference dynamic library. The screenshots below record real model responses; this evidence does not imply that the full protocol, performance, and cross-platform matrices are complete.
+
+**GLM-4.7 Flash REAP 23B A3B** · [Validation record](./docs/r15-glm4-moe-lite-validation.md)
+
+![GLM-4.7 Flash REAP 23B A3B completing a real Web Chat conversation through a Tomur pure C# provider](./docs/images/r15-glm47-web-chat.png)
+
+**OLMoE 1B-7B Instruct int8** · [Validation record](./docs/r15-olmoe-o5-validation.md)
+
+![OLMoE 1B-7B Instruct int8 completing a real Web Chat conversation through a Tomur pure C# provider](./docs/images/r15-olmoe-int8-web-chat.png)
+
 ## 🧭 Why Tomur
 
 Tomur does not restrict local model execution to a single inference backend. Pure C# providers and the llama.cpp native runtime use consistent model, protocol, and diagnostic boundaries in the same local program:

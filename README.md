@@ -13,6 +13,18 @@ Tomur 同时支持两条本地大模型运行路线：由 Tomur 使用纯 C# 实
 
 两条路线共用同一套模型 Catalog、安装清单、session 管理、OpenAI / Ollama / Anthropic Messages 兼容 API、Runtime 诊断和 Web Chat。模型权重、SQLite 数据库、日志、用户文件和生成结果统一作为本地资产管理。
 
+## 🧮 纯 C# 大模型运行实证
+
+Tomur 的纯 C# managed provider 已在 Tomur 单进程内完成 GLM-4.7 与 OLMoE 真实模型加载和 Web Chat 非流式对话，不依赖外部推理进程或第三方推理 dynamic library。以下截图记录真实模型回复；证据范围不等同于完整协议、性能与跨平台矩阵均已完成。
+
+**GLM-4.7 Flash REAP 23B A3B** · [验证记录](./docs/r15-glm4-moe-lite-validation.md)
+
+![GLM-4.7 Flash REAP 23B A3B 通过 Tomur 纯 C# provider 完成真实 Web Chat 对话](./docs/images/r15-glm47-web-chat.png)
+
+**OLMoE 1B-7B Instruct int8** · [验证记录](./docs/r15-olmoe-o5-validation.md)
+
+![OLMoE 1B-7B Instruct int8 通过 Tomur 纯 C# provider 完成真实 Web Chat 对话](./docs/images/r15-olmoe-int8-web-chat.png)
+
 ## 🧭 为什么是 Tomur
 
 Tomur 不把本地模型能力限定在单一推理后端。纯 C# provider 与 llama.cpp native runtime 在同一个本地程序中使用一致的模型、协议和诊断边界：
