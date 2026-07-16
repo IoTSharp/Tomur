@@ -5,6 +5,7 @@ internal sealed class ManagedGlmModel : IDisposable
     private readonly Dictionary<string, ResidentWeight> residentWeights;
     private readonly object expertCacheGate = new();
     private ExpertCache? expertCache;
+    private KvContextBudget? isolatedKvBudget;
     private TensorDataSource? dataSource;
 
     private ManagedGlmModel(
@@ -20,6 +21,7 @@ internal sealed class ManagedGlmModel : IDisposable
         ModelDirectory = probe.ModelDirectory;
         Tokenizer = probe.Tokenizer;
         Tensors = probe.Tensors;
+        AdvancedFeatures = probe.AdvancedFeatures;
         TensorFileCount = probe.TensorFileCount;
         this.dataSource = dataSource;
         this.residentWeights = residentWeights;
@@ -37,6 +39,8 @@ internal sealed class ManagedGlmModel : IDisposable
     public ManagedTokenizer Tokenizer { get; }
 
     public SafeTensorCatalog Tensors { get; }
+
+    public AdvancedFeatureProbe AdvancedFeatures { get; }
 
     public int TensorFileCount { get; }
 
@@ -73,7 +77,8 @@ internal sealed class ManagedGlmModel : IDisposable
             probe.Configuration,
             probe.Tensors,
             probe.Manifest.Quantization,
-            probe.Manifest.QuantizationLayout);
+            probe.Manifest.QuantizationLayout,
+            probe.AdvancedFeatures);
         var expertLayout = ExpertDescriptorLayout.Create(
             probe.Configuration,
             probe.Manifest.Quantization,
@@ -240,6 +245,13 @@ internal sealed class ManagedGlmModel : IDisposable
         MultiplyResidentWeight("lm_head.weight", input, destination);
     }
 
+    public void ProjectMtpLogits(ReadOnlySpan<float> input, Span<float> destination)
+    {
+        var tensorName = AdvancedFeatures.MtpHeadTensorName
+            ?? throw new InvalidOperationException("The managed model does not contain a validated MTP head.");
+        MultiplyResidentWeight(tensorName, input, destination);
+    }
+
     public void RunDenseMlp(
         int layer,
         ReadOnlySpan<float> input,
@@ -293,6 +305,26 @@ internal sealed class ManagedGlmModel : IDisposable
         return new KvCache(Configuration, MemoryPlan.ContextSize);
     }
 
+    public IsolatedKvContext CreateIsolatedKvContext(int? contextLimit = null)
+    {
+        _ = GetDataSource();
+        var effectiveLimit = contextLimit ?? MemoryPlan.ContextSize;
+        if (effectiveLimit <= 0 || effectiveLimit > MemoryPlan.ContextSize)
+        {
+            throw new ArgumentOutOfRangeException(nameof(contextLimit));
+        }
+
+        lock (expertCacheGate)
+        {
+            isolatedKvBudget ??= new KvContextBudget(Math.Max(
+                0,
+                MemoryPlan.AvailableBytes -
+                MemoryPlan.RequiredBytes -
+                (expertCache?.BudgetedBytes ?? 0)));
+            return new IsolatedKvContext(Configuration, effectiveLimit, isolatedKvBudget);
+        }
+    }
+
     public AttentionWorkspace CreateAttentionWorkspace()
     {
         _ = GetDataSource();
@@ -327,6 +359,13 @@ internal sealed class ManagedGlmModel : IDisposable
                 throw new InvalidOperationException("This managed model already owns an active expert cache.");
             }
 
+            if (isolatedKvBudget?.UsedBytes > 0)
+            {
+                throw new InvalidOperationException(
+                    "An expert cache cannot be created after isolated KV contexts have reserved the remaining model memory budget.");
+            }
+
+            isolatedKvBudget = null;
             var cache = new ExpertCache(ExpertLayout, GetDataSource(), MemoryPlan, options);
             expertCache = cache;
             return cache;

@@ -31,6 +31,20 @@ internal sealed record GlmModelConfiguration(
     public const string MoeLiteModelType = "glm4_moe_lite";
     private const int MaximumConfigBytes = 4 * 1024 * 1024;
 
+    public int DsaTopK { get; init; }
+
+    public int DsaStartLayer { get; init; }
+
+    public int DsaIndexHeadCount { get; init; }
+
+    public int DsaIndexHeadSize { get; init; }
+
+    public int MtpLayerCount { get; init; }
+
+    public bool HasDsaConfiguration => DsaTopK > 0;
+
+    public bool HasMtpConfiguration => MtpLayerCount > 0;
+
     public static bool IsSupportedModelType(string modelType)
         => modelType.Equals(DsaModelType, StringComparison.OrdinalIgnoreCase) ||
             modelType.Equals(MoeLiteModelType, StringComparison.OrdinalIgnoreCase);
@@ -97,7 +111,14 @@ internal sealed record GlmModelConfiguration(
             GetOptionalBool(root, "norm_topk_prob", true),
             GetOptionalFloat(root, "rms_norm_eps", 1e-5f),
             GetOptionalFloat(root, "routed_scaling_factor", 1.0f),
-            GetRopeTheta(root));
+            GetRopeTheta(root))
+        {
+            DsaTopK = GetOptionalInt(root, "index_topk") ?? 0,
+            DsaStartLayer = GetOptionalInt(root, "indexer_start_layer") ?? 0,
+            DsaIndexHeadCount = GetOptionalInt(root, "index_n_heads") ?? 0,
+            DsaIndexHeadSize = GetOptionalInt(root, "index_head_dim") ?? 0,
+            MtpLayerCount = GetOptionalInt(root, "num_nextn_predict_layers") ?? 0
+        };
 
         configuration.Validate(root);
         return configuration;
@@ -123,6 +144,26 @@ internal sealed record GlmModelConfiguration(
         RequireRange(MaxPositionEmbeddings, 1, 1 << 24, "max_position_embeddings");
         RequireRange(ExpertGroupCount, 1, RoutedExpertCount, "n_group");
         RequireRange(ExpertGroupsPerToken, 1, ExpertGroupCount, "topk_group");
+
+        if (DsaTopK < 0 || DsaTopK > MaxPositionEmbeddings)
+        {
+            throw new InvalidDataException(
+                $"Model configuration property 'index_topk' is {DsaTopK}, outside [0, {MaxPositionEmbeddings}].");
+        }
+
+        RequireRange(DsaStartLayer, 0, LayerCount, "indexer_start_layer");
+        if (HasDsaConfiguration)
+        {
+            RequireRange(DsaIndexHeadCount, 1, AttentionHeadCount, "index_n_heads");
+            RequireRange(DsaIndexHeadSize, 1, HiddenSize, "index_head_dim");
+        }
+        else if (DsaIndexHeadCount != 0 || DsaIndexHeadSize != 0)
+        {
+            throw new InvalidDataException(
+                "DSA index_n_heads and index_head_dim require a positive index_topk value.");
+        }
+
+        RequireRange(MtpLayerCount, 0, 8, "num_nextn_predict_layers");
 
         if (ExpertGroupCount != 1)
         {

@@ -105,7 +105,8 @@ public sealed class ManagedGlmProvider : IModelFixtureProvider, IModelReadinessP
                 probe.Configuration,
                 probe.Tensors,
                 probe.Manifest.Quantization,
-                probe.Manifest.QuantizationLayout);
+                probe.Manifest.QuantizationLayout,
+                probe.AdvancedFeatures);
             var expertLayout = ExpertDescriptorLayout.Create(
                 probe.Configuration,
                 probe.Manifest.Quantization,
@@ -145,7 +146,9 @@ public sealed class ManagedGlmProvider : IModelFixtureProvider, IModelReadinessP
                     $"tokenizer vocabulary: {probe.Tokenizer.VocabularySize}",
                     $"layers: {probe.Configuration.LayerCount}",
                     $"routed experts: {probe.Configuration.RoutedExpertCount}",
-                    $"expert storage format: {expertLayout.Format}"
+                    $"expert storage format: {expertLayout.Format}",
+                    $"DSA configured/tensors: {probe.AdvancedFeatures.DsaConfigured}/{probe.AdvancedFeatures.DsaTensorCount}",
+                    $"MTP configured/tensors: {probe.AdvancedFeatures.MtpConfigured}/{probe.AdvancedFeatures.MtpTensorCount}"
                 ]);
         }
         catch (InferenceException)
@@ -320,6 +323,7 @@ internal sealed class ManagedGlmSession : IChatGenerationSession
                 $"completion tokens: {generatedCount}",
                 $"stop reason: {result.StopReason}",
                 $"sampling seed: {result.Seed}",
+                $"router lookahead prefetched experts: {result.RouterLookaheadPrefetches}",
                 result.Timing.ToString());
             return new CompletionResult(
                 result.Text,
@@ -436,14 +440,16 @@ internal sealed class ManagedGlmSession : IChatGenerationSession
             $"quantization layout: {loadedModel.Manifest.QuantizationLayout}",
             $"expert cache slot bytes: {loadedModel.ExpertLayout.SlotBudgetedBytes}",
             $"load budget bytes: {loadedModel.MemoryPlan.RequiredBytes}/{loadedModel.MemoryPlan.AvailableBytes}",
-            $"kernel execution: {OptimizedKernels.Description}"
+            $"kernel execution: {OptimizedKernels.Description}",
+            $"DSA top-k/start layer: {loadedModel.Configuration.DsaTopK}/{loadedModel.Configuration.DsaStartLayer}",
+            $"MTP layers/head: {loadedModel.Configuration.MtpLayerCount}/{loadedModel.AdvancedFeatures.MtpHeadTensorName ?? "none"}"
         };
         if (expertCache is not null)
         {
             var snapshot = expertCache.GetSnapshot();
             diagnostics.Add($"expert cache bytes: {snapshot.BudgetedBytes}");
             diagnostics.Add($"expert cache slots per layer: {snapshot.SlotCapacityPerLayer}");
-            diagnostics.Add($"expert cache hot pins/prefetches: {snapshot.HotExpertCount}/{snapshot.Prefetches}");
+            diagnostics.Add($"expert cache hot pins/prefetches/repins: {snapshot.HotExpertCount}/{snapshot.Prefetches}/{snapshot.LiveRepins}");
             diagnostics.Add($"expert cache hit/miss/eviction: {snapshot.Hits}/{snapshot.Misses}/{snapshot.Evictions}");
             diagnostics.Add($"expert disk reads/bytes: {snapshot.DiskReads}/{snapshot.DiskBytes}");
         }

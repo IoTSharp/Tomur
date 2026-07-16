@@ -246,7 +246,22 @@ internal static class MlaAttention
                         validTokenCount));
                 }
 
-                ScalarKernels.SoftmaxInPlace(scores);
+                if (configuration.HasDsaConfiguration && layer >= configuration.DsaStartLayer)
+                {
+                    if (configuration.DsaTopK < validTokenCount)
+                    {
+                        throw new InvalidDataException(
+                            $"DSA layer {layer} requires validated indexer scores before selecting " +
+                            $"{configuration.DsaTopK} of {validTokenCount} causal keys. " +
+                            "Only the dense-equivalent DSA path is enabled before M14 indexer validation.");
+                    }
+
+                    DsaCausalSelector.SoftmaxSelectedInPlace(scores, configuration.DsaTopK);
+                }
+                else
+                {
+                    ScalarKernels.SoftmaxInPlace(scores);
+                }
                 if (capturedProbabilities is not null)
                 {
                     scores.CopyTo(capturedProbabilities.AsSpan(

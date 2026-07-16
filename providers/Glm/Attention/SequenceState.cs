@@ -70,6 +70,19 @@ internal sealed class SequenceState
         ValidTokenCount = checkpoint.ValidTokenCount;
         CacheStart = checkpoint.CacheStart;
     }
+
+    internal void RestorePersistent(int position, int validTokenCount, int cacheStart)
+    {
+        if (position < 0 || validTokenCount < 0 || cacheStart < 0 ||
+            position > ContextLimit || validTokenCount > ContextLimit ||
+            position != checked(cacheStart + validTokenCount))
+        {
+            throw new InvalidDataException(
+                "Persisted sequence state is outside the context limit or internally inconsistent.");
+        }
+
+        Restore(new SequenceCheckpoint(position, validTokenCount, cacheStart));
+    }
 }
 
 internal readonly record struct SequenceCheckpoint(

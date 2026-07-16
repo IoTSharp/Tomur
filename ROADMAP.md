@@ -245,10 +245,11 @@ GLM 基础代码顺序、性能计划、集中验证门槛与发布标准见 [pr
 13. 🚧 将 `glm4_moe_lite` 作为 managed GLM 的显式兼容架构目标，首个真实候选为 `cerebras/GLM-4.7-Flash-REAP-23B-A3B`。当前工作只实现 architecture/config/tensor/prompt 契约与可执行测试代码；完整模型转换、加载、自然语言质量和性能验证转移到具备充足存储与算力的独立机器执行。
 14. 🚧 独立 `managed-olmoe` provider 已接通标准 causal attention、q/k RMSNorm、softmax top-k router、BF16 与 rowwise int8 experts、官方 chat template 和生成链路；原始 BF16 `allenai/OLMoE-1B-7B-0125-Instruct` 已通过 Catalog、provider load 与中文 Ollama 非流式真实对话，证据见 [R15 OLMoE real-model smoke](./docs/r15-olmoe-smoke.md)。OpenAI、Anthropic、SSE、完整 int8 转换和性能优化仍待验证。
 15. ✅ M11 性能优化基础代码已完成：managed GLM 已增加可回退 scalar 的 SIMD/shape-aware F32、int8、int4 matvec，gate/up paired dispatch，RAM budget 自动 cache capacity，usage histogram hot pin、显式 expert prefetch、cache 热路径降分配、forward 阶段 timing、activation integer dot 评估、prefill batch expert union 和可切换 mmap I/O 实验边界。全部性能基准、allocation 与跨平台验证仍归 M14；本轮未执行构建或测试。
+16. ✅ M12 高级能力基础代码已完成：managed GLM 已增加 DSA/MTP 配置与 tensor probe、接收 indexer score 的稳定 DSA top-k selection、dense-equivalent runtime 路径、可选 MTP resident head 与单步 draft、speculative rejection sampling、grammar forced spans、router lookahead prefetch、live expert repin，以及带模型身份、维度检查和 SHA-256 的 compressed KV 快照/恢复与 isolated KV fork。未验证的稀疏 DSA 不使用 attention score 冒充 indexer score；M12 独立测试代码已接入 solution，真实 indexer/MTP 语义、采样分布、性能、完整模型和跨平台验证仍归 M14，本轮未执行构建或测试。
 
 集中验证：
 
-1. M1-M10 的编译、自动化测试、CLI/API 实跑和跨平台资源释放尚未形成完整矩阵，统一列入详细路线图 M14；M10 已有的 tiny 格式、forward 与 API smoke 不替代完整验证。
+1. M1-M12 的编译、自动化测试、CLI/API 实跑和跨平台资源释放尚未形成完整矩阵，统一列入详细路线图 M14；M10 已有的 tiny 格式、forward 与 API smoke 不替代完整验证。
 2. M8-M13 先完成基础代码；kernel/oracle 对齐、tokenizer、forward、API、性能、发布兼容与完整模型验证统一在 M14 执行。
 3. 完整 GLM-5.2 预转换目录为 `383,760,077,466` bytes（357.4 GiB，约 384 GB）；当前本机没有单盘可用空间容纳该资产，因此只能记录 tiny 格式/API 链路证据，不得据此宣称完整模型真实对话通过。
 4. M14 完成前，managed GLM provider 继续保持实验状态，不标记为可用于真实聊天。

@@ -9,7 +9,8 @@ internal sealed record ExpertCacheOptions(
     int WorkerCount = 2,
     int QueueCapacity = 8,
     long SafetyMarginBytes = 0,
-    int HotExpertCount = 0)
+    int HotExpertCount = 0,
+    int RepinInterval = 1)
 {
     public static ExpertCacheOptions CreateAutomatic(
         ExpertDescriptorLayout layout,
@@ -41,7 +42,8 @@ internal sealed record ExpertCacheOptions(
             WorkerCount,
             QueueCapacity,
             SafetyMarginBytes,
-            HotExpertCount: Math.Max(0, capacity - layout.Configuration.ExpertsPerToken));
+            HotExpertCount: Math.Max(0, capacity - layout.Configuration.ExpertsPerToken),
+            RepinInterval: 128);
     }
 
     public void Validate()
@@ -70,6 +72,11 @@ internal sealed record ExpertCacheOptions(
         {
             throw new ArgumentOutOfRangeException(nameof(HotExpertCount));
         }
+
+        if (RepinInterval <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(RepinInterval));
+        }
     }
 }
 
@@ -86,6 +93,7 @@ internal sealed record ExpertCacheSnapshot(
     TimeSpan ForegroundWaitTime,
     int HotExpertCount,
     long Prefetches,
+    long LiveRepins,
     IReadOnlyDictionary<ExpertKey, long> UsageHistogram);
 
 internal sealed class ExpertCacheBudgetExceededException : InvalidOperationException
@@ -124,7 +132,9 @@ internal sealed class ExpertCache : IDisposable
     private readonly CancellationTokenSource shutdown = new();
     private readonly Task[] workers;
     private readonly long[][] usage;
+    private readonly bool[][] pinnedExperts;
     private readonly int hotExpertCount;
+    private readonly int repinInterval;
     private long accessClock;
     private long hits;
     private long misses;
@@ -134,6 +144,8 @@ internal sealed class ExpertCache : IDisposable
     private long diskReadTicks;
     private long foregroundWaitTicks;
     private long prefetches;
+    private long usageSinceRepin;
+    private long liveRepins;
     private int disposed;
 
     public ExpertCache(
@@ -204,14 +216,17 @@ internal sealed class ExpertCache : IDisposable
 
 
         hotExpertCount = Math.Min(options.HotExpertCount, Math.Max(0, SlotCapacityPerLayer - 1));
+        repinInterval = options.RepinInterval;
 
         TotalSlotCount = checked(SlotCapacityPerLayer * layout.MoeLayerCount);
         BudgetedBytes = checked((long)TotalSlotCount * layout.SlotBudgetedBytes);
         layers = new LayerState?[layout.Configuration.LayerCount];
         usage = new long[layout.Configuration.LayerCount][];
+        pinnedExperts = new bool[layout.Configuration.LayerCount][];
         for (var layer = 0; layer < usage.Length; layer++)
         {
             usage[layer] = new long[layout.Configuration.RoutedExpertCount];
+            pinnedExperts[layer] = new bool[layout.Configuration.RoutedExpertCount];
         }
         readQueue = Channel.CreateBounded<ReadRequest>(new BoundedChannelOptions(options.QueueCapacity)
         {
@@ -378,7 +393,38 @@ internal sealed class ExpertCache : IDisposable
             TimeSpan.FromTicks(Interlocked.Read(ref foregroundWaitTicks)),
             hotExpertCount,
             Interlocked.Read(ref prefetches),
+            Interlocked.Read(ref liveRepins),
             new ReadOnlyDictionary<ExpertKey, long>(histogram));
+    }
+
+    public void RepinHotExperts()
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
+        for (var layer = layout.Configuration.FirstMoeLayer;
+             layer < layout.Configuration.LayerCount;
+             layer++)
+        {
+            RepinLayer(layer);
+        }
+
+        Interlocked.Exchange(ref usageSinceRepin, 0);
+        Interlocked.Increment(ref liveRepins);
+    }
+
+    public IReadOnlyList<int> GetPinnedExperts(int layer)
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
+        _ = GetLayer(layer);
+        var result = new List<int>(hotExpertCount);
+        for (var expertId = 0; expertId < pinnedExperts[layer].Length; expertId++)
+        {
+            if (Volatile.Read(ref pinnedExperts[layer][expertId]))
+            {
+                result.Add(expertId);
+            }
+        }
+
+        return result;
     }
 
     public void Dispose()
@@ -500,6 +546,7 @@ internal sealed class ExpertCache : IDisposable
                     if (countUsage)
                     {
                         Interlocked.Increment(ref usage[layer][expertId]);
+                        MaybeRepin();
                     }
 
                     lease = new ExpertLease(this, existing);
@@ -529,6 +576,7 @@ internal sealed class ExpertCache : IDisposable
                         if (countUsage)
                         {
                             Interlocked.Increment(ref usage[layer][expertId]);
+                            MaybeRepin();
                         }
 
                         request = new ReadRequest(state, candidate, candidate.Generation, layout.Get(layer, expertId));
@@ -608,27 +656,72 @@ internal sealed class ExpertCache : IDisposable
             return false;
         }
 
-        var candidateUsage = Interlocked.Read(ref usage[layer][key.ExpertId]);
-        if (candidateUsage == 0)
+        return Volatile.Read(ref pinnedExperts[layer][key.ExpertId]);
+    }
+
+    private void MaybeRepin()
+    {
+        if (hotExpertCount == 0 || Interlocked.Increment(ref usageSinceRepin) < repinInterval)
         {
-            return false;
+            return;
         }
 
-        var rank = 0;
+        RepinHotExperts();
+    }
+
+    private void RepinLayer(int layer)
+    {
+        var pins = pinnedExperts[layer];
+        Array.Clear(pins);
+        if (hotExpertCount == 0)
+        {
+            return;
+        }
+
+        var selectedIds = new int[hotExpertCount];
+        var selectedUsage = new long[hotExpertCount];
+        Array.Fill(selectedIds, -1);
         for (var expertId = 0; expertId < layout.Configuration.RoutedExpertCount; expertId++)
         {
             var count = Interlocked.Read(ref usage[layer][expertId]);
-            if (count > candidateUsage || (count == candidateUsage && expertId < key.ExpertId))
+            if (count <= 0)
             {
-                rank++;
-                if (rank >= hotExpertCount)
+                continue;
+            }
+
+            var insertAt = hotExpertCount;
+            for (var index = 0; index < hotExpertCount; index++)
+            {
+                if (count > selectedUsage[index] ||
+                    (count == selectedUsage[index] && expertId < selectedIds[index]))
                 {
-                    return false;
+                    insertAt = index;
+                    break;
                 }
             }
+
+            if (insertAt == hotExpertCount)
+            {
+                continue;
+            }
+
+            for (var index = hotExpertCount - 1; index > insertAt; index--)
+            {
+                selectedUsage[index] = selectedUsage[index - 1];
+                selectedIds[index] = selectedIds[index - 1];
+            }
+
+            selectedUsage[insertAt] = count;
+            selectedIds[insertAt] = expertId;
         }
 
-        return true;
+        foreach (var expertId in selectedIds)
+        {
+            if (expertId >= 0)
+            {
+                Volatile.Write(ref pins[expertId], true);
+            }
+        }
     }
 
     private async Task WorkerAsync()

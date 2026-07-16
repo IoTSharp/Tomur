@@ -190,7 +190,7 @@ Disk
 | 09 | M9 | ✅ | 完整 forward、prefill、decode 与 sampling |
 | 10 | M10 | ✅ | Tomur API、session、streaming 与诊断闭环 |
 | 11 | M11 | ✅ | SIMD、并行、缓存与 I/O 优化 |
-| 12 | M12 | ⏳ | DSA、MTP、grammar draft 与 KV 持久化 |
+| 12 | M12 | ✅ | DSA、MTP、grammar draft 与 KV 持久化 |
 | 13 | M13 | ⏳ | 打包、版本兼容与 Native AOT 策略 |
 | 14 | M14 | ⏳ | 集中测试、完整模型验证与发布证据 |
 
@@ -489,21 +489,24 @@ M14 性能验证仍待执行：
 
 1. 在 M14 对 SIMD、并行、cache 与 I/O 路径逐项执行 oracle、吞吐、allocation 和跨平台验证。
 
-## 12. ⏳ M12：高级能力
+## 12. ✅ M12：高级能力
 
 代码依赖：M9 与 M11 的基础实现完成；正确性和性能门槛统一在 M14 验证。
 
-计划顺序：
+已完成基础代码：
 
-1. DSA indexer 权重探测和 dense-equivalent 验证。
-2. DSA top-k causal key selection。
-3. MTP head 加载和单步 draft。
-4. speculative verification 与 rejection sampling。
-5. grammar-constrained forced spans。
-6. router lookahead prefetch。
-7. live expert repin。
-8. compressed KV 持久化和恢复。
-9. isolated KV contexts。
+1. ✅ 配置 reader 已扩展 `index_topk`、`indexer_start_layer`、`index_n_heads`、`index_head_dim` 与 `num_nextn_predict_layers`，模型 probe 会校验 DSA indexer 层覆盖、MTP tensor 集合和可用 projection head；未声明高级字段的既有模型保持基础路径。
+2. ✅ 已实现接收 indexer score 的稳定 DSA top-k causal key selection，并在 top-k 覆盖全部 causal key 时精确回到 dense softmax；运行时当前只启用 dense-equivalent 路径，真实 indexer projection 未经 M14 对齐时返回明确失败，不使用 attention score 冒充 indexer score。
+3. ✅ MTP projection head 已纳入可选 resident 权重、内存预预算和单步 draft 边界；缺失或 shape 不匹配时模型 probe 前置失败，不回退到伪造 draft。
+4. ✅ 已实现单 token speculative acceptance 与 rejection residual sampling，并独立校验 target/draft 概率分布；生产生成链路启用前仍须在 M14 验证采样分布不变。
+5. ✅ 已实现不重叠、词表有界的 grammar forced token spans；未提供约束时不修改 logits。
+6. ✅ decode 路径已使用上一 token 的 router 结果进行下一步有界 expert lookahead prefetch，prefill 继续使用批次 unique expert union，二者都受 per-layer slot capacity 与取消边界约束。
+7. ✅ expert cache 已增加 usage 驱动的 live repin、稳定 tie-break、显式 repin 与 repin 计数；自动 cache 使用有界 repin 周期，测试或显式配置可逐次更新。
+8. ✅ compressed KV 已增加版本化二进制快照、模型身份校验、维度/上下文上限、有限值检查与 SHA-256 完整性校验；恢复在完整校验通过后才写入空 cache。
+9. ✅ 已建立可 fork 的 isolated KV context，分别持有 compressed KV 与逐层 sequence state，fork 后不共享可变 cache buffer；同一模型的 context/fork 共享原子内存预算租约，不得占用 resident、scratch 或 expert cache 已预留的空间。
+10. ✅ M12 独立测试项目已加入 solution，覆盖 dense-equivalent DSA、稳定 top-k、speculative 接受/拒绝、forced spans、lookahead/repin、KV checksum 恢复、fork 隔离和共享内存预算；本轮未执行构建或测试。
+
+M14 验证仍待执行：真实 DSA indexer oracle、MTP 完整层语义、speculative 分布、grammar API 接入、KV 中断恢复一致性、吞吐/内存收益和跨平台快照兼容均不得由本阶段代码状态替代。
 
 ## 13. ⏳ M13：发布与兼容
 

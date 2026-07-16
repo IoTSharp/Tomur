@@ -15,7 +15,8 @@ internal static class ResidentWeightLayout
         GlmModelConfiguration configuration,
         SafeTensorCatalog tensors,
         string quantization = "f32",
-        string quantizationLayout = "separate-scales")
+        string quantizationLayout = "separate-scales",
+        AdvancedFeatureProbe? advancedFeatures = null)
     {
         ArgumentNullException.ThrowIfNull(configuration);
         ArgumentNullException.ThrowIfNull(tensors);
@@ -24,6 +25,18 @@ internal static class ResidentWeightLayout
         Add(specs, tensors, quantization, quantizationLayout, "model.embed_tokens.weight", configuration.VocabularySize, configuration.HiddenSize);
         Add(specs, tensors, quantization, quantizationLayout, "model.norm.weight", configuration.HiddenSize);
         Add(specs, tensors, quantization, quantizationLayout, "lm_head.weight", configuration.VocabularySize, configuration.HiddenSize);
+        advancedFeatures ??= AdvancedFeatureProbe.Inspect(configuration, tensors);
+        if (advancedFeatures.MtpHeadTensorName is { } mtpHead)
+        {
+            Add(
+                specs,
+                tensors,
+                quantization,
+                quantizationLayout,
+                mtpHead,
+                configuration.VocabularySize,
+                configuration.HiddenSize);
+        }
 
         var queryProjectionSize = checked(
             configuration.AttentionHeadCount *

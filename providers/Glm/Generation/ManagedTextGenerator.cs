@@ -8,7 +8,8 @@ internal sealed record ManagedGenerationResult(
     IReadOnlyList<int> GeneratedTokenIds,
     string StopReason,
     int Seed,
-    ForwardTimingSnapshot Timing);
+    ForwardTimingSnapshot Timing,
+    long RouterLookaheadPrefetches);
 
 internal sealed class ManagedTextGenerator(
     ManagedGlmModel model,
@@ -106,6 +107,7 @@ internal sealed class ManagedTextGenerator(
             generated.ToArray(),
             stopReason,
             sampler.Seed,
-            forward.Timing.Snapshot());
+            forward.Timing.Snapshot(),
+            forward.RouterLookaheadPrefetches);
     }
 }

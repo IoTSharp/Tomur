@@ -10,6 +10,7 @@ internal sealed class ManagedForwardContext : IDisposable
     private readonly AttentionWorkspace attentionWorkspace;
     private readonly TensorWorkspace tensorWorkspace;
     private readonly MoeWorkspace? moeWorkspace;
+    private readonly RouterLookaheadPrefetcher? routerLookahead;
     private readonly SequenceState[] sequences;
     private float[]? hiddenStates;
     private float[]? normalizedStates;
@@ -61,6 +62,7 @@ internal sealed class ManagedForwardContext : IDisposable
             if (model.ExpertLayout.MoeLayerCount > 0)
             {
                 newMoeWorkspace = model.CreateMoeWorkspace();
+                routerLookahead = new RouterLookaheadPrefetcher(model.Configuration, expertCache!);
             }
 
             hiddenStates = hidden;
@@ -92,6 +94,8 @@ internal sealed class ManagedForwardContext : IDisposable
     public int ContextLimit { get; }
 
     public int BatchCapacity { get; }
+
+    public long RouterLookaheadPrefetches => routerLookahead?.RequestedExperts ?? 0;
 
     public int Position
     {
@@ -284,6 +288,11 @@ internal sealed class ManagedForwardContext : IDisposable
         CancellationToken cancellationToken)
     {
         var hiddenSize = model.Configuration.HiddenSize;
+        if (tokenCount == 1)
+        {
+            await routerLookahead!.PrefetchAsync(layer, cancellationToken).ConfigureAwait(false);
+        }
+
         if (tokenCount > 1)
         {
             await PrefetchBatchExpertsAsync(layer, tokenCount, hiddenSize, cancellationToken)
@@ -301,6 +310,7 @@ internal sealed class ManagedForwardContext : IDisposable
                 moeWorkspace!,
                 GetSublayerOutputs().AsMemory(offset, hiddenSize),
                 cancellationToken).ConfigureAwait(false);
+            routerLookahead!.Observe(layer, moeWorkspace!.SelectedExpertIds);
         }
     }
 

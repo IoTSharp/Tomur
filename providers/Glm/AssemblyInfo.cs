@@ -10,5 +10,6 @@ using System.Runtime.CompilerServices;
 [assembly: InternalsVisibleTo("Tomur.Providers.M9.Tests")]
 [assembly: InternalsVisibleTo("Tomur.Providers.M10.Tests")]
 [assembly: InternalsVisibleTo("Tomur.Providers.M11.Tests")]
+[assembly: InternalsVisibleTo("Tomur.Providers.M12.Tests")]
 [assembly: InternalsVisibleTo("Tomur.Providers.Olmoe")]
 [assembly: InternalsVisibleTo("Tomur.Providers.Olmoe.Tests")]

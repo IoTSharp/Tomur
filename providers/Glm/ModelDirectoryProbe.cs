@@ -10,7 +10,8 @@ internal sealed record ModelProbe(
     string TokenizerPath,
     ManagedTokenizer Tokenizer,
     int TensorFileCount,
-    SafeTensorCatalog Tensors);
+    SafeTensorCatalog Tensors,
+    AdvancedFeatureProbe AdvancedFeatures);
 
 internal static class ModelDirectoryProbe
 {
@@ -104,6 +105,7 @@ internal static class ModelDirectoryProbe
             tensors,
             manifest.Quantization,
             manifest.QuantizationLayout);
+        var advancedFeatures = AdvancedFeatureProbe.Inspect(configuration, tensors);
         return new ModelProbe(
             manifest,
             configuration,
@@ -111,7 +113,8 @@ internal static class ModelDirectoryProbe
             tokenizerPath,
             tokenizer,
             tensorPaths.Count,
-            tensors);
+            tensors,
+            advancedFeatures);
     }
 
     private static void RejectLinkedAsset(string modelDirectory, string assetPath)
