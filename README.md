@@ -26,6 +26,12 @@ Tomur 不把本地模型能力限定在单一推理后端。纯 C# provider 与 
 
 Tomur 关注的是本机 AI 运行体验，不是多租户服务器、后台管理平台或复杂工作流治理系统。
 
+## 💬 交流讨论
+
+欢迎加入 Tomur 企业微信群，交流使用体验、本地 AI 实践与项目开发。
+
+<img src="./docs/images/tomur-wecom-group.png" alt="Tomur 企业微信群二维码" width="240">
+
 ## 🚀 快速开始
 
 查看命令入口：

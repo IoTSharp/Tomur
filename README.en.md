@@ -26,6 +26,12 @@ Tomur does not restrict local model execution to a single inference backend. Pur
 
 Tomur focuses on local AI runtime experience. It is not a multi-tenant server product, enterprise administration shell, or complex workflow governance platform.
 
+## 💬 Community
+
+Join the Tomur WeCom group to discuss usage, local AI practices, and project development.
+
+<img src="./docs/images/tomur-wecom-group.png" alt="QR code for the Tomur WeCom group" width="240">
+
 ## 🚀 Quick Start
 
 Show available commands:
