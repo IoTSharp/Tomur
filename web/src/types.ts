@@ -334,6 +334,8 @@ export interface SessionSnapshot {
   provider_id?: string | null;
   architecture?: string | null;
   quantization?: string | null;
+  execution_backend?: string | null;
+  execution_detail?: string | null;
   busy: boolean;
   context_size?: number | null;
   resident_bytes?: number | null;

@@ -16,7 +16,17 @@ public sealed record ManagedProviderReleaseManifest(
         error = null;
         try
         {
-            using var document = JsonDocument.Parse(File.ReadAllBytes(path));
+            var bytes = File.ReadAllBytes(path);
+            var json = bytes.AsMemory();
+            if (json.Length >= 3 &&
+                json.Span[0] == 0xEF &&
+                json.Span[1] == 0xBB &&
+                json.Span[2] == 0xBF)
+            {
+                json = json[3..];
+            }
+
+            using var document = JsonDocument.Parse(json);
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object ||
                 !root.TryGetProperty("schema_version", out var schema) ||

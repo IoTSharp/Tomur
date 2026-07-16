@@ -1,4 +1,6 @@
 using System.Numerics;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 
 namespace Tomur.Providers.Glm;
 
@@ -10,9 +12,11 @@ internal static class OptimizedKernels
 
     public static KernelExecutionOptions Options => options;
 
-    public static string Description => options.EnableSimd && Vector.IsHardwareAccelerated
-        ? $"SIMD Vector{options.SimdWidthBits}, parallelism {options.EffectiveMaxDegreeOfParallelism}"
-        : "scalar reference";
+    public static string Description => options.EnableSimd && Avx2.IsSupported
+        ? $"AVX2 packed int4/int8 and Vector{options.SimdWidthBits} F32, parallelism {options.EffectiveMaxDegreeOfParallelism}"
+        : options.EnableSimd && Vector.IsHardwareAccelerated
+            ? $"SIMD Vector{options.SimdWidthBits} F32 with scalar quantized decode, parallelism {options.EffectiveMaxDegreeOfParallelism}"
+            : "scalar reference";
 
     public static void MatVec(
         ReadOnlySpan<float> matrix,
@@ -300,6 +304,11 @@ internal static class OptimizedKernels
         int row,
         ReadOnlySpan<float> input)
     {
+        if (Avx2.IsSupported && Avx.IsSupported && matrix.Shape.Columns >= Vector256<float>.Count)
+        {
+            return DotQuantizedAvx2(matrix, row, input);
+        }
+
         var width = Vector<float>.Count;
         Span<float> decoded = stackalloc float[Vector<float>.Count];
         var accumulator = Vector<float>.Zero;
@@ -322,6 +331,114 @@ internal static class OptimizedKernels
         }
 
         return (float)sum;
+    }
+
+    private static unsafe float DotQuantizedAvx2(
+        QuantizedTensorView matrix,
+        int row,
+        ReadOnlySpan<float> input)
+    {
+        var columns = matrix.Shape.Columns;
+        var accumulator = Vector256<float>.Zero;
+        var column = 0;
+        fixed (byte* payloadPointer = matrix.Payload)
+        fixed (float* inputPointer = input)
+        {
+            if (matrix.Shape.Format == QuantizedTensorFormat.Int8)
+            {
+                var rowOffset = checked(row * columns);
+                for (; column <= columns - 16; column += 16)
+                {
+                    var packed = Sse2.LoadVector128((sbyte*)(payloadPointer + rowOffset + column));
+                    accumulator = MultiplyAdd(
+                        Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(packed)),
+                        Avx.LoadVector256(inputPointer + column),
+                        accumulator);
+                    accumulator = MultiplyAdd(
+                        Avx.ConvertToVector256Single(
+                            Avx2.ConvertToVector256Int32(Sse2.ShiftRightLogical128BitLane(packed.AsByte(), 8).AsSByte())),
+                        Avx.LoadVector256(inputPointer + column + 8),
+                        accumulator);
+                }
+            }
+            else
+            {
+                var storedColumns = (columns + 1) / 2;
+                var rowOffset = checked(row * storedColumns);
+                var nibbleMask = Vector128.Create((byte)0x0f);
+                for (; column <= columns - 32; column += 32)
+                {
+                    var packed = Sse2.LoadVector128(payloadPointer + rowOffset + (column / 2));
+                    var low = Sse2.And(packed, nibbleMask);
+                    var high = Sse2.And(
+                        Sse2.ShiftRightLogical(packed.AsUInt16(), 4).AsByte(),
+                        nibbleMask);
+                    var first = Sse2.UnpackLow(low, high);
+                    var second = Sse2.UnpackHigh(low, high);
+
+                    accumulator = MultiplyDecodedNibbles(first, inputPointer + column, matrix.Shape.ValueEncoding, accumulator);
+                    accumulator = MultiplyDecodedNibbles(second, inputPointer + column + 16, matrix.Shape.ValueEncoding, accumulator);
+                }
+            }
+        }
+
+        double sum = Sum(accumulator);
+        for (; column < columns; column++)
+        {
+            sum += (double)DecodeQuantized(matrix, row, column) * input[column];
+        }
+
+        return (float)sum;
+    }
+
+    private static unsafe Vector256<float> MultiplyDecodedNibbles(
+        Vector128<byte> nibbles,
+        float* input,
+        QuantizedValueEncoding encoding,
+        Vector256<float> accumulator)
+    {
+        var lower = DecodeNibbles(nibbles, encoding);
+        var upper = DecodeNibbles(Sse2.ShiftRightLogical128BitLane(nibbles, 8), encoding);
+        accumulator = MultiplyAdd(
+            Avx.ConvertToVector256Single(lower),
+            Avx.LoadVector256(input),
+            accumulator);
+        return MultiplyAdd(
+            Avx.ConvertToVector256Single(upper),
+            Avx.LoadVector256(input + 8),
+            accumulator);
+    }
+
+    private static Vector256<int> DecodeNibbles(
+        Vector128<byte> nibbles,
+        QuantizedValueEncoding encoding)
+    {
+        var values = Avx2.ConvertToVector256Int32(nibbles);
+        if (encoding == QuantizedValueEncoding.OffsetBinary)
+        {
+            return Avx2.Subtract(values, Vector256.Create(8));
+        }
+
+        var negative = Avx2.CompareGreaterThan(values, Vector256.Create(7));
+        var correction = Avx2.And(negative, Vector256.Create(16));
+        return Avx2.Subtract(values, correction);
+    }
+
+    private static Vector256<float> MultiplyAdd(
+        Vector256<float> left,
+        Vector256<float> right,
+        Vector256<float> accumulator)
+        => Avx.Add(accumulator, Avx.Multiply(left, right));
+
+    private static double Sum(Vector256<float> value)
+    {
+        double sum = 0;
+        for (var index = 0; index < Vector256<float>.Count; index++)
+        {
+            sum += value.GetElement(index);
+        }
+
+        return sum;
     }
 
     private static int DecodeQuantized(QuantizedTensorView matrix, int row, int column)

@@ -14,7 +14,7 @@
 
 ### M11 性能优化
 
-已完成性能优化基础代码：managed GLM forward 阶段 timing、可回退的 activation int8 integer dot 评估 kernel、prefill 批次级 unique expert union/prefetch，以及默认 RandomAccess、可选 mmap 的 tensor I/O 实验边界。默认推理路径和 scalar oracle 保持不变；完整 benchmark、allocation、跨平台和真实模型验证仍归 M14。
+已完成性能优化基础代码：managed GLM forward 阶段 timing、可回退的 activation int8 integer dot 评估 kernel、prefill 批次级 unique expert union/prefetch，以及默认 RandomAccess、可选 mmap 的 tensor I/O 实验边界。packed int4/int8 matvec 已增加 AVX2 成批 byte/nibble 展开与向量累加，保留 scalar reference fallback；当前或最近一次 forward 会报告 stage、layer、batch token、已完成 token 和 elapsed。readiness 使用与真实 session 一致的自动 expert cache 预算，并区分 `ready_unverified`、`warming`、`loaded_unverified` 与已完成 forward 的 `loaded`；session 诊断新增 `execution_backend` 和 `execution_detail`。Linux 磁盘诊断会按数据目录选择最长匹配挂载点，不再把 `/data` 模型盘容量误报为 `/` 根分区。本轮未执行构建、测试、服务 smoke 或真实模型性能复测，完整 benchmark、oracle、跨平台和真实模型验证仍归 M14。
 
 ### R15 当前已接入
 
@@ -42,7 +42,7 @@
 22. 已建立独立 `Tomur.Providers.Olmoe` 纯 C# provider，接通 OLMoE config/probe、标准 causal attention、full KV cache、q/k RMSNorm、split-half RoPE、softmax top-k router、streamed experts、官方 chat template、生成与 session 诊断；tiny F32/BF16 与 signed-int8 `rowwise-qs` 路径纳入自动化测试。
 23. 原始 BF16 `allenai/OLMoE-1B-7B-0125-Instruct` 三个 safetensors shard 已通过 Catalog、动态 provider load、完整模型加载与中文 Ollama 非流式真实对话；`/api/runtime/status` 可报告 147 个 resident tensor、3 个打开的 shard、resident/KV/scratch 预算和 expert cache/I/O。记录见 `docs/r15-olmoe-smoke.md`。
 24. 文本 session 生命周期日志已从硬编码的 llama 文案改为中性 `text generation session`，并显示实际 `runtime`；Runtime 诊断会优先报告已加载的 managed session，不再被未使用的 llama.cpp native bundle 状态覆盖。
-25. managed GLM 以 extend-only 方式增加 `glm4_moe_lite` architecture/config 契约，要求 manifest 与 `model_type` 一致，并校验当前实现所需的 MLA head、interleaved RoPE、SwiGLU、sigmoid/noaux router 与 dense/sparse layer 边界；GLM-4.7 prompt 分支已对齐 prefix 换行、默认非 thinking assistant closure 和 tool response 包装。真实 REAP 权重转换与完整模型 smoke 尚未执行，异机步骤记录在 `docs/r15-glm4-moe-lite-validation.md`。
+25. managed GLM 以 extend-only 方式增加 `glm4_moe_lite` architecture/config 契约，要求 manifest 与 `model_type` 一致，并校验当前实现所需的 MLA head、interleaved RoPE、SwiGLU、sigmoid/noaux router 与 dense/sparse layer 边界；GLM-4.7 prompt 分支已对齐 prefix 换行、默认非 thinking assistant closure 和 tool response 包装。真实 REAP 权重已完成转换、加载、readiness 和最短非流式 completion，完整证据与剩余矩阵记录在 `docs/r15-glm4-moe-lite-validation.md`。
 26. 已增加可选 managed model readiness 契约；GLM 与 OLMoE 可只读探测 metadata、必要资产、tensor 数量、resident/KV/scratch/expert cache 计划和当前内存预算，不读取 resident payload，不执行 forward。
 27. `LocalModelCatalog` 已区分候选模型与兼容 API 可见模型；provider、metadata 或必要资产校验失败的 managed 模型不再进入 `/v1/models`、`/api/tags` 和协议模型选择路径，并通过 Runtime/doctor 保留结构化诊断。
 28. Ollama `generate` 与 `chat` streaming 已接入 provider 增量 callback，按 NDJSON 输出 `done=false` 文本增量和带 usage/duration 的 `done=true` 终帧；流中失败继续返回 Ollama 风格结构化错误。
@@ -59,6 +59,7 @@
 39. M12 独立测试项目已加入 solution，覆盖 DSA dense-equivalent/stable top-k、speculative 接受与拒绝、forced spans、lookahead/repin、KV checksum 恢复、context fork 隔离和共享内存预算；本轮未执行构建、测试、完整模型或跨平台验证。
 40. OLMoE O4 已在现有测试项目中增加确定性 tiny fixture 与独立 scalar reference，覆盖 embedding、attention、softmax top-k router、MoE、逐 token teacher forcing、greedy decode、F32/signed-int8 等价路径、预算先于 payload 读取、损坏或缺失资产、上下文/token/取消、faulted forward、重复 dispose、shard handle 释放，以及 readiness/session 的 resident/KV/scratch/minimum expert cache 总账；provider 内部增加只读 MoE trace 和明确的 disposed/缺失资产诊断。本轮未执行构建或测试。
 41. OLMoE O5 已增加 extend-only managed model 转换契约与隐藏转换命令；转换器以有界逐行读取把 floating routed expert gate/up/down 投影写为 signed int8 `rowwise-qs`，保留 dense dtype，使用同盘临时目录、输出 probe、源/产物 SHA-256 清单和原子发布。现有测试项目已增加转换取消/不覆盖、真实 tiny session 三协议非流式与 streaming 矩阵，以及加载、首 token、总生成、output token/s 和 decode token/s 诊断回归代码。本轮未执行构建、测试、完整模型转换或服务 smoke。
+42. managed GLM 生产 attention 默认模式已从 Reference 切换到 Absorbed，reference 路径继续作为显式 oracle/诊断入口。本机 M7 7/7 与 M9 6/6、Linux 隔离副本 M7 6/6 与 M9 6/6 均通过；完整 GLM-4.7 的固定 1-token completion 从 `186.596971s` 降至 `26.595764s`，返回相同 token，端到端改善 `7.02x`。该结果只完成 P0 与最短真实推理验证，完整性能和协议矩阵仍待执行。
 
 ### R14 当前已接入
 

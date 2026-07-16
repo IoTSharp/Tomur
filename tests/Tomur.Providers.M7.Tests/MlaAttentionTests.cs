@@ -7,6 +7,19 @@ namespace Tomur.Providers.M7.Tests;
 public sealed class MlaAttentionTests
 {
     [Fact]
+    public void ManagedAttentionEntryPointsDefaultToAbsorbedMode()
+    {
+        var modelType = typeof(ManagedGlmModel);
+
+        Assert.Equal(
+            MlaAttentionMode.Absorbed,
+            GetDefaultAttentionMode(modelType, nameof(ManagedGlmModel.RunAttentionToken)));
+        Assert.Equal(
+            MlaAttentionMode.Absorbed,
+            GetDefaultAttentionMode(modelType, nameof(ManagedGlmModel.RunAttentionPrefill)));
+    }
+
+    [Fact]
     public void PrefillMatchesAttentionOracleAndStoresOnlyCompressedKv()
     {
         using var root = new TemporaryDirectory();
@@ -149,7 +162,8 @@ public sealed class MlaAttentionTests
             fullCache,
             fullSequence,
             fullWorkspace,
-            fullOutputs);
+            fullOutputs,
+            mode: MlaAttentionMode.Reference);
 
         AssertClose(
             fullOutputs.AsSpan(fullOutputs.Length - model.Configuration.HiddenSize).ToArray(),
@@ -369,6 +383,14 @@ public sealed class MlaAttentionTests
             "f32",
             ["completion", "chat"]);
         return ModelDirectoryProbe.Read(descriptor, ManagedGlmProvider.ProviderId);
+    }
+
+    private static MlaAttentionMode GetDefaultAttentionMode(Type modelType, string methodName)
+    {
+        var method = modelType.GetMethod(methodName)
+            ?? throw new InvalidOperationException($"Method {methodName} was not found.");
+        var mode = method.GetParameters().Single(parameter => parameter.Name == "mode").DefaultValue;
+        return Assert.IsType<MlaAttentionMode>(mode);
     }
 
     private static void AssertClose(

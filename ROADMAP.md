@@ -242,7 +242,7 @@ GLM 基础代码顺序、性能计划、集中验证门槛与发布标准见 [pr
 10. ✅ 已实现 MoE router、shared/routed expert 合并、按层固定容量 LRU、lease 隔离、RAM 配额、有界异步磁盘读取、取消和 cache/I/O 诊断，并接入 M8 独立测试项目。
 11. ✅ 已接通有界批次完整 scalar forward、prompt prefill、compressed KV 增量 decode、greedy、temperature、top-k/top-p、penalty、多 EOS、文本 stop、context/cancellation 和增量 callback，并接入 M9 独立测试项目。
 12. ✅ M10 集成基础代码已完成：显式标记的 packed rowwise safetensors 目录已接通 offset-binary int4、`*.qs` per-row scale、量化 resident 权重、GLM role token Chat、managed model readiness、兼容 API 可见性校验、OpenAI / Anthropic SSE、Ollama 增量 NDJSON、可取消 unload、结构化 session/resource 诊断以及三协议 streaming 回归测试代码。转换后的随机 tiny 模型已完成三类兼容 API 链路 smoke，证据见 [R15 packed GLM smoke 记录](./docs/r15-packed-glm-smoke.md)；新增 M10 回归代码尚未执行构建、测试与服务 smoke，完整验证仍归 M14。
-13. 🚧 将 `glm4_moe_lite` 作为 managed GLM 的显式兼容架构目标，首个真实候选为 `cerebras/GLM-4.7-Flash-REAP-23B-A3B`。当前工作只实现 architecture/config/tensor/prompt 契约与可执行测试代码；完整模型转换、加载、自然语言质量和性能验证转移到具备充足存储与算力的独立机器执行。
+13. 🚧 `glm4_moe_lite` 已作为 managed GLM 的显式兼容架构接入，真实候选 `cerebras/GLM-4.7-Flash-REAP-23B-A3B` 已在 Linux 验证机完成转换、加载、readiness 和最短非流式 completion。P0 将生产 MLA 默认切换到 Absorbed 后，同一 1-token 请求从 `186.596971s` 降至 `26.595764s` 并返回相同 token；Chat、streaming、Anthropic、自然语言质量、持续吞吐、缓存、取消、unload 和跨平台矩阵仍待完成。
 14. 🚧 独立 `managed-olmoe` provider 已接通标准 causal attention、q/k RMSNorm、softmax top-k router、BF16 与 rowwise int8 experts、官方 chat template 和生成链路；O4 已补齐 tiny scalar oracle、错误/资源/内存边界。O5 已增加有界原子 BF16/F16/F32 expert 转换、输入/产物 SHA-256 清单、三协议非流式与 streaming 回归代码，以及加载/首 token/output token/s/decode token/s session 诊断。原始 BF16 `allenai/OLMoE-1B-7B-0125-Instruct` 已通过 Catalog、provider load 与中文非流式真实对话；完整 rowwise int8 产物已在 Linux 服务器通过 checksum、probe、readiness、专项 33/33 回归以及 Tomur Chat/OpenAI 非流式真实 forward。streaming、Anthropic、完整性能与 unload 矩阵仍待按 [O5 验证记录](./docs/r15-olmoe-o5-validation.md) 执行。
 15. ✅ M11 性能优化基础代码已完成：managed GLM 已增加可回退 scalar 的 SIMD/shape-aware F32、int8、int4 matvec，gate/up paired dispatch，RAM budget 自动 cache capacity，usage histogram hot pin、显式 expert prefetch、cache 热路径降分配、forward 阶段 timing、activation integer dot 评估、prefill batch expert union 和可切换 mmap I/O 实验边界。全部性能基准、allocation 与跨平台验证仍归 M14；本轮未执行构建或测试。
 16. ✅ M12 高级能力基础代码已完成：managed GLM 已增加 DSA/MTP 配置与 tensor probe、接收 indexer score 的稳定 DSA top-k selection、dense-equivalent runtime 路径、可选 MTP resident head 与单步 draft、speculative rejection sampling、grammar forced spans、router lookahead prefetch、live expert repin，以及带模型身份、维度检查和 SHA-256 的 compressed KV 快照/恢复与 isolated KV fork。未验证的稀疏 DSA 不使用 attention score 冒充 indexer score；M12 独立测试代码已接入 solution，真实 indexer/MTP 语义、采样分布、性能、完整模型和跨平台验证仍归 M14，本轮未执行构建或测试。
@@ -252,7 +252,7 @@ GLM 基础代码顺序、性能计划、集中验证门槛与发布标准见 [pr
 
 1. M1-M13 与 OLMoE O4/O5 的跨平台资源释放尚未形成完整矩阵，统一列入详细路线图 M14；OLMoE 已完成 Linux 专项构建、33/33 自动化测试、完整 int8 转换、readiness 与非流式真实 forward，streaming、Anthropic、完整性能和 unload 证据仍待补齐。
 2. M8-M13 先完成基础代码；kernel/oracle 对齐、tokenizer、forward、API、性能、发布兼容与完整模型验证统一在 M14 执行。
-3. 完整 GLM-5.2 预转换目录为 `383,760,077,466` bytes（357.4 GiB，约 384 GB）；当前本机没有单盘可用空间容纳该资产，因此只能记录 tiny 格式/API 链路证据，不得据此宣称完整模型真实对话通过。
+3. 完整 GLM-5.2 固定清单为 `383,760,077,466` bytes（357.4 GiB，约 384 GB）；Linux 验证机当前已出现 150 个正式文件且没有 `.part`，但主下载状态失败，最终 inventory、size 与 SHA-256 审计尚未完成，不得据此宣称模型可用或真实对话通过。
 4. M14 完成前，managed GLM provider 继续保持实验状态，不标记为可用于真实聊天。
 5. OLMoE 的完成口径要求 tiny oracle、tokenizer/chat template、真实 instruct 权重、非流式与 streaming API 均有证据；只通过模型 probe 或随机 fixture 不算真实对话通过。
 6. `glm4_moe_lite` 的本机代码完成不等同于模型可用；异机验证必须覆盖转换输入 checksum、产物清单、配置与 tensor probe、完整模型加载、兼容 API 对话、首 token、token/s、峰值内存和 expert cache/I/O。

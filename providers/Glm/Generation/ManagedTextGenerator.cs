@@ -15,6 +15,12 @@ internal sealed class ManagedTextGenerator(
     ManagedGlmModel model,
     ExpertCache? expertCache)
 {
+    private ManagedForwardContext? activeForward;
+    private ForwardProgressSnapshot? lastForward;
+
+    public ForwardProgressSnapshot? GetProgressSnapshot()
+        => Volatile.Read(ref activeForward)?.GetProgressSnapshot() ?? Volatile.Read(ref lastForward);
+
     public async ValueTask<ManagedGenerationResult> GenerateAsync(
         GlmPrompt prompt,
         CompletionOptions options,
@@ -54,6 +60,36 @@ internal sealed class ManagedTextGenerator(
 
         cancellationToken.ThrowIfCancellationRequested();
         using var forward = new ManagedForwardContext(model, expertCache, contextLimit);
+        if (Interlocked.CompareExchange(ref activeForward, forward, null) is not null)
+        {
+            throw new InvalidOperationException("The managed generator already has an active forward context.");
+        }
+
+        try
+        {
+            return await GenerateCoreAsync(
+                forward,
+                prompt,
+                options,
+                requiredTokens,
+                cancellationToken,
+                onToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            Volatile.Write(ref lastForward, forward.GetProgressSnapshot());
+            Interlocked.CompareExchange(ref activeForward, null, forward);
+        }
+    }
+
+    private async ValueTask<ManagedGenerationResult> GenerateCoreAsync(
+        ManagedForwardContext forward,
+        GlmPrompt prompt,
+        CompletionOptions options,
+        int requiredTokens,
+        CancellationToken cancellationToken,
+        Action<string>? onToken)
+    {
         using var sampler = new TokenSampler(model.Configuration.VocabularySize, options);
         var promptTokenIds = prompt.TokenIds.ToArray();
         var history = new List<int>(requiredTokens);

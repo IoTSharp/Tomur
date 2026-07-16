@@ -73,6 +73,26 @@ public sealed class ExpertCacheOptimizationTests
             options.HotExpertCount);
     }
 
+    [Fact]
+    public async Task ForwardProgressReportsCompletedBatch()
+    {
+        using var root = new TemporaryDirectory();
+        var fixturePath = Path.Combine(root.Path, "fixture");
+        TinyFixtureBundle.Generate(fixturePath);
+        using var model = ManagedGlmModel.Load(ReadProbe(fixturePath), 16, long.MaxValue);
+        using var cache = model.CreateExpertCache(CreateOptions(model, hotExpertCount: 0));
+        using var forward = new ManagedForwardContext(model, cache, 16);
+
+        await forward.ForwardAsync(new[] { 1 });
+
+        var progress = forward.GetProgressSnapshot();
+        Assert.Equal("batch_complete", progress.Stage);
+        Assert.Equal(-1, progress.Layer);
+        Assert.Equal(1, progress.BatchTokens);
+        Assert.Equal(1, progress.CompletedTokens);
+        Assert.True(progress.Elapsed > TimeSpan.Zero);
+    }
+
     private static ExpertCacheOptions CreateOptions(ManagedGlmModel model, int hotExpertCount)
         => new(
             checked(model.ExpertLayout.SlotBudgetedBytes * 2),

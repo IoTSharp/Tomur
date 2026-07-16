@@ -61,6 +61,10 @@ public sealed record SessionSnapshot(
 
     public string? Quantization { get; init; }
 
+    public string? ExecutionBackend { get; init; }
+
+    public string? ExecutionDetail { get; init; }
+
     public bool Busy { get; init; }
 
     public int? ContextSize { get; init; }

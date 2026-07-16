@@ -231,6 +231,38 @@ public sealed class RuntimeDiagnosticsProvider
     {
         if (snapshot.Loaded)
         {
+            var managedSession = snapshot.Mode?.StartsWith("managed-", StringComparison.OrdinalIgnoreCase) == true;
+            if (managedSession && snapshot.Busy)
+            {
+                return new RuntimeDiagnostic(
+                    "loading",
+                    "managed_forward_running",
+                    $"Managed generation is running for model '{snapshot.ModelId}'.",
+                    snapshot.ModelId,
+                    [
+                        $"Loaded at: {snapshot.LoadedAt:O}",
+                        $"Mode: {snapshot.Mode ?? "unknown"}",
+                        $"Requests handled: {snapshot.RequestCount}",
+                        $"Prompt tokens: {snapshot.PromptTokens}",
+                        $"Completion tokens: {snapshot.CompletionTokens}",
+                        .. snapshot.Diagnostics
+                    ]);
+            }
+
+            if (managedSession && snapshot.RequestCount == 0)
+            {
+                return new RuntimeDiagnostic(
+                    "warning",
+                    "managed_forward_unverified",
+                    $"The managed session for model '{snapshot.ModelId}' is loaded, but no generation request has completed.",
+                    snapshot.ModelId,
+                    [
+                        $"Loaded at: {snapshot.LoadedAt:O}",
+                        $"Mode: {snapshot.Mode ?? "unknown"}",
+                        .. snapshot.Diagnostics
+                    ]);
+            }
+
             return new RuntimeDiagnostic(
                 "ok",
                 "runtime_loaded",
@@ -247,7 +279,8 @@ public sealed class RuntimeDiagnosticsProvider
         }
 
         var readyManagedModels = managedModels
-            .Where(static model => model.Status is "ready" or "loaded")
+            .Where(static model => model.Status is
+                "ready" or "ready_unverified" or "warming" or "loaded" or "loaded_unverified")
             .ToArray();
         if (readyManagedModels.Length > 0)
         {
@@ -378,13 +411,7 @@ public sealed class RuntimeDiagnosticsProvider
     {
         try
         {
-            var root = Path.GetPathRoot(path);
-            if (string.IsNullOrWhiteSpace(root))
-            {
-                return new DiskState(path, string.Empty, null, null, "warning", "Disk root could not be resolved.");
-            }
-
-            var drive = new DriveInfo(root);
+            var drive = ResolveDrive(path);
             if (!drive.IsReady)
             {
                 return new DiskState(path, drive.Name, null, null, "warning", "Disk is not ready.");
@@ -405,6 +432,49 @@ public sealed class RuntimeDiagnosticsProvider
         {
             return new DiskState(path, string.Empty, null, null, "error", $"Disk could not be accessed: {exception.Message}");
         }
+        catch (ArgumentException exception)
+        {
+            return new DiskState(path, string.Empty, null, null, "error", $"Disk path is invalid: {exception.Message}");
+        }
+    }
+
+    private static DriveInfo ResolveDrive(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        var drive = DriveInfo.GetDrives()
+            .Where(candidate => IsPathWithinRoot(fullPath, candidate.RootDirectory.FullName, comparison))
+            .OrderByDescending(static candidate => candidate.RootDirectory.FullName.Length)
+            .FirstOrDefault();
+        if (drive is not null)
+        {
+            return drive;
+        }
+
+        var root = Path.GetPathRoot(fullPath);
+        if (string.IsNullOrWhiteSpace(root))
+        {
+            throw new ArgumentException("Disk root could not be resolved.", nameof(path));
+        }
+
+        return new DriveInfo(root);
+    }
+
+    private static bool IsPathWithinRoot(
+        string path,
+        string root,
+        StringComparison comparison)
+    {
+        var normalizedRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+        if (path.Equals(normalizedRoot, comparison))
+        {
+            return true;
+        }
+
+        return path.StartsWith(normalizedRoot + Path.DirectorySeparatorChar, comparison) ||
+            path.StartsWith(normalizedRoot + Path.AltDirectorySeparatorChar, comparison);
     }
 
     private static ProxyState GetProxyState()
@@ -531,7 +601,7 @@ public sealed class RuntimeDiagnosticsProvider
             "acceleration",
             acceleration.Status,
             acceleration.Status == "error"
-                ? managedModels.Any(static model => model.Status is "ready" or "loaded")
+                ? managedModels.Any(static model => model.MetadataValid && model.AssetsComplete)
                     ? "warning"
                     : "error"
                 : "ok",
@@ -542,7 +612,11 @@ public sealed class RuntimeDiagnosticsProvider
         diagnostics.Add(ToDiagnostic(
             "runtime",
             runtime.Status,
-            runtime.Status == "error" ? "error" : "ok",
+            runtime.Status == "error"
+                ? "error"
+                : runtime.Status is "warning" or "loading"
+                    ? "warning"
+                    : "ok",
             runtime.Message,
             runtime.Code,
             runtime.Actions));
@@ -574,7 +648,9 @@ public sealed class RuntimeDiagnosticsProvider
         foreach (var model in managedModels)
         {
             var modelDiagnostic = model.Diagnostics.FirstOrDefault();
-            var severity = model.Status is "invalid" or "provider_unavailable" or "memory_limited"
+            var severity = model.Status is
+                "invalid" or "provider_unavailable" or "memory_limited" or
+                "ready_unverified" or "warming" or "loaded_unverified"
                 ? "warning"
                 : "ok";
             diagnostics.Add(ToDiagnostic(

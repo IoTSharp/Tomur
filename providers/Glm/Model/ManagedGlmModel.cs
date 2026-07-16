@@ -393,7 +393,7 @@ internal sealed class ManagedGlmModel : IDisposable
         Span<float> destination,
         CancellationToken cancellationToken = default,
         AttentionTrace? trace = null,
-        MlaAttentionMode mode = MlaAttentionMode.Reference)
+        MlaAttentionMode mode = MlaAttentionMode.Absorbed)
     {
         ValidateLayer(layer);
         MlaAttention.RunToken(
@@ -419,7 +419,7 @@ internal sealed class ManagedGlmModel : IDisposable
         Span<float> destinations,
         CancellationToken cancellationToken = default,
         AttentionTrace? lastTokenTrace = null,
-        MlaAttentionMode mode = MlaAttentionMode.Reference)
+        MlaAttentionMode mode = MlaAttentionMode.Absorbed)
     {
         ValidateLayer(layer);
         MlaAttention.RunPrefill(

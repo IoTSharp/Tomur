@@ -66,7 +66,7 @@ public sealed class OptimizedKernelTests
     [Fact]
     public void Int8AndPackedInt4SimdPathsMatchScalarReference()
     {
-        var columns = checked(Vector<float>.Count + 3);
+        var columns = checked((Vector<float>.Count * 8) + 3);
         const int rows = 5;
         var input = CreateValues(columns, 47);
         var scales = Enumerable.Range(0, rows).Select(index => 0.01f * (index + 1)).ToArray();
@@ -122,6 +122,20 @@ public sealed class OptimizedKernelTests
             ForcedParallelOptions());
         AssertClose(int4Expected, int4Actual);
         AssertClose(int4Expected, int4Parallel);
+
+        var signedInt4 = new QuantizedTensorView(
+            new QuantizedTensorShape(
+                QuantizedTensorFormat.Int4,
+                rows,
+                columns,
+                QuantizedValueEncoding.TwosComplement),
+            int4Payload,
+            scales);
+        var signedInt4Expected = new float[rows];
+        var signedInt4Actual = new float[rows];
+        ScalarKernels.Int4DequantMatVec(signedInt4, input, signedInt4Expected);
+        OptimizedKernels.Int4DequantMatVec(signedInt4, input, signedInt4Actual);
+        AssertClose(signedInt4Expected, signedInt4Actual);
 
         var secondInt4Payload = int4Payload.Select(static value => (byte)(value ^ 0xff)).ToArray();
         var secondInt4 = new QuantizedTensorView(int4.Shape, secondInt4Payload, scales);

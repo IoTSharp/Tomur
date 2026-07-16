@@ -204,13 +204,32 @@ public sealed class ModelProviderRegistry : IDisposable
                     ]));
             }
 
+            var status = !fitsMemory
+                ? "memory_limited"
+                : !sessionLoaded
+                    ? "ready_unverified"
+                    : forwardVerified
+                        ? "loaded"
+                        : session!.Busy
+                            ? "warming"
+                            : "loaded_unverified";
+            if (!forwardVerified)
+            {
+                diagnostics.Add(new ModelReadinessDiagnostic(
+                    "managed_forward_unverified",
+                    sessionLoaded
+                        ? "The managed model session is loaded, but no generation request has completed."
+                        : "Model metadata and assets are valid, but a generation request has not completed yet.",
+                    ["Complete a bounded generation smoke before treating the model as conversation-ready."]));
+            }
+
             return new ModelReadinessStatus(
                 model.Id,
                 preparation.ProviderId,
                 preparation.Architecture,
                 preparation.Quantization,
                 preparation.QuantizationLayout,
-                sessionLoaded ? "loaded" : fitsMemory ? "ready" : "memory_limited",
+                status,
                 true,
                 true,
                 true,

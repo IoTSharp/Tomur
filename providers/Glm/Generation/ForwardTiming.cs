@@ -56,6 +56,14 @@ internal readonly record struct ForwardTimingSnapshot(
            $"projection={Projection.TotalMilliseconds:F2}ms batches={BatchCount} tokens={TokenCount}";
 }
 
+internal sealed record ForwardProgressSnapshot(
+    string Stage,
+    int Layer,
+    int LayerCount,
+    int BatchTokens,
+    long CompletedTokens,
+    TimeSpan Elapsed);
+
 internal static class ForwardTimingScope
 {
     public static long Start() => Stopwatch.GetTimestamp();

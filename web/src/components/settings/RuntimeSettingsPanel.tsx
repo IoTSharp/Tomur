@@ -5,7 +5,8 @@ import type {
   AccelerationPlan,
   DiagnosticItem,
   NativeBundlePrepareResult,
-  RuntimeStatusResponse
+  RuntimeStatusResponse,
+  SessionSnapshot
 } from "../../types";
 import { formatBytes, tagColor } from "../../app/format";
 import type { CopyTextHandler } from "../../app/viewTypes";
@@ -32,6 +33,7 @@ export function RuntimeSettingsPanel({
   const nativeReady = runtimeStatus?.native_bundle.status === "ok";
   const session = runtimeStatus?.session;
   const sessionLoaded = session?.loaded === true;
+  const managedSessionLoaded = sessionLoaded && session?.mode?.startsWith("managed-") === true;
   const managedModels = runtimeStatus?.managed_models ?? [];
   const prepareChangedFiles =
     prepareResult?.files.filter((file) =>
@@ -42,18 +44,24 @@ export function RuntimeSettingsPanel({
 
   return (
     <Space direction="vertical" size={16} className="drawer-stack">
-      <AccelerationSummary acceleration={runtimeStatus?.acceleration} />
+      {managedSessionLoaded && session
+        ? <ManagedExecutionSummary session={session} />
+        : <AccelerationSummary acceleration={runtimeStatus?.acceleration} />}
 
       <Alert
         type={runtimeStatus?.status === "ok" ? "success" : "warning"}
         showIcon
         message={runtimeStatus?.runtime.message ?? "Runtime 状态尚未加载"}
-        description={runtimeStatus?.native_bundle.message ?? "刷新状态后可以查看 native bundle、session 和诊断动作。"}
+        description={
+          managedSessionLoaded
+            ? session?.execution_detail ?? "Managed provider session 已加载。"
+            : runtimeStatus?.native_bundle.message ?? "刷新状态后可以查看 native bundle、session 和诊断动作。"
+        }
       />
 
       <Card
         size="small"
-        title="Native runtime"
+        title="llama.cpp native runtime"
         extra={<Tag color={tagColor(runtimeStatus?.native_bundle.status ?? "checking")}>{runtimeStatus?.native_bundle.status ?? "checking"}</Tag>}
       >
         <ActionBlock
@@ -231,7 +239,7 @@ export function RuntimeSettingsPanel({
                       <ReadinessTag label="provider" ready={model.provider_discovered} />
                       <ReadinessTag label="metadata" ready={model.metadata_valid} />
                       <ReadinessTag label="assets" ready={model.assets_complete} />
-                      <ReadinessTag label="forward" ready={model.forward_verified} />
+                      <ReadinessTag label="forward completed" ready={model.forward_verified} />
                       <ReadinessTag label="session" ready={model.session_loaded} />
                     </Space>
                     {model.diagnostics[0] && (
@@ -312,6 +320,36 @@ function formatMilliseconds(value?: number | null) {
 
 function formatRate(value?: number | null) {
   return value == null ? "-" : value.toFixed(3);
+}
+
+function ManagedExecutionSummary({ session }: { session: SessionSnapshot }) {
+  const status = session.busy
+    ? "running"
+    : session.request_count > 0
+      ? "completed"
+      : "unverified";
+
+  return (
+    <Card
+      size="small"
+      title="Managed provider execution"
+      extra={<Tag color={tagColor(status)}>{status}</Tag>}
+    >
+      <div className="acceleration-summary-grid">
+        <SummaryMetric label="Provider" value={session.provider_id ?? "-"} />
+        <SummaryMetric label="执行后端" value={session.execution_backend ?? "managed"} />
+        <SummaryMetric label="模型架构" value={session.architecture ?? "-"} />
+        <SummaryMetric label="量化" value={session.quantization ?? "-"} />
+        <SummaryMetric label="已完成请求" value={String(session.request_count)} />
+        <SummaryMetric label="状态" value={session.busy ? "forward running" : "idle"} />
+      </div>
+      {session.execution_detail && (
+        <Typography.Text className="acceleration-summary-fallback" type="secondary">
+          {session.execution_detail}
+        </Typography.Text>
+      )}
+    </Card>
+  );
 }
 
 function AccelerationSummary({ acceleration }: { acceleration?: AccelerationPlan }) {

@@ -1,8 +1,8 @@
 # R15 远程 GLM 验证交接记录
 
-快照时间：2026-07-16 12:31 CST（2026-07-16 04:31 UTC）
+快照时间：2026-07-16 14:49 CST（2026-07-16 06:49 UTC）
 
-状态：GLM-4.7 已完成转换、资产校验、provider 加载和 readiness；并行版最短真实 forward 仍在执行，尚未产生 token。GLM-5.2 仍在下载。本记录用于后续会话继续同一台验证机上的工作，不构成完整模型真实推理通过或性能可用的结论。
+状态：GLM-4.7 已完成转换、资产校验、provider 加载、readiness 和最短真实 completion。生产 attention 默认切换到 Absorbed MLA 后，固定 1-token completion 从 Reference 基线 `186.596971s` 降至 `26.595764s`，返回 HTTP 200 和相同生成 token。该结果只证明 P0 与最短真实推理通过，不构成性能可用或完整协议矩阵通过。GLM-5.2 目录已达到 150 个正式文件且没有 `.part`，但主下载状态为失败，最终 inventory、size 和 SHA-256 审计仍待执行。
 
 ## 安全连接与本机入口
 
@@ -33,7 +33,7 @@ df -h /data
 & "$HOME\.ssh\connect-vm-sT7XQqUJeZBAMQVN.ps1" $remoteScript
 ```
 
-当前本机隧道由 `plink` PID `57120` 提供，监听 `127.0.0.1:8188` 和 `::1:8188`，转发到远端 `127.0.0.1:5174`。本次快照中 `/` 与 `/health` 均返回 HTTP 200。隧道启动时使用的临时 `-pwfile` 不能作为后续恢复入口；隧道失效时应从 DPAPI 凭据重新建立，或使用用户提供的 OpenSSH 转发命令并在交互提示中输入凭据。不要把服务直接绑定到公网地址。
+本次快照中本机 `127.0.0.1:8188` 隧道未监听；远端 `127.0.0.1:5174/health` 返回 HTTP 200。需要访问 UI 时，应从 DPAPI 凭据重新建立隧道，或使用用户提供的 OpenSSH 转发命令并在交互提示中输入凭据。不要复用历史临时 `-pwfile`，也不要把服务直接绑定到公网地址。
 
 ## 验证机环境
 
@@ -41,8 +41,8 @@ df -h /data
 | --- | --- |
 | Hostname | `09b5c508e9ab` |
 | OS | Ubuntu 22.04.3 LTS x86_64 |
-| RAM | 128 GiB；快照时约 115 GiB available |
-| `/data` | 492 GiB；快照时 359 GiB used、108 GiB free |
+| RAM | 128 GiB |
+| `/data` | 492 GiB；快照时约 21.7 GiB free |
 | .NET SDK | `10.0.301`，安装于 `/data/tomur/dotnet` |
 | Node.js | `v26.5.0`，安装于 `/data/tomur/node-v26.5.0` |
 | Python venv | `/data/tomur/venvs/glm52` |
@@ -58,20 +58,20 @@ df -h /data
 5734d37 fix(providers): enable GLM-4.7 validation
 ```
 
-该提交包含 BPE `ignore_merges=true`、int4/int8 单投影与 paired 投影 row parallel、对应 tokenizer/kernel 测试，以及重复 switch pattern 编译修复。远端针对性测试已通过，最终构建为 0 warnings / 0 errors。
+该提交包含 BPE `ignore_merges=true`、int4/int8 单投影与 paired 投影 row parallel、对应 tokenizer/kernel 测试，以及重复 switch pattern 编译修复。P0 继续基于本地未提交工作树构建，只把生产 MLA 默认模式改为 Absorbed；本机 M7 7/7、M9 6/6，Linux 隔离副本 M7 6/6、M9 6/6 均通过。最终 provider SHA-256 为 `4f4f251b438ff0b0695f8b561de108b5e0cffc837e2a1609972e3ebb6659f620`。
 
 远端当前服务：
 
 | 项目 | 值 |
 | --- | --- |
-| PID | `15599`（PID 只用于当前快照，恢复时以命令行和端口判断） |
-| artifact | `/data/tomur/artifacts/c8447187-fixes/bin/Tomur/release/Tomur.dll` |
-| provider | `/data/tomur/artifacts/c8447187-fixes/bin/Tomur.Providers.Glm/release/Tomur.Providers.Glm.dll` |
-| data directory | `/data/tomur/smoke/glm47/data` |
+| PID | `28881`（PID 只用于当前快照，恢复时以命令行和端口判断） |
+| artifact | `/data/tomur/artifacts/glm47-p0-absorbed-20260716-1445c/Tomur.dll` |
+| provider | `/data/tomur/artifacts/glm47-p0-absorbed-20260716-1445c/providers/Tomur.Providers.Glm.dll` |
+| data directory | `/data/tomur/smoke/glm47-managed-wt-20260716-1315-bomfix/data` |
 | listen URL | `http://127.0.0.1:5174` |
-| service log | `/data/tomur/smoke/glm47/service/service.log` |
+| service log | `/data/tomur/smoke/glm47-p0-absorbed-20260716-1445c/service/service.log` |
 
-artifact 目录名保留了构建时的基线 `c8447187`；其中的五项验证修复现已对应本地提交 `5734d37`。不要只根据目录名判断远端代码状态。
+P0 artifact 以已经通过真实请求的 App/Web/native 产物为基线，只替换 checksum 已更新的 managed provider DLL，避免覆盖本地工作树中尚未提交的 kernel、BOM 和状态修复。最终 App SHA-256 为 `22b3fefc76170d3dbb0ef3e324b8f3782e5b3f043215a4f71106c55522666e7a`。
 
 ## GLM-4.7 资产
 
@@ -103,17 +103,17 @@ zstd --long=31 -d -c \
 
 ## GLM-4.7 当前验证状态
 
-`managed-glm` 已加载，模型已进入 `/v1/models` 和 `/api/models/installed`。readiness 已确认 9 shards、14,285 tensors、1,418,884,480 resident bytes、443,547,648 planned KV bytes 和 3,191,200 planned scratch bytes。当前 session 使用 `SIMD Vector256`、parallelism `12`，服务进程快照约使用 11 个 CPU core。
+`managed-glm` 已加载，模型已进入 `/v1/models` 和 `/api/models/installed`。readiness 已确认 9 shards、14,285 tensors、1,418,884,480 resident bytes、443,547,648 planned KV bytes 和 3,191,200 planned scratch bytes。当前 session 使用 `AVX2 packed int4/int8 and Vector256 F32`、parallelism `12`。
 
-当前不能写成“真实推理通过”：
+最短真实推理已通过，但性能与完整协议矩阵仍未通过：
 
 1. 原单线程量化路径的 1-token completion 在 `585.228s` 后仍未完成；unload 后返回结构化 `503 session_unloaded`。正式 unload 约耗时 `1.58-2.48s`，资源释放路径有效。
-2. 并行修复部署后，`prompt="a"`、`max_tokens=1` 的请求仍在执行。快照时 session 为 `busy=true`、`forward_verified=false`、request count 为 0。
-3. 当前请求进程为远端 `curl` PID `15681`，服务 PID `15599`；快照时已执行约 714 秒。服务 CPU 约 `1100%`。
-4. 结果应写入 `/data/tomur/smoke/glm47/service/completion-parallel-response.json`，耗时写入 `/data/tomur/smoke/glm47/service/completion-parallel-timing.txt`。快照时 response 尚不存在，timing 文件为 0 bytes。
-5. 当前 session 已产生 35 次 expert disk reads、165,867,520 bytes，cache hit/miss/eviction 为 1/35/17。这只能证明 forward 正在执行，不能证明首 token 成功。
+2. 修正量化 kernel 与启动状态后，Reference MLA 的 `prompt="a"`、`max_tokens=1` completion 返回 HTTP 200，耗时 `186.596971s`，输出 `" br"`。
+3. 生产默认切换到 Absorbed MLA 后，同一模型、请求、AVX2 kernel 和数据目录返回 HTTP 200，耗时 `26.595764s`，输出仍为 `" br"`；端到端改善 `7.02x`，耗时降低 `85.7%`。
+4. Absorbed 请求报告 forward active elapsed `24.6s`、3 prompt tokens、1 completion token；完成后 session 为 `busy=false`、`forward_verified=true`、request count 为 1。
+5. 该请求累计 464 次 expert disk reads、2,198,929,408 bytes，cache hit/miss/eviction 为 94/464/188。P1 expert cache、批量 prefill、kernel 和请求调度尚未实施。
 
-服务证据目录为 `/data/tomur/smoke/glm47/service`，已包含 health、version、models、runtime-before、runtime-busy、unload 响应和早期 completion 证据。后续会话必须保留成功与失败两类证据。
+P0 最终证据目录为 `/data/tomur/smoke/glm47-p0-absorbed-20260716-1445c/service`，包含 health、doctor、completion 响应、curl timing、服务日志和请求前后 runtime 快照。历史失败证据继续保留在 `/data/tomur/smoke/glm47/service`，不得覆盖或删除。
 
 ## GLM-5.2 下载状态
 
@@ -126,17 +126,17 @@ zstd --long=31 -d -c \
 | 目标目录 | `/data/tomur/data/models/text/glm-5.2-colibri-int4-with-int8-mtp` |
 | 下载控制目录 | `/data/tomur/downloads/glm-5.2-colibri-int4-with-int8-mtp` |
 
-快照时目标目录为 314,236,997,407 bytes，包含 113 个完成文件和 12 个 `.part` 文件。该目录大小包含 partial 数据，不能作为完成判据。三个无重叠区间状态为：
+快照时目标目录包含 150 个正式文件和 0 个 `.part` 文件，`du -sb` 为 383,760,089,754 bytes（包含目录元数据）。文件数量和 partial 清理已达到固定清单边界，但主下载状态以 exit 1 结束，尚不能据此声明全部 LFS size 与 SHA-256 通过。三个区间状态为：
 
 | 区间 | 状态文件 | 快照状态 |
 | --- | --- | --- |
-| 主段 | `status` | `RUNNING`，脚本 PID `4849` |
-| tail | `tail.status` | `RUNNING`，脚本 PID `8760` |
+| 主段 | `status` | `FAILED exit=1 at=2026-07-16T04:58:02Z` |
+| tail | `tail.status` | `COMPLETE files=48` |
 | mid-high | `mid-high.status` | `COMPLETE files=14` |
 
-下载器对每个 LFS 对象执行 size 和 SHA-256 校验，只在校验成功后把 `.part` 原子改名为正式文件。快照时主段正在下载 `out-00065` 至 `out-00070`，tail 正在下载 `out-00128` 至 `out-00133`。不要手工改名 `.part`，也不要把状态文件的 `RUNNING` 当作失败。
+下载器对每个 LFS 对象执行 size 和 SHA-256 校验，只在校验成功后把 `.part` 原子改名为正式文件。当前没有下载进程；应先复核主段失败原因，并对固定 revision 的 150-file inventory、144 个 safetensors、145 个 LFS size 与 SHA-256 执行最终审计，不要仅根据无 `.part` 判定完成。
 
-GLM-5.2 只有在以下条件全部满足后才算下载完成：固定 revision 不变；150 个文件 inventory 完整；144 个 safetensors 和 145 个 LFS 对象齐全；不存在 `.part`；所有 LFS size 与 SHA-256 通过。当前 `/data` 可用空间约 108 GiB，按清单剩余字节名义上足够，但仍应持续监控空间。
+GLM-5.2 只有在以下条件全部满足后才算下载完成：固定 revision 不变；150 个文件 inventory 完整；144 个 safetensors 和 145 个 LFS 对象齐全；不存在 `.part`；所有 LFS size 与 SHA-256 通过。当前 `/data` 可用空间约 21.7 GiB；在审计和清理前不得启动新的大体积转换副本。
 
 ## 接手续查命令
 
@@ -169,9 +169,9 @@ ls -l /data/tomur/smoke/glm47/service/completion-parallel-*
 
 ## 后续顺序
 
-1. 继续轮询当前 GLM-4.7 请求。只有 response、HTTP 状态、耗时、生成 token 和 session counters 均形成证据后，才判定最短真实 forward 是否通过。
-2. 保留当前服务日志、completion 响应、timing 和 runtime/session 快照；失败不得覆盖或删除。
-3. 继续下载 GLM-5.2，直到固定 inventory 与全部 checksum 完成。除非下载器异常退出，不要重启正在工作的区间。
-4. 下载完成后增加并核对 `model.tomur.json`：provider 为 `managed-glm`、architecture 为 `glm_moe_dsa`、quantization 为 `int4`、layout 为 `packed-offset`。tensor pattern 必须覆盖正式 `out-*.safetensors`，并先确认 MTP shard 与当前 probe 契约。
-5. 以 GLM-5.2 执行最终 doctor/readiness、最短真实 forward、兼容 API 和 UI 验证，再形成最终验证报告。未完成前不声明 GLM-5.2 可用。
-6. 全部工作结束后再确认是否停止远端服务和本机 SSH 隧道；当前用户仍通过 `http://127.0.0.1:8188` 访问 UI。
+1. 保留 P0 的 Reference/Absorbed completion、timing、runtime/session 快照和 artifact checksum；失败证据不得覆盖或删除。
+2. 在决定 P1 前，补充同一请求的 warm/hot 复测以及最短 Chat 请求，分离模型加载、attention、MoE 和 expert I/O 时间。
+3. 对 GLM-5.2 执行固定 revision 的最终 inventory、size 与 SHA-256 审计，查明主段 `FAILED exit=1`；审计通过前不标记下载完成。
+4. 审计完成后增加并核对 `model.tomur.json`：provider 为 `managed-glm`、architecture 为 `glm_moe_dsa`、quantization 为 `int4`、layout 为 `packed-offset`。tensor pattern 必须覆盖正式 `out-*.safetensors`，并先确认 MTP shard 与当前 probe 契约。
+5. 以 GLM-5.2 执行 doctor/readiness、最短真实 forward、兼容 API 和 UI 验证，再形成最终验证报告。未完成前不声明 GLM-5.2 可用。
+6. 远端 GLM-4.7 服务当前继续运行；本机 8188 隧道需要按安全连接步骤重新建立。

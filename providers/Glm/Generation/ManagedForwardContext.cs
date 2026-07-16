@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Diagnostics;
 
 namespace Tomur.Providers.Glm;
 
@@ -16,6 +17,11 @@ internal sealed class ManagedForwardContext : IDisposable
     private float[]? normalizedStates;
     private float[]? sublayerOutputs;
     private float[]? residualStates;
+    private readonly long progressStarted = Stopwatch.GetTimestamp();
+    private string progressStage = "created";
+    private int progressLayer = -1;
+    private int progressBatchTokens;
+    private long progressCompletedTokens;
     private bool faulted;
 
     public ForwardTiming Timing { get; } = new();
@@ -97,6 +103,15 @@ internal sealed class ManagedForwardContext : IDisposable
 
     public long RouterLookaheadPrefetches => routerLookahead?.RequestedExperts ?? 0;
 
+    public ForwardProgressSnapshot GetProgressSnapshot()
+        => new(
+            Volatile.Read(ref progressStage),
+            Volatile.Read(ref progressLayer),
+            model.Configuration.LayerCount,
+            Volatile.Read(ref progressBatchTokens),
+            Interlocked.Read(ref progressCompletedTokens),
+            Stopwatch.GetElapsedTime(progressStarted));
+
     public int Position
     {
         get
@@ -123,6 +138,7 @@ internal sealed class ManagedForwardContext : IDisposable
         }
 
         cancellationToken.ThrowIfCancellationRequested();
+        SetProgress("queued", -1, tokenIds.Length);
         foreach (var sequence in sequences)
         {
             sequence.EnsureCanAppend(tokenIds.Length);
@@ -146,6 +162,7 @@ internal sealed class ManagedForwardContext : IDisposable
         catch
         {
             faulted = true;
+            SetProgress("faulted", Volatile.Read(ref progressLayer), tokenIds.Length);
             throw;
         }
     }
@@ -173,6 +190,7 @@ internal sealed class ManagedForwardContext : IDisposable
         CancellationToken cancellationToken)
     {
         var tokenCount = tokenIds.Length;
+        SetProgress("embedding", -1, tokenCount);
         var started = ForwardTimingScope.Start();
         GatherEmbeddings(tokenIds, tokenCount);
         Timing.AddEmbedding(ForwardTimingScope.Elapsed(started));
@@ -180,6 +198,7 @@ internal sealed class ManagedForwardContext : IDisposable
         for (var layer = 0; layer < model.Configuration.LayerCount; layer++)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            SetProgress("attention", layer, tokenCount);
             NormalizeLayerInputs(layer, tokenCount);
             started = ForwardTimingScope.Start();
             RunAttention(layer, tokenCount, cancellationToken);
@@ -189,12 +208,14 @@ internal sealed class ManagedForwardContext : IDisposable
 
             if (layer < model.Configuration.FirstMoeLayer)
             {
+                SetProgress("dense", layer, tokenCount);
                 started = ForwardTimingScope.Start();
                 RunDenseLayer(layer, tokenCount);
                 Timing.AddDense(ForwardTimingScope.Elapsed(started));
             }
             else
             {
+                SetProgress("moe", layer, tokenCount);
                 started = ForwardTimingScope.Start();
                 await RunMoeLayerAsync(layer, tokenCount, cancellationToken).ConfigureAwait(false);
                 Timing.AddMoe(ForwardTimingScope.Elapsed(started));
@@ -203,9 +224,19 @@ internal sealed class ManagedForwardContext : IDisposable
             CommitLayer(tokenCount);
         }
 
+        SetProgress("projection", model.Configuration.LayerCount - 1, tokenCount);
         started = ForwardTimingScope.Start();
         ProjectLastToken(tokenCount);
         Timing.AddProjection(ForwardTimingScope.Elapsed(started));
+        Interlocked.Add(ref progressCompletedTokens, tokenCount);
+        SetProgress("batch_complete", -1, tokenCount);
+    }
+
+    private void SetProgress(string stage, int layer, int batchTokens)
+    {
+        Volatile.Write(ref progressBatchTokens, batchTokens);
+        Volatile.Write(ref progressLayer, layer);
+        Volatile.Write(ref progressStage, stage);
     }
 
     private void GatherEmbeddings(ReadOnlyMemory<int> tokenIds, int tokenCount)
@@ -321,6 +352,7 @@ internal sealed class ManagedForwardContext : IDisposable
         CancellationToken cancellationToken)
     {
         var expertsPerToken = model.Configuration.ExpertsPerToken;
+        var workspace = moeWorkspace!;
         var ids = ArrayPool<int>.Shared.Rent(checked(tokenCount * expertsPerToken));
         try
         {
@@ -334,8 +366,8 @@ internal sealed class ManagedForwardContext : IDisposable
                     model,
                     layer,
                     normalized.AsSpan(offset, hiddenSize),
-                    moeWorkspace!);
-                foreach (var expertId in moeWorkspace.SelectedExpertIds)
+                    workspace);
+                foreach (var expertId in workspace.SelectedExpertIds)
                 {
                     var found = false;
                     for (var index = 0; index < uniqueCount; index++)

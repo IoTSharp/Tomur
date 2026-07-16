@@ -76,7 +76,7 @@ public sealed class M10IntegrationTests
                     "message_delta",
                     "message_stop"
                 ],
-                events.Select(static item => item.Event).ToArray());
+                events.Select(static item => item.Event!).ToArray());
 
             using var firstDelta = JsonDocument.Parse(events[2].Data);
             using var secondDelta = JsonDocument.Parse(events[3].Data);
@@ -183,6 +183,42 @@ public sealed class M10IntegrationTests
         Assert.Equal(
             result.ResidentBytes + result.KvBytes + result.ScratchBytes + result.ExpertCacheBytes,
             result.RequiredBytes);
+
+        using var session = provider.CreateSession(descriptor, new ModelSessionOptions(16));
+        Assert.Equal(result.ExpertCacheBytes, session.GetSnapshot().ExpertCacheBytes);
+    }
+
+    [Fact]
+    public void ManagedReadinessDistinguishesUnverifiedAndWarmingSessions()
+    {
+        using var fixture = new TemporaryDataDirectory();
+        var modelDirectory = Path.Combine(fixture.Paths.ModelsDirectory, "ready");
+        TinyFixtureBundle.Generate(modelDirectory);
+        var descriptor = CreateDescriptor(modelDirectory, "ready");
+        using var registry = CreateRegistry(new ManagedGlmProvider());
+
+        var unloaded = registry.InspectModel(descriptor, contextSize: 16);
+        Assert.Equal("ready_unverified", unloaded.Status);
+        Assert.False(unloaded.ForwardVerified);
+
+        var active = new SessionSnapshot(
+            true,
+            descriptor.Id,
+            descriptor.AbsolutePath,
+            "managed-glm-generation",
+            DateTimeOffset.UtcNow,
+            0,
+            0,
+            0,
+            [])
+        {
+            ProviderId = ManagedGlmProvider.ProviderId,
+            ContextSize = 16,
+            Busy = true
+        };
+        var warming = registry.InspectModel(descriptor, active, contextSize: 16);
+        Assert.Equal("warming", warming.Status);
+        Assert.False(warming.ForwardVerified);
     }
 
     [Fact]
@@ -299,6 +335,19 @@ public sealed class M10IntegrationTests
             CompletionOptions.Default,
             CancellationToken.None)));
         Assert.True(provider.Session.Started.Wait(TimeSpan.FromSeconds(5)));
+
+        var runtimeDiagnostics = new RuntimeDiagnosticsProvider(
+            configurationStore,
+            fixture.Paths,
+            nativeProbe,
+            new ServerOptions(),
+            inference,
+            acceleration,
+            registry,
+            NullLogger<RuntimeDiagnosticsProvider>.Instance);
+        var activeRuntime = runtimeDiagnostics.GetRuntimeStatus().Runtime;
+        Assert.Equal("loading", activeRuntime.Status);
+        Assert.Equal("managed_forward_running", activeRuntime.Code);
 
         sessions.Unload();
         var exception = await generation.WaitAsync(TimeSpan.FromSeconds(5));
@@ -461,11 +510,11 @@ public sealed class M10IntegrationTests
                 true,
                 "blocking",
                 null,
-                "blocking",
+                "managed-blocking",
                 DateTimeOffset.UtcNow,
-                0,
-                0,
-                0,
+                1,
+                4,
+                1,
                 []);
 
         public void Dispose()

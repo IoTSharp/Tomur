@@ -119,10 +119,7 @@ public sealed class ManagedGlmProvider : IModelFixtureProvider, IModelReadinessP
                 ModelMemoryPlan.GetAvailableMemoryBytes());
             var expertCacheBytes = expertLayout.MoeLayerCount == 0
                 ? 0
-                : checked(
-                    expertLayout.SlotBudgetedBytes *
-                    expertLayout.MoeLayerCount *
-                    probe.Configuration.ExpertsPerToken);
+                : ExpertCacheOptions.CreateAutomatic(expertLayout, memoryPlan).BudgetBytes;
 
             return new ModelPreparationResult(
                 ProviderId,
@@ -385,6 +382,8 @@ internal sealed class ManagedGlmSession : IChatGenerationSession
             ProviderId = ProviderId,
             Architecture = loadedModel.Configuration.ModelType,
             Quantization = loadedModel.Manifest.Quantization,
+            ExecutionBackend = "managed-cpu",
+            ExecutionDetail = OptimizedKernels.Description,
             ContextSize = loadedModel.MemoryPlan.ContextSize,
             ResidentBytes = loadedModel.ActualResidentBytes,
             KvBytes = loadedModel.MemoryPlan.KvBytes,
@@ -452,6 +451,13 @@ internal sealed class ManagedGlmSession : IChatGenerationSession
             diagnostics.Add($"expert cache hot pins/prefetches/repins: {snapshot.HotExpertCount}/{snapshot.Prefetches}/{snapshot.LiveRepins}");
             diagnostics.Add($"expert cache hit/miss/eviction: {snapshot.Hits}/{snapshot.Misses}/{snapshot.Evictions}");
             diagnostics.Add($"expert disk reads/bytes: {snapshot.DiskReads}/{snapshot.DiskBytes}");
+        }
+
+        if (generator.GetProgressSnapshot() is { } progress)
+        {
+            diagnostics.Add($"forward stage/layer: {progress.Stage}/{progress.Layer + 1} of {progress.LayerCount}");
+            diagnostics.Add($"forward batch/completed tokens: {progress.BatchTokens}/{progress.CompletedTokens}");
+            diagnostics.Add($"forward active elapsed: {progress.Elapsed.TotalSeconds:F1}s");
         }
 
         diagnostics.AddRange(requestDiagnostics);

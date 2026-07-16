@@ -18,3 +18,4 @@ native/**/.vs/
 native/**/CMakeUserPresets.json
 docs/r8-smoke-evidence/
 build/
+.tmp/

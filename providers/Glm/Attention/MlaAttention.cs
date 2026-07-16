@@ -12,7 +12,7 @@ internal static class MlaAttention
         Span<float> destination,
         CancellationToken cancellationToken,
         AttentionTrace? trace = null,
-        MlaAttentionMode mode = MlaAttentionMode.Reference)
+        MlaAttentionMode mode = MlaAttentionMode.Absorbed)
     {
         ArgumentNullException.ThrowIfNull(model);
         ArgumentNullException.ThrowIfNull(cache);
@@ -409,7 +409,7 @@ internal static class MlaAttention
         Span<float> destinations,
         CancellationToken cancellationToken,
         AttentionTrace? lastTokenTrace = null,
-        MlaAttentionMode mode = MlaAttentionMode.Reference)
+        MlaAttentionMode mode = MlaAttentionMode.Absorbed)
     {
         ArgumentNullException.ThrowIfNull(model);
         lastTokenTrace?.Clear();

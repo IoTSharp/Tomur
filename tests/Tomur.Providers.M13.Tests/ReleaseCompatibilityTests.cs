@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Security.Cryptography;
+using System.Text;
 using Tomur.Providers;
 using Tomur.Providers.Glm;
 using Xunit;
@@ -79,6 +80,21 @@ public sealed class ReleaseCompatibilityTests
 
         Assert.False(ManagedProviderReleaseManifest.TryRead(manifestPath, out _, out var error));
         Assert.Contains("contract", Assert.IsType<string>(error), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ReleaseManifestAcceptsUtf8BomFromPublishOutput()
+    {
+        using var directory = new TemporaryDirectory();
+        var manifestPath = Path.Combine(directory.Path, ManagedProviderReleaseManifest.FileName);
+        File.WriteAllText(
+            manifestPath,
+            "{\"schema_version\":1,\"contract\":{\"assembly\":\"Tomur\",\"version\":\"1\",\"assembly_version\":\"0.5.0.0\"},\"providers\":[{\"id\":\"managed-glm\",\"assembly\":\"Tomur.Providers.Glm.dll\",\"version\":\"1.0.0.0\",\"sha256\":\"0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF\"}]}",
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+
+        Assert.True(ManagedProviderReleaseManifest.TryRead(manifestPath, out var manifest, out var error), error);
+        Assert.NotNull(manifest);
+        Assert.Equal("managed-glm", Assert.Single(manifest!.Providers).Id);
     }
 
     private sealed class TemporaryDirectory : IDisposable

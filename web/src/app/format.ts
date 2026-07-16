@@ -57,6 +57,7 @@ export function tagColor(status: string) {
     status === "installed" ||
     status === "available" ||
     status === "accelerated" ||
+    status === "completed" ||
     status === "prepared" ||
     status === "unchanged"
   ) {
@@ -73,11 +74,18 @@ export function tagColor(status: string) {
     status === "not_configured" ||
     status === "provider_unavailable" ||
     status === "memory_limited" ||
+    status === "ready_unverified" ||
+    status === "loaded_unverified" ||
+    status === "unverified" ||
     status === "copied" ||
     status === "repaired" ||
     status === "aliased"
   ) {
     return "gold";
+  }
+
+  if (status === "running" || status === "warming" || status === "loading") {
+    return "blue";
   }
 
   return "default";
