@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Tomur.Inference;
 using Tomur.Providers;
+using Tomur.Runtime;
 using Xunit;
 
 namespace Tomur.Providers.Olmoe.Tests;
