@@ -247,6 +247,30 @@ GLM 基础代码顺序、性能计划、集中验证门槛与发布标准见 [pr
 15. ✅ M11 性能优化基础代码已完成：managed GLM 已增加可回退 scalar 的 SIMD/shape-aware F32、int8、int4 matvec，gate/up paired dispatch，RAM budget 自动 cache capacity，usage histogram hot pin、显式 expert prefetch、cache 热路径降分配、forward 阶段 timing、activation integer dot 评估、prefill batch expert union 和可切换 mmap I/O 实验边界。全部性能基准、allocation 与跨平台验证仍归 M14；本轮未执行构建或测试。
 16. ✅ M12 高级能力基础代码已完成：managed GLM 已增加 DSA/MTP 配置与 tensor probe、接收 indexer score 的稳定 DSA top-k selection、dense-equivalent runtime 路径、可选 MTP resident head 与单步 draft、speculative rejection sampling、grammar forced spans、router lookahead prefetch、live expert repin，以及带模型身份、维度检查和 SHA-256 的 compressed KV 快照/恢复与 isolated KV fork。未验证的稀疏 DSA 不使用 attention score 冒充 indexer score；M12 独立测试代码已接入 solution，真实 indexer/MTP 语义、采样分布、性能、完整模型和跨平台验证仍归 M14，本轮未执行构建或测试。
 17. ✅ M13 发布与兼容基础代码已完成：`providers/Abstractions` 承载稳定契约，`Tomur.csproj` 直接引用 GLM 与 OLMoE provider，`ModelProviderRegistry` 在进程启动时静态注册批准的 provider；不再使用发布后复制、外部目录扫描或反射激活。M13 独立测试代码已接入 solution，Native AOT、自包含发布和跨平台实机 smoke 仍归 M14。
+18. ⏳ llama.cpp 文本路径仍由 `SessionManager` 特殊 fallback 驱动；后续将通过 `LlamaCppProvider` 接入同一 provider 契约，在保持 Agent、兼容 API、embedding、硬件加速和 native 诊断行为不变的前提下统一文本 provider 路由。该项尚未实现，不得描述为当前行为。
+
+#### ⏳ 统一 provider 路由计划
+
+实现范围：
+
+1. 新增 `LlamaCppProvider`，实现 `ITextGenerationProvider`；其 session 适配现有 `LlamaNativeSession`，继续使用 `LlamaBackendInitializer`、`HardwareAccelerationService` 和 `app/Native` 的 bundle/动态库基础设施。
+2. llama.cpp Chat 路径实现 `IChatGenerationSession`，保持当前 `LlamaPromptBuilder` 的 prompt 模板、stop sequence、context 截断和原始消息角色语义，不因统一接口改变生成输入。
+3. provider 注册从无依赖的直接构造扩展为受控工厂或依赖注入注册，使 llama.cpp provider 可以获得 backend initializer、accelerator selection 和 logger；GLM 与 OLMoE 的静态项目引用保持不变。
+4. 为 embedding 增加独立、可选的 extend-only 契约，例如 `IEmbeddingProvider` 与 embedding session；不把 embedding 方法强行加入所有文本 provider 必须实现的接口。
+5. 统一 `SessionManager` 的文本 session 所有权、切换、取消、unload、snapshot 和错误记录，同时保留 GPU layers、selected accelerator、native backend 初始化和 CPU fallback 诊断。
+6. `LocalInferenceService`、`LocalChatClient`、Agent Framework ChatClient、OpenAI、Ollama 与 Anthropic Messages 入口继续使用同一模型选择和 session 管理链路；Agent 工具结果总结与工作流总结纳入文本回归。
+7. `image.generate`、VLM、OCR、Whisper ASR 与 TTS 继续由 `IsolatedImageGenerationService`、`MultimodalExecutionService` 和各自 native runtime 处理，不纳入 `LlamaCppProvider` 文本契约；文件搜索、SQLite、下载和 runtime repair 同样保持独立。
+8. 只有文本协议、Agent、embedding、session 生命周期、native 诊断和 multimodal 隔离回归全部通过后，才删除 `SessionManager` 中现有的 llama.cpp 特殊 fallback。
+
+验收：
+
+1. GGUF Chat/Completion 通过 `LlamaCppProvider` 后，OpenAI、Ollama 与 Anthropic Messages 的非流式、streaming、token usage、stop reason 和结构化错误形状保持兼容。
+2. Agent 普通对话、工具前后文本响应、工具结果总结和 workflow summary 继续使用本地模型；受控工具确认、审计和调用边界不因 provider 重构改变。
+3. GGUF embedding 通过可选 embedding 契约返回与现有路径一致的向量维度、usage、取消和模型能力诊断；不支持 embedding 的 provider 不需要实现该能力。
+4. session 在 managed provider 与 llama.cpp 之间切换时正确释放模型、KV、expert cache、native handle 和 pooled buffer；取消、unload、服务重启与并发拒绝行为保持可重复。
+5. accelerator selection、GPU layers、OpenVINO/SYCL/Vulkan/CUDA 可见性、CPU fallback、native bundle 缺失和模型不兼容继续通过 `tomur doctor`、Runtime API 与 Web Runtime 返回一致诊断。
+6. stable-diffusion.cpp 绘图、llama.cpp mtmd VLM、OCR、Whisper 与 TTS 的 API 和 Agent 工具回归通过；文本 provider 加载失败不得阻断这些独立 multimodal runtime，multimodal 失败也不得污染文本 provider 状态。
+7. Native AOT 与非 AOT 构建均保留静态 provider 注册，逐项处理 trimming/AOT analyzer 警告，不使用 blanket suppression。
 
 集中验证进度：
 
