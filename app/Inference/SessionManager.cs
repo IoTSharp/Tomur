@@ -419,8 +419,8 @@ public sealed class SessionManager : IDisposable
             loaderDiagnostics.Length == 0
                 ?
                 [
-                    $"Place the matching provider DLL in '{Path.Combine(AppContext.BaseDirectory, "providers")}'.",
-                    $"Alternatively set {ModelProviderRegistry.ProviderPathEnvironmentVariable} to the provider output directory."
+                    "Verify that the model manifest selects a provider compiled into this Tomur build.",
+                    "Install a Tomur build that includes the required managed model provider."
                 ]
                 : loaderDiagnostics);
     }

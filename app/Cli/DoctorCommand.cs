@@ -108,10 +108,11 @@ internal static class DoctorCommand
         Console.WriteLine($"  Native bundle: {diagnostics.NativeBundle.Status} ({diagnostics.NativeBundle.Rid})");
         Console.WriteLine($"  Runtime: {diagnostics.Runtime.Status} / {diagnostics.Runtime.Code}");
         Console.WriteLine($"  Managed providers: {diagnostics.Details.ManagedProviders.Status} ({diagnostics.Details.ManagedProviders.Loaded.Count} loaded)");
+        Console.WriteLine("  Managed provider registration: static project references");
         foreach (var provider in diagnostics.Details.ManagedProviders.Loaded)
         {
             Console.WriteLine($"    {provider.Id}: {provider.Assembly} {provider.Version ?? "unknown"}");
-            Console.WriteLine($"      Path: {provider.Path}");
+            Console.WriteLine($"      Base path: {provider.Path}");
         }
 
         foreach (var directory in diagnostics.Details.ManagedProviders.SearchDirectories)

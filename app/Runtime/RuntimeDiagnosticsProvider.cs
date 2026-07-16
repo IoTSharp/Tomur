@@ -635,11 +635,10 @@ public sealed class RuntimeDiagnosticsProvider
 
         foreach (var providerDiagnostic in managedProviders.Diagnostics)
         {
-            var expectedAotLimitation = providerDiagnostic.Code == "dynamic_managed_providers_unavailable";
             diagnostics.Add(ToDiagnostic(
                 $"managed_provider:{providerDiagnostic.Code}",
-                expectedAotLimitation ? "unavailable" : "warning",
-                expectedAotLimitation ? "ok" : "warning",
+                "warning",
+                "warning",
                 providerDiagnostic.Message,
                 providerDiagnostic.Path,
                 GetManagedProviderDiagnosticActions(providerDiagnostic.Code)));
@@ -700,65 +699,33 @@ public sealed class RuntimeDiagnosticsProvider
 
     private static string BuildManagedProviderDiagnosticMessage(ModelProviderStatus status)
     {
-        if (!status.DynamicLoadingSupported)
-        {
-            return "Dynamic managed provider discovery is unavailable in this release profile; native providers are unaffected.";
-        }
-
         if (status.Loaded.Count == 0)
         {
             return status.Diagnostics.Count == 0
-                ? "No optional managed model provider assemblies were discovered; native providers remain available."
-                : "No managed model provider assemblies were loaded because discovery reported diagnostics.";
+                ? "No managed model providers are compiled into this build; native providers remain available."
+                : "No managed model providers were registered because initialization reported diagnostics.";
         }
 
         return status.Diagnostics.Count == 0
-            ? $"Loaded {status.Loaded.Count} managed model provider(s)."
-            : $"Loaded {status.Loaded.Count} managed model provider(s), with {status.Diagnostics.Count} discovery diagnostic(s).";
+            ? $"Registered {status.Loaded.Count} statically linked managed model provider(s)."
+            : $"Registered {status.Loaded.Count} managed model provider(s), with {status.Diagnostics.Count} initialization diagnostic(s).";
     }
 
     private static IReadOnlyList<string> GetManagedProviderDiagnosticActions(string code)
         => code switch
         {
-            "managed_provider_path_invalid" =>
-                [$"Set {ModelProviderRegistry.ProviderPathEnvironmentVariable} to one or more valid provider directories."],
-            "managed_provider_directory_unavailable" =>
-                ["Verify that the provider directory exists and is readable by the current user."],
-            "managed_provider_load_failed" or "managed_provider_type_load_failed" =>
-                ["Verify that the provider assembly targets this Tomur build and that all managed dependencies are present."],
-            "managed_provider_activation_failed" =>
-                ["Verify that the provider type is concrete and has a public parameterless constructor."],
-            "managed_provider_id_invalid" =>
-                ["Assign the provider a stable, non-empty provider ID."],
-            "managed_provider_id_duplicate" =>
-                ["Remove the duplicate provider assembly or assign it a unique provider ID."],
-            "managed_provider_contract_incompatible" =>
-                ["Publish the provider against the locked Tomur contract assembly version."],
-            "managed_provider_contract_not_found" =>
-                ["Publish a provider that references the Tomur provider contract assembly."],
-            "managed_provider_release_manifest_invalid" =>
-                ["Regenerate the provider release manifest and verify its schema and contract version."],
-            "managed_provider_release_asset_invalid" =>
-                ["Restore the provider DLL from the same release package or regenerate the checksum manifest."],
-            "dynamic_managed_providers_unavailable" =>
-                ["Use the non-AOT self-contained release for independent provider DLLs, or a release that statically includes the provider."],
-            _ => ["Inspect the provider assembly and model manifest before retrying."]
+            "managed_provider_id_invalid" => ["Assign the provider a stable, non-empty provider ID."],
+            "managed_provider_id_duplicate" => ["Remove the duplicate static registration or assign it a unique provider ID."],
+            _ => ["Inspect the compiled provider and model manifest before retrying."]
         };
 
     private static ModelProviderStatus GetUncheckedManagedProviderStatus()
-    {
-#if TOMUR_NATIVE_AOT
-        const bool dynamicLoadingSupported = false;
-#else
-        const bool dynamicLoadingSupported = true;
-#endif
-        return new ModelProviderStatus(
+        => new(
             "not_checked",
-            dynamicLoadingSupported,
+            false,
             [],
             [],
             []);
-    }
 
     private static string BuildAccelerationDiagnosticMessage(AccelerationPlan acceleration)
     {

@@ -2,8 +2,6 @@ using System.Text;
 
 namespace Tomur.Inference;
 
-public sealed record ChatTurn(string Role, string Content);
-
 internal sealed class LlamaPromptBuilder
 {
     private const string DefaultSystemPrompt = "You are a helpful local assistant.";

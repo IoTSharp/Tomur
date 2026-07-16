@@ -19,7 +19,9 @@ public sealed class ModelProbeTests
         var snapshot = session.GetSnapshot();
         Assert.True(snapshot.Loaded);
         Assert.Equal("managed-glm-generation", snapshot.Mode);
-        Assert.Contains("forward execution: scalar reference", snapshot.Diagnostics);
+        Assert.Contains(
+            snapshot.Diagnostics,
+            static diagnostic => diagnostic.StartsWith("kernel execution:", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -68,7 +70,7 @@ public sealed class ModelProbeTests
     }
 
     [Fact]
-    public void MissingRequiredTensorReturnsManagedModelInvalid()
+    public void MissingRequiredTensorReturnsAssetsIncomplete()
     {
         using var fixture = new ManagedModelFixture();
         var model = fixture.CreateValidModel(omitRequiredTensor: true);
@@ -77,7 +79,7 @@ public sealed class ModelProbeTests
         var exception = Assert.Throws<InferenceException>(() =>
             provider.CreateSession(model, new ModelSessionOptions(4096)));
 
-        Assert.Equal("managed_model_invalid", exception.Code);
+        Assert.Equal("managed_model_assets_incomplete", exception.Code);
         Assert.Contains("Required model tensor is missing", exception.Message, StringComparison.Ordinal);
     }
 

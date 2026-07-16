@@ -23,6 +23,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\app\Tomur.csproj" />
     <ProjectReference Include="..\..\providers\Glm\Tomur.Providers.Glm.csproj" />
   </ItemGroup>
 </Project>

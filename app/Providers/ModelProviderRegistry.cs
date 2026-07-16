@@ -1,9 +1,7 @@
-#if !TOMUR_NATIVE_AOT
-using System.Reflection;
-using System.Runtime.Loader;
-#endif
 using System.Text.Json.Serialization;
 using Tomur.Inference;
+using Tomur.Providers.Glm;
+using Tomur.Providers.Olmoe;
 using Tomur.Runtime;
 
 namespace Tomur.Providers;
@@ -28,8 +26,6 @@ public sealed record ModelProviderStatus(
 
 public sealed class ModelProviderRegistry : IDisposable
 {
-    public const string ProviderPathEnvironmentVariable = "TOMUR_PROVIDER_PATH";
-
     private readonly IReadOnlyList<ITextGenerationProvider> textProviders;
 
     internal ModelProviderRegistry(
@@ -42,7 +38,7 @@ public sealed class ModelProviderRegistry : IDisposable
         this.textProviders = textProviders;
         Diagnostics = diagnostics;
         Status = new ModelProviderStatus(
-            ResolveStatus(dynamicLoadingSupported, loadedProviders, diagnostics),
+            ResolveStatus(loadedProviders, diagnostics),
             dynamicLoadingSupported,
             searchDirectories,
             loadedProviders,
@@ -55,20 +51,20 @@ public sealed class ModelProviderRegistry : IDisposable
 
     public static ModelProviderRegistry CreateDefault()
     {
-#if TOMUR_NATIVE_AOT
-        var defaultDirectory = Path.Combine(AppContext.BaseDirectory, "providers");
-        var diagnostics = new ModelProviderLoadDiagnostic[]
-        {
-            new(
-                "dynamic_managed_providers_unavailable",
-                "Dynamic managed provider assemblies are unavailable in the Native AOT release profile.",
-                defaultDirectory)
-        };
-        return new ModelProviderRegistry([], false, [defaultDirectory], [], diagnostics);
-#else
-        var resolution = ResolveProviderDirectories();
-        return Load(resolution.Directories, resolution.Diagnostics);
-#endif
+        ITextGenerationProvider[] providers =
+        [
+            new ManagedGlmProvider(),
+            new ManagedOlmoeProvider()
+        ];
+        var loadedProviders = providers
+            .Select(static provider => CreateProviderInfo(provider))
+            .ToArray();
+        return new ModelProviderRegistry(
+            providers,
+            dynamicLoadingSupported: false,
+            searchDirectories: [],
+            loadedProviders,
+            diagnostics: []);
     }
 
     public ITextGenerationProvider? FindTextProvider(LocalModelDescriptor model)
@@ -174,8 +170,8 @@ public sealed class ModelProviderRegistry : IDisposable
                 "managed_provider_unavailable",
                 $"Managed provider '{manifest.Provider}' is not loaded.",
                 [
-                    $"Place the matching provider DLL in '{Path.Combine(AppContext.BaseDirectory, "providers")}'.",
-                    $"Alternatively set {ProviderPathEnvironmentVariable} to the provider output directory."
+                    "Verify that the model manifest selects a provider compiled into this Tomur build.",
+                    "Install a Tomur build that includes the required managed model provider."
                 ]);
         }
 
@@ -393,15 +389,9 @@ public sealed class ModelProviderRegistry : IDisposable
     }
 
     private static string ResolveStatus(
-        bool dynamicLoadingSupported,
         IReadOnlyCollection<ModelProviderInfo> loadedProviders,
         IReadOnlyCollection<ModelProviderLoadDiagnostic> diagnostics)
     {
-        if (!dynamicLoadingSupported)
-        {
-            return "unavailable";
-        }
-
         if (diagnostics.Count > 0)
         {
             return "warning";
@@ -410,333 +400,14 @@ public sealed class ModelProviderRegistry : IDisposable
         return loadedProviders.Count > 0 ? "ready" : "not_configured";
     }
 
-#if !TOMUR_NATIVE_AOT
-    private static ModelProviderRegistry Load(
-        IReadOnlyList<string> directories,
-        IReadOnlyList<ModelProviderLoadDiagnostic> resolutionDiagnostics)
+    private static ModelProviderInfo CreateProviderInfo(ITextGenerationProvider provider)
     {
-        var providers = new List<ITextGenerationProvider>();
-        var loadedProviders = new List<ModelProviderInfo>();
-        var diagnostics = new List<ModelProviderLoadDiagnostic>(resolutionDiagnostics);
-        var providerIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var directory in directories)
-        {
-            try
-            {
-                if (!Directory.Exists(directory))
-                {
-                    continue;
-                }
-
-                var assemblyPaths = Directory
-                    .EnumerateFiles(directory, "Tomur.Providers.*.dll", SearchOption.TopDirectoryOnly)
-                    .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
-                    .ToArray();
-                ManagedProviderReleaseManifest? releaseManifest = null;
-                var releaseManifestPath = Path.Combine(directory, ManagedProviderReleaseManifest.FileName);
-                if (File.Exists(releaseManifestPath))
-                {
-                    if (!ManagedProviderReleaseManifest.TryRead(
-                            releaseManifestPath,
-                            out releaseManifest,
-                            out var manifestError))
-                    {
-                        diagnostics.Add(new ModelProviderLoadDiagnostic(
-                            "managed_provider_release_manifest_invalid",
-                            manifestError ?? "Managed provider release manifest is invalid.",
-                            releaseManifestPath));
-                        continue;
-                    }
-
-                    foreach (var releaseEntry in releaseManifest!.Providers)
-                    {
-                        var releaseAssetPath = Path.Combine(directory, releaseEntry.Assembly);
-                        if (!File.Exists(releaseAssetPath))
-                        {
-                            diagnostics.Add(new ModelProviderLoadDiagnostic(
-                                "managed_provider_release_asset_invalid",
-                                $"Provider release asset is missing: {releaseEntry.Assembly}.",
-                                releaseAssetPath));
-                        }
-                    }
-                }
-
-                foreach (var path in assemblyPaths)
-                {
-                    TryLoadAssembly(path, releaseManifest, providers, loadedProviders, providerIds, diagnostics);
-                }
-            }
-            catch (Exception exception) when (
-                exception is IOException or UnauthorizedAccessException or ArgumentException)
-            {
-                diagnostics.Add(new ModelProviderLoadDiagnostic(
-                    "managed_provider_directory_unavailable",
-                    exception.Message,
-                    directory));
-            }
-        }
-
-        return new ModelProviderRegistry(providers, true, directories, loadedProviders, diagnostics);
+        var assembly = provider.GetType().Assembly;
+        var assemblyName = assembly.GetName();
+        return new ModelProviderInfo(
+            provider.Id,
+            assemblyName.Name ?? provider.GetType().Namespace ?? provider.Id,
+            assemblyName.Version?.ToString(),
+            AppContext.BaseDirectory);
     }
-
-    private static void TryLoadAssembly(
-        string path,
-        ManagedProviderReleaseManifest? releaseManifest,
-        ICollection<ITextGenerationProvider> providers,
-        ICollection<ModelProviderInfo> loadedProviders,
-        ISet<string> providerIds,
-        ICollection<ModelProviderLoadDiagnostic> diagnostics)
-    {
-        try
-        {
-            var fullPath = Path.GetFullPath(path);
-            ManagedProviderReleaseEntry? releaseEntry = null;
-            if (releaseManifest is not null &&
-                !releaseManifest.TryVerify(
-                    Path.GetDirectoryName(fullPath) ?? string.Empty,
-                    Path.GetFileName(fullPath),
-                    out releaseEntry,
-                    out var releaseError))
-            {
-                diagnostics.Add(new ModelProviderLoadDiagnostic(
-                    "managed_provider_release_asset_invalid",
-                    releaseError ?? "Managed provider release asset failed manifest verification.",
-                    fullPath));
-                return;
-            }
-
-            var assembly = LoadProviderAssembly(fullPath);
-            var assemblyVersion = assembly.GetName().Version?.ToString();
-            if (releaseEntry is not null &&
-                !string.Equals(assemblyVersion, releaseEntry.Version, StringComparison.Ordinal))
-            {
-                diagnostics.Add(new ModelProviderLoadDiagnostic(
-                    "managed_provider_release_asset_invalid",
-                    $"Provider assembly version {assemblyVersion ?? "unknown"} does not match release manifest version {releaseEntry.Version}.",
-                    fullPath));
-                return;
-            }
-
-            var contractAssembly = assembly
-                .GetReferencedAssemblies()
-                .FirstOrDefault(static reference =>
-                    string.Equals(reference.Name, ModelProviderContract.AssemblyName, StringComparison.Ordinal));
-            if (contractAssembly is null)
-            {
-                diagnostics.Add(new ModelProviderLoadDiagnostic(
-                    "managed_provider_contract_not_found",
-                    $"The provider does not reference the '{ModelProviderContract.AssemblyName}' contract assembly.",
-                    fullPath));
-                return;
-            }
-
-            if (!ModelProviderContract.IsCompatible(contractAssembly))
-            {
-                var expectedVersion = ModelProviderContract.AssemblyVersion?.ToString() ?? "unknown";
-                diagnostics.Add(new ModelProviderLoadDiagnostic(
-                    "managed_provider_contract_incompatible",
-                    $"The provider references contract assembly version {contractAssembly.Version}, but this Tomur release requires {expectedVersion}.",
-                    fullPath));
-                return;
-            }
-
-            var providerTypes = GetLoadableTypes(assembly, fullPath, diagnostics)
-                .Where(static type =>
-                    !type.IsAbstract &&
-                    !type.IsInterface &&
-                    typeof(ITextGenerationProvider).IsAssignableFrom(type))
-                .ToArray();
-            if (providerTypes.Length == 0)
-            {
-                diagnostics.Add(new ModelProviderLoadDiagnostic(
-                    "managed_provider_contract_not_found",
-                    "The assembly does not contain an ITextGenerationProvider implementation compatible with this Tomur build.",
-                    fullPath));
-                return;
-            }
-
-            foreach (var type in providerTypes)
-            {
-                TryActivateProvider(
-                    type,
-                    fullPath,
-                    releaseEntry?.Id,
-                    providers,
-                    loadedProviders,
-                    providerIds,
-                    diagnostics);
-            }
-        }
-        catch (Exception exception) when (exception is not OutOfMemoryException)
-        {
-            diagnostics.Add(new ModelProviderLoadDiagnostic(
-                "managed_provider_load_failed",
-                exception.Message,
-                path));
-        }
-    }
-
-    private static void TryActivateProvider(
-        Type type,
-        string path,
-        string? expectedProviderId,
-        ICollection<ITextGenerationProvider> providers,
-        ICollection<ModelProviderInfo> loadedProviders,
-        ISet<string> providerIds,
-        ICollection<ModelProviderLoadDiagnostic> diagnostics)
-    {
-        ITextGenerationProvider? provider = null;
-        try
-        {
-            provider = Activator.CreateInstance(type) as ITextGenerationProvider;
-            if (provider is null)
-            {
-                diagnostics.Add(new ModelProviderLoadDiagnostic(
-                    "managed_provider_activation_failed",
-                    $"Managed provider type could not be activated: {type.FullName}",
-                    path));
-                return;
-            }
-
-            var providerId = provider.Id;
-            if (string.IsNullOrWhiteSpace(providerId))
-            {
-                DisposeRejectedProvider(provider);
-                diagnostics.Add(new ModelProviderLoadDiagnostic(
-                    "managed_provider_id_invalid",
-                    "Managed provider ID must be a non-empty string.",
-                    path));
-                return;
-            }
-
-            if (expectedProviderId is not null &&
-                !string.Equals(providerId, expectedProviderId, StringComparison.OrdinalIgnoreCase))
-            {
-                DisposeRejectedProvider(provider);
-                diagnostics.Add(new ModelProviderLoadDiagnostic(
-                    "managed_provider_release_asset_invalid",
-                    $"Provider ID '{providerId}' does not match release manifest ID '{expectedProviderId}'.",
-                    path));
-                return;
-            }
-
-            if (!providerIds.Add(providerId))
-            {
-                DisposeRejectedProvider(provider);
-                diagnostics.Add(new ModelProviderLoadDiagnostic(
-                    "managed_provider_id_duplicate",
-                    $"Managed provider ID is already registered: {providerId}",
-                    path));
-                return;
-            }
-
-            var assemblyName = type.Assembly.GetName();
-            providers.Add(provider);
-            loadedProviders.Add(new ModelProviderInfo(
-                providerId,
-                assemblyName.Name ?? Path.GetFileNameWithoutExtension(path),
-                assemblyName.Version?.ToString(),
-                path));
-        }
-        catch (Exception exception) when (exception is not OutOfMemoryException)
-        {
-            DisposeRejectedProvider(provider);
-            diagnostics.Add(new ModelProviderLoadDiagnostic(
-                "managed_provider_activation_failed",
-                $"Managed provider type '{type.FullName}' could not be activated: {exception.Message}",
-                path));
-        }
-    }
-
-    private static IEnumerable<Type> GetLoadableTypes(
-        Assembly assembly,
-        string path,
-        ICollection<ModelProviderLoadDiagnostic> diagnostics)
-    {
-        try
-        {
-            return assembly.GetTypes();
-        }
-        catch (ReflectionTypeLoadException exception)
-        {
-            foreach (var loaderException in exception.LoaderExceptions.Where(static item => item is not null))
-            {
-                diagnostics.Add(new ModelProviderLoadDiagnostic(
-                    "managed_provider_type_load_failed",
-                    loaderException!.Message,
-                    path));
-            }
-
-            return exception.Types.Where(static type => type is not null).Select(static type => type!);
-        }
-    }
-
-    private static Assembly LoadProviderAssembly(string fullPath)
-    {
-        var loadedAssembly = AssemblyLoadContext.Default.Assemblies.FirstOrDefault(assembly =>
-        {
-            try
-            {
-                return !string.IsNullOrWhiteSpace(assembly.Location) &&
-                    string.Equals(Path.GetFullPath(assembly.Location), fullPath, StringComparison.OrdinalIgnoreCase);
-            }
-            catch (Exception exception) when (exception is IOException or ArgumentException or NotSupportedException)
-            {
-                return false;
-            }
-        });
-        return loadedAssembly ?? AssemblyLoadContext.Default.LoadFromAssemblyPath(fullPath);
-    }
-
-    private static ProviderDirectoryResolution ResolveProviderDirectories()
-    {
-        var directories = new List<string>
-        {
-            Path.Combine(AppContext.BaseDirectory, "providers")
-        };
-        var diagnostics = new List<ModelProviderLoadDiagnostic>();
-        var configured = Environment.GetEnvironmentVariable(ProviderPathEnvironmentVariable);
-        if (!string.IsNullOrWhiteSpace(configured))
-        {
-            foreach (var candidate in configured.Split(
-                         Path.PathSeparator,
-                         StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            {
-                try
-                {
-                    directories.Add(Path.GetFullPath(candidate));
-                }
-                catch (Exception exception) when (
-                    exception is ArgumentException or NotSupportedException or IOException)
-                {
-                    diagnostics.Add(new ModelProviderLoadDiagnostic(
-                        "managed_provider_path_invalid",
-                        $"The configured managed provider path is invalid: {exception.Message}",
-                        candidate));
-                }
-            }
-        }
-
-        return new ProviderDirectoryResolution(
-            directories.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
-            diagnostics);
-    }
-
-    private static void DisposeRejectedProvider(ITextGenerationProvider? provider)
-    {
-        try
-        {
-            (provider as IDisposable)?.Dispose();
-        }
-        catch (Exception exception) when (exception is not OutOfMemoryException)
-        {
-            // Rejected providers are isolated from the host lifecycle.
-        }
-    }
-
-    private sealed record ProviderDirectoryResolution(
-        IReadOnlyList<string> Directories,
-        IReadOnlyList<ModelProviderLoadDiagnostic> Diagnostics);
-#endif
 }

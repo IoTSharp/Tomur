@@ -20,7 +20,6 @@
     <TomurReleaseProfile Condition="'$(TomurReleaseProfile)' == '' and '$(PublishAot)' == 'true'">native-aot-audit</TomurReleaseProfile>
     <TomurReleaseProfile Condition="'$(TomurReleaseProfile)' == ''">self-contained-single-file</TomurReleaseProfile>
     <DefineConstants Condition="'$(PublishAot)' == 'true'">$(DefineConstants);TOMUR_NATIVE_AOT</DefineConstants>
-    <ManagedProviderContractVersion>1</ManagedProviderContractVersion>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(RuntimeIdentifier)' != ''">
@@ -29,6 +28,12 @@
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <IncludeAllContentForSelfExtract>false</IncludeAllContentForSelfExtract>
   </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\providers\Abstractions\Tomur.Providers.Abstractions.csproj" />
+    <ProjectReference Include="..\providers\Glm\Tomur.Providers.Glm.csproj" />
+    <ProjectReference Include="..\providers\Olmoe\Tomur.Providers.Olmoe.csproj" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="10.0.5" />
@@ -49,57 +54,4 @@
     <Content Include="..\native\bundle.manifest.json" Link="native\bundle.manifest.json" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\native\runtimes\**\*" Link="native\runtimes\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
   </ItemGroup>
-
-  <!-- Independent managed providers are an explicit non-AOT release asset. -->
-  <Target Name="PublishApprovedManagedProviders" AfterTargets="Publish" Condition="'$(PublishAot)' != 'true'">
-    <MSBuild
-      Projects="$(MSBuildProjectDirectory)\..\providers\Glm\Tomur.Providers.Glm.csproj"
-      Targets="Build"
-      Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);RuntimeIdentifier=$(RuntimeIdentifier);PublishAot=false;PublishSingleFile=false;SelfContained=false;BuildProjectReferences=false">
-      <Output TaskParameter="TargetOutputs" ItemName="_ManagedProviderBuildOutputs" />
-    </MSBuild>
-
-    <ItemGroup>
-      <_ManagedProviderAssembly Include="@(_ManagedProviderBuildOutputs)" Condition="'%(Filename)%(Extension)' == 'Tomur.Providers.Glm.dll'" />
-    </ItemGroup>
-    <Error
-      Condition="'@(_ManagedProviderAssembly)' == ''"
-      Text="The approved managed GLM provider did not produce Tomur.Providers.Glm.dll." />
-
-    <MakeDir Directories="$(PublishDir)providers" />
-    <Copy
-      SourceFiles="@(_ManagedProviderAssembly)"
-      DestinationFolder="$(PublishDir)providers"
-      SkipUnchangedFiles="true" />
-    <GetAssemblyIdentity AssemblyFiles="@(_ManagedProviderAssembly)">
-      <Output TaskParameter="Assemblies" ItemName="_ManagedProviderIdentity" />
-    </GetAssemblyIdentity>
-    <GetFileHash Files="$(PublishDir)providers\Tomur.Providers.Glm.dll" Algorithm="SHA256">
-      <Output TaskParameter="Items" ItemName="_ManagedProviderHash" />
-    </GetFileHash>
-
-    <ItemGroup>
-      <_ManagedProviderManifestLine Include="{" />
-      <_ManagedProviderManifestLine Include='  "schema_version": 1,' />
-      <_ManagedProviderManifestLine Include='  "contract": { ' />
-      <_ManagedProviderManifestLine Include='    "assembly": "Tomur",' />
-      <_ManagedProviderManifestLine Include='    "version": "$(ManagedProviderContractVersion)",' />
-      <_ManagedProviderManifestLine Include='    "assembly_version": "$(AssemblyVersion)"' />
-      <_ManagedProviderManifestLine Include='  },' />
-      <_ManagedProviderManifestLine Include='  "providers": [' />
-      <_ManagedProviderManifestLine Include='    {' />
-      <_ManagedProviderManifestLine Include='      "id": "managed-glm",' />
-      <_ManagedProviderManifestLine Include='      "assembly": "Tomur.Providers.Glm.dll",' />
-      <_ManagedProviderManifestLine Include='      "version": "%(_ManagedProviderIdentity.Version)",' />
-      <_ManagedProviderManifestLine Include='      "sha256": "%(_ManagedProviderHash.FileHash)"' />
-      <_ManagedProviderManifestLine Include='    }' />
-      <_ManagedProviderManifestLine Include='  ]' />
-      <_ManagedProviderManifestLine Include="}" />
-    </ItemGroup>
-    <WriteLinesToFile
-      File="$(PublishDir)providers\providers.manifest.json"
-      Lines="@(_ManagedProviderManifestLine)"
-      Overwrite="true"
-      Encoding="UTF-8" />
-  </Target>
 </Project>

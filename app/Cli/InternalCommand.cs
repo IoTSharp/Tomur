@@ -66,7 +66,7 @@ internal static class InternalCommand
         {
             return WriteError(
                 $"Managed conversion provider '{providerId}' was not found. " +
-                $"Set {ModelProviderRegistry.ProviderPathEnvironmentVariable} to the provider output directory.");
+                "Use a provider ID compiled into this Tomur build.");
         }
 
         using var cancellation = new CancellationTokenSource();
@@ -141,7 +141,7 @@ internal static class InternalCommand
         {
             return WriteError(
                 $"Managed fixture provider '{providerId}' was not found. " +
-                $"Set {ModelProviderRegistry.ProviderPathEnvironmentVariable} to the provider output directory.");
+                "Use a provider ID compiled into this Tomur build.");
         }
 
         try

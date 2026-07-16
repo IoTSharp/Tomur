@@ -23,6 +23,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\app\Tomur.csproj" />
     <ProjectReference Include="..\..\providers\Olmoe\Tomur.Providers.Olmoe.csproj" />
   </ItemGroup>
 </Project>

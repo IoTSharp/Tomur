@@ -6,7 +6,7 @@ namespace Tomur.Providers;
 public static class ModelProviderContract
 {
     public const int Version = 1;
-    public const string AssemblyName = "Tomur";
+    public const string AssemblyName = "Tomur.Providers.Abstractions";
 
     public static Version? AssemblyVersion
         => typeof(ITextGenerationProvider).Assembly.GetName().Version;

@@ -118,13 +118,13 @@ public sealed class KvAndPrefetchTests
         }
 
         cache.RepinHotExperts();
-        lookahead.Observe(0, new[] { 0 });
+        lookahead.Observe(0, new[] { 0, 1 });
         await lookahead.PrefetchAsync(0);
         var snapshot = cache.GetSnapshot();
 
         Assert.Equal(new[] { 0 }, cache.GetPinnedExperts(0));
         Assert.Equal(1, snapshot.LiveRepins);
-        Assert.Equal(1, lookahead.RequestedExperts);
+        Assert.Equal(2, lookahead.RequestedExperts);
         Assert.True(snapshot.Prefetches >= 1);
         Assert.True(snapshot.BudgetedBytes <= options.BudgetBytes);
     }

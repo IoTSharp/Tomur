@@ -10,6 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Abstractions\Tomur.Providers.Abstractions.csproj" />
     <ProjectReference Include="..\Glm\Tomur.Providers.Glm.csproj" />
   </ItemGroup>
 </Project>

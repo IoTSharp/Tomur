@@ -114,63 +114,47 @@ public sealed class ForwardGenerationTests
     {
         using var fixture = new GenerationFixture();
         fixture.EnableChatRoleTokens();
-        var providerDirectory = Path.GetDirectoryName(typeof(ManagedGlmProvider).Assembly.Location)!;
-        var previousProviderPath = Environment.GetEnvironmentVariable(
-            ModelProviderRegistry.ProviderPathEnvironmentVariable);
-        Environment.SetEnvironmentVariable(
-            ModelProviderRegistry.ProviderPathEnvironmentVariable,
-            providerDirectory);
+        using var registry = ModelProviderRegistry.CreateDefault();
+        var paths = new DataPaths(new PathOptions { DataDirectory = fixture.Path });
+        var configurationStore = new ConfigurationStore(paths);
+        var nativeProbe = new NativeBundleProbe(paths);
+        var resolver = new NativeLibraryResolver(nativeProbe);
+        var importResolver = new LlamaImportResolver(resolver);
+        var backendInitializer = new LlamaBackendInitializer(
+            importResolver,
+            resolver,
+            configurationStore);
+        var accelerationService = new HardwareAccelerationService(
+            backendInitializer,
+            nativeProbe,
+            configurationStore);
+        using var sessionManager = new SessionManager(
+            backendInitializer,
+            accelerationService,
+            registry,
+            NullLogger<SessionManager>.Instance);
+        var inference = new LocalInferenceService(sessionManager);
+        ChatTurn[] messages =
+        [
+            new("system", "hello"),
+            new("user", "Tomur")
+        ];
+        var options = CreateOptions(1, temperature: 0, seed: 5);
 
-        try
-        {
-            using var registry = ModelProviderRegistry.CreateDefault();
-            var paths = new DataPaths(new PathOptions { DataDirectory = fixture.Path });
-            var configurationStore = new ConfigurationStore(paths);
-            var nativeProbe = new NativeBundleProbe(paths);
-            var resolver = new NativeLibraryResolver(nativeProbe);
-            var importResolver = new LlamaImportResolver(resolver);
-            var backendInitializer = new LlamaBackendInitializer(
-                importResolver,
-                resolver,
-                configurationStore);
-            var accelerationService = new HardwareAccelerationService(
-                backendInitializer,
-                nativeProbe,
-                configurationStore);
-            using var sessionManager = new SessionManager(
-                backendInitializer,
-                accelerationService,
-                registry,
-                NullLogger<SessionManager>.Instance);
-            var inference = new LocalInferenceService(sessionManager);
-            ChatTurn[] messages =
-            [
-                new("system", "hello"),
-                new("user", "Tomur")
-            ];
-            var options = CreateOptions(1, temperature: 0, seed: 5);
+        var result = inference.Chat(
+            fixture.Descriptor,
+            messages,
+            options,
+            CancellationToken.None);
 
-            var result = inference.Chat(
-                fixture.Descriptor,
-                messages,
-                options,
-                CancellationToken.None);
-
-            var tokenizer = ManagedTokenizer.Read(
-                Path.Combine(fixture.Path, TinyFixtureFiles.Tokenizer));
-            var expectedPrompt = new GlmPromptTemplate(
-                    tokenizer,
-                    GlmModelConfiguration.DsaModelType)
-                .BuildChat(messages);
-            Assert.Equal(expectedPrompt.TokenIds.Count, result.Usage.PromptTokens);
-            Assert.Contains(result.Diagnostics, value => value == "provider: managed-glm");
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(
-                ModelProviderRegistry.ProviderPathEnvironmentVariable,
-                previousProviderPath);
-        }
+        var tokenizer = ManagedTokenizer.Read(
+            Path.Combine(fixture.Path, TinyFixtureFiles.Tokenizer));
+        var expectedPrompt = new GlmPromptTemplate(
+                tokenizer,
+                GlmModelConfiguration.DsaModelType)
+            .BuildChat(messages);
+        Assert.Equal(expectedPrompt.TokenIds.Count, result.Usage.PromptTokens);
+        Assert.Contains(result.Diagnostics, value => value == "provider: managed-glm");
     }
 
     [Fact]

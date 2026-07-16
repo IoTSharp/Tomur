@@ -53,7 +53,7 @@ public sealed class ModelProviderManifest
 
 public static class ModelProviderManifestReader
 {
-    private const int MaximumManifestBytes = 1024 * 1024;
+    private const int MaximumManifestBytes = 1_024 * 1_024;
 
     public static bool TryRead(
         string path,

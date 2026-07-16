@@ -1,5 +1,7 @@
 namespace Tomur.Inference;
 
+public sealed record ChatTurn(string Role, string Content);
+
 public sealed record CompletionOptions(
     int MaxOutputTokens,
     int ContextSize,
