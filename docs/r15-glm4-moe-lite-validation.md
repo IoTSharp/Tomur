@@ -1,8 +1,8 @@
-# R15 GLM4 MoE Lite 异机验证计划
+# R15 GLM4 MoE Lite 异机验证
 
-状态：未执行
+状态：进行中
 
-本文定义 `managed-glm` 对 `glm4_moe_lite` 的异机转换与 smoke 边界。当前仓库只包含 architecture/config/tensor/prompt 契约和测试代码；本文不构成完整模型已加载、真实对话已通过或性能可用的证据。
+本文定义 `managed-glm` 对 `glm4_moe_lite` 的异机转换与 smoke 边界。完整 GLM-4.7 已完成转换、资产校验、provider 加载和 readiness，最短真实 forward 仍在执行；实时服务器状态、下载任务和接手步骤见 [R15 远程 GLM 验证交接记录](./r15-remote-validation-handoff.md)。在真实 token 和完整响应证据形成前，本文不构成真实对话已通过或性能可用的证据。
 
 ## 固定输入
 
