@@ -281,6 +281,14 @@ tomur native build --rid win-x64 --backend intel
 
 `--backend cpu` 与 `--backend cuda13` 可只构建单一变体；`--backend intel` 会构建 llama.cpp 的 `sycl`、`openvino` 与 `vulkan` dynamic backend 入口。缺失 Intel backend 或设备不可枚举时，Tomur 会保留 CPU fallback 并在 `tomur doctor`、`/api/runtime/status` 和 Web Runtime 面板中显示原因。
 
+## 🙏 致谢
+
+Tomur 的纯 C# GLM / MoE provider 在设计灵感与工程思路上受到 [JustVugg/colibri](https://github.com/JustVugg/colibri) 的启发，特别是其使用纯 C 探索 MoE 模型运行、从磁盘流式读取 routed experts，以及管理常驻权重与多级缓存的实践。感谢 JustVugg 公开并分享这些工作。Tomur 以 C# 独立实现相关能力，Colibri 不作为 Tomur 的运行时依赖。
+
+## 📄 开源许可
+
+Tomur 由 IoTSharp contributors 以 [Apache License 2.0](./LICENSE) 发布。该许可覆盖 Tomur 自有源代码；第三方依赖、native runtime、可选加速库和模型资产继续适用各自的上游许可，不因 Tomur 的主许可证而重新授权。版权声明与分发边界见 [NOTICE](./NOTICE) 和 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。
+
 ## 🗺️ 路线图
 
 长期阶段计划、完成口径和后续工作维护在 [ROADMAP.md](./ROADMAP.md)；已完成历史维护在 [CHANGELOG.md](./CHANGELOG.md)。README 只保留项目首页所需的定位、使用路径和当前边界。

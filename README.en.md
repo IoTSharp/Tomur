@@ -261,6 +261,14 @@ tomur native build --rid win-x64 --backend intel
 
 Use `--backend cpu` or `--backend cuda13` to build a single variant. `--backend intel` builds the llama.cpp `sycl`, `openvino`, and `vulkan` dynamic backend entries. When an Intel backend is missing or no device can be enumerated, Tomur keeps CPU fallback and reports the reason through `tomur doctor`, `/api/runtime/status`, and the Web Runtime panel.
 
+## 🙏 Acknowledgements
+
+Tomur's pure C# GLM / MoE providers were inspired by the design ideas and engineering exploration in [JustVugg/colibri](https://github.com/JustVugg/colibri), especially its pure C approach to MoE model execution, streaming routed experts from disk, and managing resident weights and multi-level caches. We thank JustVugg for making this work public. Tomur implements the related capabilities independently in C#, and Colibri is not a Tomur runtime dependency.
+
+## 📄 License
+
+Tomur is released by IoTSharp contributors under the [Apache License 2.0](./LICENSE). This license covers source code owned by IoTSharp contributors in this repository; third-party dependencies, native runtimes, optional accelerator libraries, and model assets remain subject to their respective upstream terms and are not relicensed by the Tomur license. See [NOTICE](./NOTICE) and [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md) for attribution and distribution boundaries.
+
 ## 🗺️ Roadmap
 
 Long-term stage plans, completion scope, and follow-up work are maintained in [ROADMAP.md](./ROADMAP.md); completed history is maintained in [CHANGELOG.md](./CHANGELOG.md). This README keeps the project positioning, usage path, and current boundaries concise.

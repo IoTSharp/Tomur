@@ -4,6 +4,10 @@
 
 ## 未发布
 
+### 开源许可
+
+Tomur 自有源代码已采用 Apache License 2.0，版权主体为 IoTSharp contributors；根目录新增 `LICENSE`、`NOTICE` 与 `THIRD_PARTY_NOTICES.md`，区分 Tomur 自有代码、第三方依赖、native runtime、可选硬件运行库和模型资产的许可边界，并明确致谢为纯 C# GLM / MoE provider 提供设计灵感与工程思路的 `JustVugg/colibri` 项目。主程序发布配置会把三份许可文件复制到可执行文件旁；本轮未执行构建或发布验证。
+
 ### M13 发布与兼容
 
 已完成 managed provider 发布与兼容基础代码：非 AOT 发布会构建批准的 `Tomur.Providers.Glm.dll` 并复制到主程序旁的 `providers/`，生成包含契约版本、程序集版本、provider ID 和 SHA-256 的 `providers.manifest.json`。provider discovery 会校验 `Tomur` 契约程序集版本，并在发布清单存在时拒绝缺失或 checksum 不匹配的 provider；失败只影响对应 managed provider，native provider 保持可用。Native AOT 继续返回 `dynamic_managed_providers_unavailable`，未引入未经验证的动态托管程序集加载。M13 测试项目已接入 solution；本轮未执行构建、测试或发布 smoke，跨平台证据归 M14。
