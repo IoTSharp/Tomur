@@ -2,19 +2,27 @@
 
 [中文](./README.md)
 
-Tomur is a local AI infrastructure that integrates local model serving, OpenAI / Ollama-compatible APIs, model asset management, runtime diagnostics, and a Chat-first web workspace. Built with .NET 10 and C#, it runs as a single local `tomur` process that hosts the CLI, local HTTP service, system service modes, native runtime management, and web static assets for offline-first, privacy-sensitive developer environments.
+Tomur is a local AI runtime and developer workbench built with .NET 10 and C# for offline-first, privacy-sensitive, low-operations personal and team development environments. A single `tomur` process hosts the CLI, local HTTP service, OS service modes, model asset management, runtime diagnostics, and a Chat-first web workspace.
 
-Tomur manages model weights, SQLite data, logs, user files, and generated artifacts as local assets. It is designed to download, verify, prepare, diagnose, and serve local models through one entry point without requiring users to understand native backend internals or model directory layouts.
+Tomur supports two local large-model runtime paths: managed model providers implemented by Tomur in pure C#, and a native runtime centered on llama.cpp. Both paths coexist and are selected explicitly from the model format, architecture, and local runtime conditions.
+
+| Runtime path | Implementation | Capability boundary |
+| --- | --- | --- |
+| Pure C# managed models | `providers/Glm`, `providers/Olmoe` | Implements safetensors access, tokenization, tensor and quantization kernels, KV cache, attention, MoE routing, expert caching, and incremental generation in C# without a third-party inference dynamic library. Explicit GLM / MoE and OLMoE formats are connected and have targeted real-model inference evidence; the full protocol, performance, resource-release, and cross-platform matrices remain under roadmap validation. |
+| llama.cpp native | `native/llama.cpp`, `native/llama.native`, `app/Inference` | Handles GGUF text generation and embeddings through Tomur-managed native bundles, hardware backend selection, GPU offload, and CPU fallback. It is the current default, validated path for text and embedding-compatible APIs. |
+
+Both paths share the same model catalog, install manifests, session management, OpenAI / Ollama / Anthropic Messages-compatible APIs, runtime diagnostics, and web chat workspace. Model weights, SQLite data, logs, user files, and generated artifacts are managed consistently as local assets.
 
 ## 🧭 Why Tomur
 
-Local AI workflows often involve model files, native dynamic libraries, compatibility APIs, a local service, a web chat workspace, logs, and diagnostics. Tomur brings these pieces together into one local program:
+Tomur does not restrict local model execution to a single inference backend. Pure C# providers and the llama.cpp native runtime use consistent model, protocol, and diagnostic boundaries in the same local program:
 
-1. 🔌 Start a local service with OpenAI / Ollama-compatible APIs.
-2. 📦 Manage model downloads, verification, and local visibility from one entry point.
-3. 💬 Use the built-in web workspace for chat, attachments, and runtime status.
-4. 🩺 Diagnose native libraries, models, ports, proxy settings, SQLite, and hardware through `tomur doctor`, runtime APIs, and the UI.
-5. 🚀 Follow a self-contained, single-file, Native AOT-friendly release path.
+1. 🧮 Select explicitly between pure C# GLM / OLMoE providers and the llama.cpp GGUF runtime from the model format and architecture without changing the service entry point.
+2. 🔌 Use one local service for OpenAI, Ollama, and Anthropic Messages-compatible APIs.
+3. 📦 Manage downloads, checksums, install manifests, and local visibility through one catalog and data directory.
+4. 💬 Chat, upload attachments, and inspect the active provider, runtime, and session through one web workspace.
+5. 🩺 Diagnose managed providers, native libraries, models, memory, ports, proxy settings, SQLite, and hardware through `tomur doctor`, runtime APIs, and the UI.
+6. 🚀 Follow a self-contained, single-file, Native AOT-friendly release path with fewer local deployment prerequisites.
 
 Tomur focuses on local AI runtime experience. It is not a multi-tenant server product, enterprise administration shell, or complex workflow governance platform.
 
@@ -56,16 +64,18 @@ The default local service URL is `http://127.0.0.1:5137`.
 
 ## 🧩 Target Capabilities
 
-1. 💬 Local text generation.
-2. 🧠 Local embeddings and reranking.
-3. 🔌 OpenAI-compatible HTTP API.
-4. 🔁 Ollama-compatible HTTP API.
-5. 📦 Model catalog, download, verification, and local asset management.
-6. 🩺 Runtime diagnostics for CPU, memory, disk, proxy, ports, models, and native libraries.
-7. ⚙️ Native runtime support for llama.cpp, Whisper, OCR native, stable-diffusion.cpp, and llama.cpp TTS / GGUF TTS.
-8. 🧮 Optional pure C# model providers that extend local inference by model architecture.
-9. 🖥️ System service mode.
-10. 🧑‍💻 React + Ant Design X web workspace.
+1. 💬 Local text generation through both pure C# providers and the llama.cpp native runtime.
+2. 🧮 Pure C# GLM / MoE and OLMoE loading, quantization, caching, and generation through `providers/Glm` and `providers/Olmoe`.
+3. ⚙️ GGUF text generation, embeddings, hardware acceleration selection, and CPU fallback through llama.cpp.
+4. 🧠 Local embeddings and reranking.
+5. 🔌 OpenAI-compatible HTTP API.
+6. 🔁 Ollama-compatible HTTP API.
+7. 🧩 Anthropic Messages-compatible endpoints required by Claude Code.
+8. 📦 Model catalog, download, verification, and local asset management.
+9. 🩺 Runtime diagnostics for CPU, memory, disk, proxy, ports, models, managed providers, and native libraries.
+10. 🎛️ Multimodal native runtimes for Whisper, OCR native, stable-diffusion.cpp, and llama.cpp TTS / GGUF TTS.
+11. 🖥️ System service mode.
+12. 🧑‍💻 React + Ant Design X web workspace.
 
 Tomur does not fabricate inference results when the local runtime is unavailable. Missing models, unavailable native runtime or managed providers, damaged bundle assets, context length limits, capability mismatches, and insufficient memory are reported as diagnosable errors through the API, CLI, and UI.
 
@@ -119,55 +129,49 @@ tomur ps
 tomur list --catalog
 ```
 
-## 🚧 Current Status
-
-Tomur has completed the main R1-R11 loops, is converging the R12 Native AOT / self-contained release matrix, continuing the R13 web capability aggregation loop, implementing R14 Intel GPU / NPU acceleration, and advancing the R15 pure C# GLM / MoE provider experiment. Completed history is tracked in [CHANGELOG.md](./CHANGELOG.md).
-
-| Stage | Status |
-| --- | --- |
-| R1-R4 | Single-project API skeleton, configuration and local state, native bundle boundary, and first OpenAI / Ollama-compatible APIs are connected. |
-| R5-R7 | System service code paths, model catalog and download, and first local llama.cpp text inference path are connected. |
-| R8 | Whisper ASR, GGUF TTS, VLM, OCR, and stable-diffusion.cpp image generation have real-model smoke evidence within the current public API scope. |
-| R9-R10 | Microsoft AI abstractions, controlled Agent Framework orchestration, SQLite local file search, conversation state, attachment entry points, and voice turn service are connected. |
-| R11 | React + Ant Design X Chat-first web workspace is connected and served by Tomur through `app/wwwroot`. |
-| R12 | Native AOT publishing currently passes without warnings; Linux/macOS release logs, macOS native bundle assets, and real-machine service smoke remain in progress. |
-| R13 | Web capability aggregation has connected Agent / Capabilities views, read-only Agent tool calls, explicit side-effect tool confirmation, protocol capability maps, and Claude Code / Anthropic Messages compatibility; visual download queue and editable Settings remain in progress. |
-| R14 | Intel GPU / NPU support is being connected through the existing ggml dynamic backend path; `vulkan`, `sycl`, `openvino`, and `intel` native build entries, runtime accelerator preferences, OpenVINO / NPU environment setup, CPU fallback diagnostics, NPU incompatibility errors, Web Runtime display, and the smoke evidence entry are in place. Real Intel GPU / NPU smoke still needs machine evidence. |
-| R15 | The M1-M10 foundation, M11 performance foundation, and M12 advanced foundation are complete in code. The implementation includes explicitly marked `packed-offset` rowwise int4/int8 GLM weights, managed-model readiness, three-protocol streaming, cancellable session unload, SIMD/parallel kernels, automatic expert caching, DSA/MTP asset probing, stable top-k selection for indexer scores with a dense-equivalent runtime gate, an optional MTP head and single-step draft boundary, speculative rejection sampling, forced grammar spans, router lookahead/live repinning, and SHA-256-checked compressed-KV snapshots with isolated forks. Unvalidated sparse DSA never substitutes attention scores for indexer scores. A full GLM-4.7 model has passed conversion, load, readiness, and a shortest non-streaming completion on a Linux validation host. After production MLA defaulted to the absorbed path, the fixed 1-token request improved from `186.596971s` to `26.595764s` with the same generated token. OLMoE O4/O5 now includes code for a tiny oracle, error/resource/memory boundaries, bounded atomic rowwise-int8 expert conversion, a three-protocol regression matrix, and performance diagnostics. The original BF16 instruct weights have passed real non-streaming conversation. A complete rowwise-int8 artifact has now passed checksum, probe, readiness, the 33/33 focused regression suite, and real non-streaming forward through Tomur Chat and OpenAI-compatible endpoints on a Linux server. See the [packed GLM](./docs/r15-packed-glm-smoke.md), [GLM4 MoE Lite validation record](./docs/r15-glm4-moe-lite-validation.md), [OLMoE real-model smoke](./docs/r15-olmoe-smoke.md), and [OLMoE O5 validation record](./docs/r15-olmoe-o5-validation.md). GLM4/OLMoE streaming, Anthropic, full performance/unload, and cross-platform matrices remain pending under M14. The approximately 370 GB full GLM-5.2 validation directory has no partial files, but its final inventory, size, and SHA-256 audit is not complete. The existing llama.cpp path remains available and is still the default. |
-
-Planned follow-up work includes Intel GPU / NPU real smoke (tracked through `docs/r14-intel-acceleration-smoke.md`), a visual download queue, editable Settings, model deletion, VAD / interruption, streaming voice turns, multi-model residency, Linux/macOS release records, and real-machine service smoke.
-
-See [ROADMAP.md](./ROADMAP.md) for detailed stage plans and acceptance boundaries, and [CHANGELOG.md](./CHANGELOG.md) for completed history.
-
 ## 🏗️ Architecture Overview
 
-The main application stays concentrated while pure managed model providers are isolated in class libraries:
+Tomur keeps a single-process product boundary. The repository is organized around the application host, managed model providers, native runtimes, the web workspace, and validation projects:
 
 ```text
 Tomur/
-  README.md
-  README.en.md
-  CHANGELOG.md
-  ROADMAP.md
+  Tomur.slnx
   app/
     Tomur.csproj
     Program.cs
+    Agents/
     Api/
+      Anthropic/
+      Ollama/
+      OpenAI/
+    Assets/
     Cli/
     Config/
+    Conversations/
+    Diagnostics/
+    Hardware/
+    Inference/
+    Models/
+    Multimodal/
     Native/
     Providers/
     Runtime/
+    Serialization/
     Services/
-    Web/
+    Storage/
+    wwwroot/
   providers/
+    Abstractions/
+      Tomur.Providers.Abstractions.csproj
     Glm/
       Tomur.Providers.Glm.csproj
+    Olmoe/
+      Tomur.Providers.Olmoe.csproj
   tests/
-    Tomur.Providers.M1.Tests/
-    Tomur.Providers.M2.Tests/
-    Tomur.Providers.M3.Tests/
+    Tomur.Providers.M1.Tests/ ... Tomur.Providers.M13.Tests/
+    Tomur.Providers.Olmoe.Tests/
   native/
+    bundle.manifest.json
     llama.cpp/
     llama.native/
     whisper.cpp/
@@ -180,11 +184,22 @@ Tomur/
   web/
     package.json
     src/
+      app/
+      components/
+  docs/
+  README.md
+  README.en.md
+  ROADMAP.md
+  CHANGELOG.md
 ```
 
-`Tomur.csproj` hosts the CLI, local HTTP API, service-mode startup, runtime management, web static assets, and non-AOT managed provider packaging. `Program.cs` owns process entry, top-level command dispatch, and global help; concrete CLI implementations live under `app/Cli/`. `providers/` is limited to independent pure C# model providers and does not create a second service or product entry point; `tests/` only contains stage-specific validation projects.
+`app/Tomur.csproj` is the only product host. It contains the CLI, ASP.NET Core local HTTP API, OS service and tray startup, model and session management, runtime diagnostics, and web static asset hosting. `Program.cs` only owns process entry, top-level command dispatch, and global help. `app/Cli/ServeCommand.cs` assembles the shared local service host, while `app/Api/` provides Tomur endpoints and the OpenAI, Ollama, and Anthropic Messages compatibility surfaces.
 
-`native/` contains native backend source code, CMake projects, and release packaging boundaries. `app/Native/` only contains C# dynamic library loading, P/Invoke, and native adapter code. Pure managed providers do not replace the existing llama.cpp path and are selected explicitly by model format and architecture. The web source lives under `web/`; its build output goes to `app/wwwroot` and is served by the Tomur local HTTP service.
+`providers/Abstractions` contains the model descriptors, manifests, inference contracts, and session contracts shared by the host and managed providers. `providers/Glm` and `providers/Olmoe` implement pure C# model loading and generation; OLMoE currently also reuses the managed tensor, kernel, and storage foundations from the GLM project. The host directly references and registers both providers, then selects one explicitly from the local model format, architecture, and manifest. Unmatched GGUF text and embedding models continue through llama.cpp. Provider class libraries do not expose a separate process or HTTP API.
+
+`native/` contains upstream source trees, Tomur CMake adapter projects, and the release `bundle.manifest.json`. `app/Native/` prepares the bundle and resolves and loads dynamic libraries, `app/Inference/` owns llama.cpp text sessions, and `app/Multimodal/` connects Whisper, OCR, stable-diffusion.cpp, and GGUF TTS. Pure managed providers coexist with these runtimes and do not replace the existing native paths.
+
+`web/` uses React, TypeScript, Vite, and Ant Design X. Its build output is written to `app/wwwroot`, embedded, and served by the Tomur local HTTP service. The M1-M13 projects under `tests/` cover staged GLM provider contracts and regressions, while OLMoE has a dedicated test project; these projects belong only to the validation surface and do not create product services.
 
 ## 📁 Local State
 
@@ -212,7 +227,7 @@ Override the data directory with `--data-dir <path>` or `TOMUR_DATA_DIR`. If the
 
 Tomur release artifacts should carry the required C++ native dynamic libraries and prepare them into Tomur's managed runtime directory on first run or version change. Model weights are not packaged into the executable; `tomur pull` downloads them into the local model directory and records them in `<data>/models/models.manifest.json`.
 
-Independent managed provider DLLs belong to the non-AOT self-contained release surface. Publish places approved providers beside the main application under `providers/` and writes `providers.manifest.json` with the locked contract version, assembly version, and SHA-256; discovery verifies those values before loading. Native AOT releases do not dynamically load independent managed assemblies and report the boundary as `dynamic_managed_providers_unavailable`. This distinction does not remove or downgrade existing native providers.
+The managed provider set is determined at build time by the project references in `Tomur.csproj`. The GLM and OLMoE providers are registered statically through `ModelProviderRegistry` when the process starts; Tomur does not discover assemblies from an external `providers/` directory. Model manifests still declare the provider, architecture, and format. If a build does not contain the selected provider or model assets are incomplete, the catalog, APIs, doctor, and Runtime UI return explicit diagnostics. Native AOT and non-AOT releases use the provider set included by their respective builds, without removing or downgrading existing native providers.
 
 `tomur native prepare` extracts or repairs the native runtime bundle. `tomur doctor` checks runtime, models, SQLite, ports, proxy, and hardware status. Missing or damaged native libraries are reported through clear CLI, API, and UI diagnostics.
 

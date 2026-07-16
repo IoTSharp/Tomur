@@ -78,7 +78,7 @@
 - 缺失或损坏的 native library 必须通过 `tomur doctor`、API 和 UI 返回可诊断错误。
 - native 推理继续通过 C# 调用动态库实现；纯托管提供器可以使用 C# 实现模型加载、张量算子、缓存和推理核心，但不得在内部回退到未声明的 P/Invoke 或第三方 native dynamic library。
 - 纯托管性能路径可以使用 `unsafe`、`Span<T>`、`MemoryMarshal`、`RandomAccess`、内存映射和 `System.Runtime.Intrinsics`，同时必须保留边界检查、模型元数据校验、资源上限和取消响应。
-- 独立托管 provider DLL 只属于非 AOT 自包含发布面；Native AOT 发布若不支持动态托管程序集加载，必须静态引用兼容提供器或明确报告该 provider 不可用，不得伪装为已加载。
+- 托管 provider 通过 `Tomur.csproj` 的项目引用静态纳入主程序，并通过稳定契约项目与宿主隔离；Native AOT 与非 AOT 发布使用各自构建时包含的 provider 集合，不从外部目录动态加载任意托管程序集。
 - AOT / trimming 警告必须逐项处理，不得用 blanket suppression 掩盖。
 
 ## Native 能力范围

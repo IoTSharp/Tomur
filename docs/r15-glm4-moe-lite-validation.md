@@ -2,7 +2,7 @@
 
 状态：进行中
 
-本文定义 `managed-glm` 对 `glm4_moe_lite` 的异机转换与 smoke 边界。完整 GLM-4.7 已完成转换、资产校验、provider 加载和 readiness；生产 attention 默认切换到 Absorbed MLA 后，固定 1-token completion 已返回 HTTP 200 和真实 token。该结果证明最短真实推理链路通过，不代表性能可用，也不替代 Chat、streaming、Anthropic、取消、unload 和完整吞吐矩阵。实时服务器状态、下载任务和接手步骤见 [R15 远程 GLM 验证交接记录](./r15-remote-validation-handoff.md)。
+本文定义 `managed-glm` 对 `glm4_moe_lite` 的异机转换与 smoke 边界。完整 GLM-4.7 已完成转换、资产校验、provider 加载和 readiness；生产 attention 默认切换到 Absorbed MLA 后，固定 1-token completion 已返回 HTTP 200 和真实 token，并完成一次 Web Chat 非流式真实对话和一次活动请求 unload 取消。该结果证明最短真实推理链路、单次 Chat 链路与定向取消路径通过，不代表性能可用，也不替代完整 Chat、streaming、Anthropic、重复取消/unload 和吞吐矩阵。实时服务器状态、下载任务和接手步骤见 [R15 远程 GLM 验证交接记录](./r15-remote-validation-handoff.md)。
 
 ## 固定输入
 
@@ -26,6 +26,13 @@ P0 只调整 MLA 默认执行模式，reference 路径继续保留为显式 orac
 4. 固定请求 `prompt="a"`、`max_tokens=1`、`temperature=0` 在 Reference MLA 基线耗时 `186.596971s`，在保留同一 AVX2 packed int4/int8 kernel 的 Absorbed MLA 路径耗时 `26.595764s`，端到端改善 `7.02x`，耗时降低 `85.7%`。
 5. 两次请求均返回 3 prompt tokens、1 completion token 和文本 `" br"`。Absorbed 请求的 forward active elapsed 为 `24.6s`，完成后 session 为 `busy=false`、`forward_verified=true`。
 6. 最终证据位于 `/data/tomur/smoke/glm47-p0-absorbed-20260716-1445c/service`。该请求累计 464 次 expert disk reads、2,198,929,408 bytes，cache hit/miss/eviction 为 94/464/188；expert cache、批量 prefill 和 kernel 后续优化仍需独立验证。
+7. P0 前的一次长请求通过 unload 取消后返回结构化 `503 session_unloaded`，正式 unload 约耗时 `1.58-2.48s`，服务保持可响应。该结果只完成一次定向取消/unload，不替代重复资源释放矩阵。
+
+### Web Chat 非流式真实对话
+
+以下截图记录 Tomur Web Chat 选择 `text/glm-4.7-flash-reap-23b-a3b` 后完成一次英文非流式真实对话。左侧运行时状态显示 `managed-glm-generation` session 已加载，用户输入 `hi` 后模型返回英文回复。该证据只覆盖单次 Web Chat 请求，不代表 streaming、Anthropic、中文、代码、取消或持续吞吐矩阵已经完成。
+
+![GLM-4.7 Flash REAP 23B A3B 在 Tomur Web Chat 中完成非流式真实对话](./images/r15-glm47-web-chat.png)
 
 源权重共 `45,993,145,128` bytes（42.834 GiB）：
 
@@ -107,4 +114,4 @@ dotnet run --project app\Tomur.csproj -- serve `
 
 异机记录至少包含 Tomur commit、OS/RID、CPU、RAM、存储介质、.NET SDK、隔离 data directory、模型 revision、转换器 commit、输出 checksum、context、resident/KV/scratch/expert-cache bytes、首次加载时间、首 token、token/s、expert hit/miss/eviction、disk bytes/wait 和进程峰值内存。
 
-当前可以声明完整 GLM-4.7 的最短非流式 completion 已通过真实推理，并形成 P0 前后对照证据。完整协议矩阵、自然语言质量、持续 decode 吞吐、cold/warm/hot cache、取消、unload、峰值内存和跨平台证据仍未完成，因此不能声明性能可用或完整验证通过。
+当前可以声明完整 GLM-4.7 的最短非流式 completion、一次 Web Chat 非流式对话和一次活动请求取消/unload 已通过真实链路，并形成 P0 前后对照证据。完整协议矩阵、自然语言质量、持续 decode 吞吐、cold/warm/hot cache、重复取消/unload、峰值内存和跨平台证据仍未完成，因此不能声明性能可用或完整验证通过。

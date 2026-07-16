@@ -2,19 +2,27 @@
 
 [English](./README.en.md)
 
-Tomur 是一个集成了本地模型服务、OpenAI / Ollama / Anthropic Messages 兼容 API、模型资产管理、运行时诊断和 Chat-first Web 工作台的本地 AI 基础设施，面向离线优先、隐私敏感、低运维成本的个人与团队开发环境。它基于 .NET 10 与 C# 构建，以单一 `tomur` 进程承载 CLI、本地 HTTP 服务、系统服务形态、native runtime 管理和 Web 静态资源托管。
+Tomur 是基于 .NET 10 与 C# 构建的本地 AI 运行时与开发者工作台，面向离线优先、隐私敏感、低运维成本的个人与团队开发环境。单一 `tomur` 进程同时承载 CLI、本地 HTTP 服务、系统服务形态、模型资产管理、运行时诊断和 Chat-first Web 工作台。
 
-Tomur 将模型权重、SQLite 数据库、日志、用户文件和生成结果作为本地资产管理；程序负责下载、校验、准备运行时并返回可诊断的错误，让使用者通过一个入口运行、调试和使用本机模型，而不必理解底层 native backend 或模型目录实现。
+Tomur 同时支持两条本地大模型运行路线：由 Tomur 使用纯 C# 实现的托管模型 provider，以及以 llama.cpp 为核心的 native runtime。两条路线并行存在，按模型格式、架构和本机运行条件显式选择。
+
+| 技术路线 | 实现位置 | 能力边界 |
+| --- | --- | --- |
+| 纯 C# 托管模型 | `providers/Glm`、`providers/Olmoe` | 使用 C# 实现 safetensors 读取、tokenizer、张量与量化 kernel、KV cache、attention、MoE routing、expert cache 和增量生成，不依赖第三方推理 dynamic library。已接通 GLM / MoE 与 OLMoE 的显式模型格式，并取得定向真实模型推理证据；完整协议、性能、资源释放和跨平台矩阵仍按路线图收敛。 |
+| llama.cpp native | `native/llama.cpp`、`native/llama.native`、`app/Inference` | 面向 GGUF 文本生成与 embeddings，使用 Tomur 管理的 native bundle、硬件 backend 选择、GPU offload 和 CPU fallback，是当前文本与 embedding 兼容 API 的默认且已有验证路线。 |
+
+两条路线共用同一套模型 Catalog、安装清单、session 管理、OpenAI / Ollama / Anthropic Messages 兼容 API、Runtime 诊断和 Web Chat。模型权重、SQLite 数据库、日志、用户文件和生成结果统一作为本地资产管理。
 
 ## 🧭 为什么是 Tomur
 
-本地 AI 工具链通常会同时涉及模型文件、native dynamic libraries、兼容 API、本地服务、Web 对话界面、日志和诊断。Tomur 的目标是把这些零散部分收敛成一个本地程序：
+Tomur 不把本地模型能力限定在单一推理后端。纯 C# provider 与 llama.cpp native runtime 在同一个本地程序中使用一致的模型、协议和诊断边界：
 
-1. 🔌 启动一个本地服务，提供 OpenAI / Ollama / Anthropic Messages 兼容 API。
-2. 📦 在同一个入口中管理模型下载、校验和本地可见性。
-3. 💬 使用内置 Web 工作台直接对话、上传附件、查看运行时状态。
-4. 🩺 通过 `tomur doctor`、Runtime API 和 UI 诊断 native library、模型、端口、代理、SQLite 与硬件状态。
-5. 🚀 以自包含、单文件、Native AOT 友好的发布路线降低部署前置条件。
+1. 🧮 按模型格式和架构在纯 C# GLM / OLMoE provider 与 llama.cpp GGUF runtime 之间显式选择，不用更换服务入口。
+2. 🔌 通过同一个本地服务提供 OpenAI、Ollama 和 Anthropic Messages 兼容 API。
+3. 📦 在同一个 Catalog 和数据目录中管理模型下载、checksum、安装清单与本地可见性。
+4. 💬 使用同一个 Web 工作台直接对话、上传附件并查看实际使用的 provider、runtime 和 session 状态。
+5. 🩺 通过 `tomur doctor`、Runtime API 和 UI 诊断托管 provider、native library、模型、内存、端口、代理、SQLite 与硬件状态。
+6. 🚀 以自包含、单文件、Native AOT 友好的发布路线降低本地部署前置条件。
 
 Tomur 关注的是本机 AI 运行体验，不是多租户服务器、后台管理平台或复杂工作流治理系统。
 
@@ -56,17 +64,18 @@ dotnet run --project app -- serve --open
 
 ## 🧩 目标能力
 
-1. 💬 本地文本生成。
-2. 🧠 本地 embeddings 与 reranking。
-3. 🔌 OpenAI 兼容 HTTP API。
-4. 🔁 Ollama 兼容 HTTP API。
-5. 🧩 Claude Code 所需的 Anthropic Messages 兼容入口。
-6. 📦 模型目录、下载、校验与本地资产管理。
-7. 🩺 CPU、内存、磁盘、代理、端口、模型与 native libraries 运行时诊断。
-8. ⚙️ llama.cpp、Whisper、OCR native、stable-diffusion.cpp 与 llama.cpp TTS / GGUF TTS native runtime 支持。
-9. 🧮 可选的纯 C# 模型提供器，用于按模型架构逐步扩展本地推理路径。
-10. 🖥️ 系统服务运行模式。
-11. 🧑‍💻 React + Ant Design X Web 工作台。
+1. 💬 通过纯 C# provider 与 llama.cpp native runtime 两条路线执行本地文本生成。
+2. 🧮 使用 `providers/Glm` 与 `providers/Olmoe` 承载纯 C# GLM / MoE、OLMoE 模型加载、量化、缓存和生成。
+3. ⚙️ 使用 llama.cpp 承载 GGUF 文本生成、embeddings、硬件加速选择与 CPU fallback。
+4. 🧠 本地 embeddings 与 reranking。
+5. 🔌 OpenAI 兼容 HTTP API。
+6. 🔁 Ollama 兼容 HTTP API。
+7. 🧩 Claude Code 所需的 Anthropic Messages 兼容入口。
+8. 📦 模型目录、下载、校验与本地资产管理。
+9. 🩺 CPU、内存、磁盘、代理、端口、模型、托管 provider 与 native libraries 运行时诊断。
+10. 🎛️ Whisper、OCR native、stable-diffusion.cpp 与 llama.cpp TTS / GGUF TTS 多模态 native runtime。
+11. 🖥️ 系统服务运行模式。
+12. 🧑‍💻 React + Ant Design X Web 工作台。
 
 Tomur 不会在未接通本地 runtime 时伪造推理结果。模型缺失、native runtime 或托管 provider 不可用、bundle 资产损坏、上下文超限、能力不匹配或内存不足时，API、CLI 和 UI 都应返回可诊断的错误。
 
@@ -140,55 +149,49 @@ tomur ps
 tomur list --catalog
 ```
 
-## 🚧 当前状态
-
-Tomur 已完成 R1 至 R11 的主要闭环，并进入 R12 Native AOT / 自包含发布矩阵收敛、R13 Web 前端能力聚合闭环、R14 Intel GPU / NPU 加速与 R15 纯 C# GLM / MoE provider 实验阶段。已完成历史见 [CHANGELOG.md](./CHANGELOG.md)。
-
-| 阶段 | 状态 |
-| --- | --- |
-| R1-R4 | 单项目 API 骨架、配置与本地状态、native bundle 边界、OpenAI / Ollama 首批兼容 API 已接入。 |
-| R5-R7 | 系统服务代码路径、模型 Catalog 与下载、本地 llama.cpp 文本推理首通已接入。 |
-| R8 | Whisper ASR、GGUF TTS、VLM、OCR 与 stable-diffusion.cpp 图像生成已完成当前公开接口范围内的真实模型 smoke 记录。 |
-| R9-R10 | Microsoft AI 抽象、Agent Framework 受控编排、SQLite 本地文件检索、会话状态、附件入口和语音回合服务已接入。 |
-| R11 | React + Ant Design X Chat-first Web 工作台已接入，并由 `app/wwwroot` 通过 Tomur 本地 HTTP 服务托管。 |
-| R12 | Native AOT 发布已确认可通过且无警告；Linux/macOS 发布记录、macOS native bundle 资产与服务形态实机 smoke 仍在收敛。 |
-| R13 | Web 前端能力聚合闭环已接入 Agent / Capabilities 聚合视图、只读 Agent 工具入口、副作用工具确认流、协议能力地图和 Claude Code / Anthropic Messages 兼容协议面；可视化下载队列和 Settings 写入仍在推进。 |
-| R14 | Intel GPU / NPU 支持开始接入现有 ggml dynamic backend 机制；`vulkan`、`sycl`、`openvino` 与 `intel` native build 入口、runtime accelerator 偏好、OpenVINO / NPU 环境设置、CPU fallback 诊断、NPU 不适配错误返回、Web Runtime 展示和 smoke 记录入口已建立。真实 Intel GPU / NPU smoke 仍需实机记录。 |
-| R15 | M1-M10 基础代码、M11 性能优化基础和 M12 高级能力基础已完成。当前已接入显式 `packed-offset` rowwise int4/int8 GLM 权重、managed model readiness、三协议 streaming、可取消 session unload、SIMD/并行 kernel、自动 expert cache，以及 DSA/MTP 资产探测、接收 indexer score 的稳定 DSA top-k 与 dense-equivalent runtime gate、可选 MTP head/单步 draft、speculative rejection、grammar forced spans、router lookahead/live repin 和带 SHA-256 校验的 compressed KV 快照与 isolated fork；未验证的稀疏 DSA 不使用 attention score 冒充 indexer score。完整 GLM-4.7 已在 Linux 验证机通过转换、加载、readiness 和最短非流式 completion；生产 MLA 默认切换到 Absorbed 后，固定 1-token 请求从 `186.596971s` 降至 `26.595764s` 并返回相同 token。OLMoE O4/O5 已补齐 tiny oracle、错误/资源/内存边界、有界原子 rowwise int8 expert 转换、三协议回归和性能诊断代码；原始 BF16 instruct 权重已通过中文非流式真实对话，完整 rowwise int8 产物已在 Linux 服务器通过 checksum、probe、readiness、专项 33/33 回归以及 Tomur Chat/OpenAI 非流式真实 forward。证据与执行入口见 [packed GLM](./docs/r15-packed-glm-smoke.md)、[GLM4 MoE Lite 异机验证](./docs/r15-glm4-moe-lite-validation.md)、[OLMoE 既有 smoke](./docs/r15-olmoe-smoke.md) 与 [OLMoE O5 验证记录](./docs/r15-olmoe-o5-validation.md)。GLM4/OLMoE 的 streaming、Anthropic、完整性能/unload 和跨平台矩阵仍待执行；完整验证归 M14。约 370 GB 的完整 GLM-5.2 验证目录已无 partial 文件，但最终 inventory、size 与 SHA-256 审计仍未完成。现有 llama.cpp 路径继续保留并作为默认路径。 |
-
-仍属于后续工作的内容包括：Intel GPU / NPU 真实 smoke（记录入口见 `docs/r14-intel-acceleration-smoke.md`）、可视化下载队列、Settings 写入编辑、模型删除、VAD / 打断、流式语音回合、多模型常驻、Linux/macOS 发布执行记录和服务形态实机 smoke。
-
-详细阶段计划与验收边界见 [ROADMAP.md](./ROADMAP.md)。
-
 ## 🏗️ 架构概览
 
-主程序保持集中，纯托管模型提供器使用独立类库隔离：
+Tomur 保持单进程产品边界。仓库按主程序、托管模型 provider、native runtime、Web 工作台和验证项目组织：
 
 ```text
 Tomur/
-  README.md
-  README.en.md
-  CHANGELOG.md
-  ROADMAP.md
+  Tomur.slnx
   app/
     Tomur.csproj
     Program.cs
+    Agents/
     Api/
+      Anthropic/
+      Ollama/
+      OpenAI/
+    Assets/
     Cli/
     Config/
+    Conversations/
+    Diagnostics/
+    Hardware/
+    Inference/
+    Models/
+    Multimodal/
     Native/
     Providers/
     Runtime/
+    Serialization/
     Services/
-    Web/
+    Storage/
+    wwwroot/
   providers/
+    Abstractions/
+      Tomur.Providers.Abstractions.csproj
     Glm/
       Tomur.Providers.Glm.csproj
+    Olmoe/
+      Tomur.Providers.Olmoe.csproj
   tests/
-    Tomur.Providers.M1.Tests/
-    Tomur.Providers.M2.Tests/
-    Tomur.Providers.M3.Tests/
+    Tomur.Providers.M1.Tests/ ... Tomur.Providers.M13.Tests/
+    Tomur.Providers.Olmoe.Tests/
   native/
+    bundle.manifest.json
     llama.cpp/
     llama.native/
     whisper.cpp/
@@ -201,11 +204,22 @@ Tomur/
   web/
     package.json
     src/
+      app/
+      components/
+  docs/
+  README.md
+  README.en.md
+  ROADMAP.md
+  CHANGELOG.md
 ```
 
-`Tomur.csproj` 承载 CLI、本地 HTTP API、服务模式启动、runtime 管理和 Web 静态资源托管。`Program.cs` 负责进程入口、顶层命令分发和全局帮助；具体 CLI 实现按类别放在 `app/Cli/`。`providers/` 仅用于独立纯 C# 模型提供器，不拆出第二套服务或产品入口；`tests/` 只承载阶段化验证项目。
+`app/Tomur.csproj` 是唯一产品宿主，承载 CLI、ASP.NET Core 本地 HTTP API、系统服务与托盘启动、模型和会话管理、runtime 诊断以及 Web 静态资源托管。`Program.cs` 只负责进程入口、顶层命令分发和全局帮助；`app/Cli/ServeCommand.cs` 组装同一套本地服务 host，`app/Api/` 提供 Tomur API 与 OpenAI、Ollama、Anthropic Messages 兼容入口。
 
-`native/` 放置 native backend 源码、CMake 工程和发布打包边界；`app/Native/` 只保留 C# 动态库加载、P/Invoke 与 native 适配代码。纯托管 provider 不替换 llama.cpp 等现有路径，并按模型格式和架构显式选择。Web 源码位于 `web/`，构建产物输出到 `app/wwwroot`，运行时由 Tomur 本地 HTTP 服务托管。
+`providers/Abstractions` 保存主程序与托管 provider 共用的模型描述、manifest、推理和 session 契约。`providers/Glm` 与 `providers/Olmoe` 实现纯 C# 模型加载和生成；OLMoE 当前同时复用 GLM 项目的托管 tensor、kernel 与存储基础。主程序直接引用并注册这两个 provider，再根据本地模型格式、架构和 manifest 显式选择；未匹配的 GGUF 文本与 embedding 模型继续使用 llama.cpp 路径。provider 类库不提供独立进程或另一套 HTTP API。
+
+`native/` 保存上游源码、Tomur CMake 适配工程和 `bundle.manifest.json` 发布清单。`app/Native/` 负责 bundle 准备、动态库解析和加载，`app/Inference/` 承载 llama.cpp 文本 session，`app/Multimodal/` 连接 Whisper、OCR、stable-diffusion.cpp 与 GGUF TTS。纯托管 provider 与这些 native runtime 并行存在，不替换现有 native 能力。
+
+`web/` 使用 React、TypeScript、Vite 与 Ant Design X；构建产物写入 `app/wwwroot` 并作为嵌入资源由 Tomur 本地 HTTP 服务托管。`tests/` 中的 M1-M13 项目覆盖 GLM provider 的分阶段契约与回归，OLMoE 使用独立测试项目；它们只属于验证面，不形成产品服务。
 
 ## 📁 本地状态
 
@@ -233,7 +247,7 @@ Tomur 使用稳定的数据目录保存配置、模型、runtime 缓存、SQLite
 
 Tomur 的发布产物应携带必要的 C++ native dynamic libraries，并在首次运行或版本变化时准备到 Tomur 管理的 runtime 目录。模型权重不会被打包进程序二进制，而是由 `tomur pull` 下载到本地模型目录，并登记到 `<data>/models/models.manifest.json`。
 
-独立纯托管 provider DLL 属于非 AOT 自包含发布面。发布时批准的 provider 会放入主程序旁的 `providers/`，并由 `providers.manifest.json` 记录契约版本、程序集版本和 SHA-256；运行时会在加载前校验这些信息。Native AOT 发布不动态加载独立托管程序集，并通过 `dynamic_managed_providers_unavailable` 明确报告该边界。该差异不影响现有 native provider 的发布和使用。
+纯托管 provider 集合由 `Tomur.csproj` 的项目引用在构建时确定，GLM 与 OLMoE provider 在进程启动时通过 `ModelProviderRegistry` 静态注册，不从外部 `providers/` 目录动态发现程序集。模型 manifest 仍负责声明 provider、架构和格式；构建未包含对应 provider 或模型资产不完整时，Catalog、API、doctor 与 Runtime UI 返回明确诊断。Native AOT 与非 AOT 发布使用各自构建中已纳入的 provider 集合，该边界不影响现有 native provider 的发布和使用。
 
 `tomur native prepare` 用于释放或修复 native runtime bundle；`tomur doctor` 用于检查 runtime、模型、SQLite、端口、代理与硬件状态。缺失或损坏的 native library 会通过 CLI、API 和 UI 返回明确诊断。
 

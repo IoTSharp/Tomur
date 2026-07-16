@@ -2,7 +2,7 @@
 
 快照时间：2026-07-16 14:49 CST（2026-07-16 06:49 UTC）
 
-状态：GLM-4.7 已完成转换、资产校验、provider 加载、readiness 和最短真实 completion。生产 attention 默认切换到 Absorbed MLA 后，固定 1-token completion 从 Reference 基线 `186.596971s` 降至 `26.595764s`，返回 HTTP 200 和相同生成 token。该结果只证明 P0 与最短真实推理通过，不构成性能可用或完整协议矩阵通过。GLM-5.2 目录已达到 150 个正式文件且没有 `.part`，但主下载状态为失败，最终 inventory、size 和 SHA-256 审计仍待执行。
+状态：GLM-4.7 已完成转换、资产校验、provider 加载、readiness、最短真实 completion、一次 Web Chat 非流式真实对话和一次活动请求 unload 取消。生产 attention 默认切换到 Absorbed MLA 后，固定 1-token completion 从 Reference 基线 `186.596971s` 降至 `26.595764s`，返回 HTTP 200 和相同生成 token。该结果只证明 P0、最短真实推理、单次 Chat 与定向取消路径通过，不构成性能可用或完整协议矩阵通过。GLM-5.2 目录已达到 150 个正式文件且没有 `.part`，但主下载状态为失败，最终 inventory、size 和 SHA-256 审计仍待执行。
 
 ## 安全连接与本机入口
 

@@ -4,7 +4,7 @@
 
 ## 当前目标
 
-首个真实模型为 `allenai/OLMoE-1B-7B-0125-Instruct`，属于 `olmoe` 架构的 7B total / 1B active instruct 模型。原始 BF16 权重约 12.89 GiB，已完成中文非流式真实对话 smoke；完整 rowwise int8 转换产物已在 Linux 服务器通过 checksum、probe、readiness 与最短真实 forward。转换代码保持 resident dense 权重的原始 dtype，并将全部 routed expert gate/up/down 投影写为 signed int8 payload 与 `*.qs` F32 per-row scale。既有 BF16 数据见 [R15 OLMoE real-model smoke](../../docs/r15-olmoe-smoke.md)，int8 实跑与剩余矩阵见 [O5 validation record](../../docs/r15-olmoe-o5-validation.md)。
+首个真实模型为 `allenai/OLMoE-1B-7B-0125-Instruct`，属于 `olmoe` 架构的 7B total / 1B active instruct 模型。原始 BF16 权重约 12.89 GiB，已完成中文非流式真实对话 smoke；完整 rowwise int8 转换产物已在 Linux 服务器通过 checksum、probe、readiness、33/33 专项回归以及 Tomur Chat/OpenAI 非流式真实 forward。转换代码保持 resident dense 权重的原始 dtype，并将全部 routed expert gate/up/down 投影写为 signed int8 payload 与 `*.qs` F32 per-row scale。既有 BF16 数据见 [R15 OLMoE real-model smoke](../../docs/r15-olmoe-smoke.md)，int8 实跑与剩余矩阵见 [O5 validation record](../../docs/r15-olmoe-o5-validation.md)。
 
 模型清单使用显式架构和量化布局：
 
@@ -31,7 +31,7 @@
 | 02 | O2 | ✅ | 标准 causal attention、full KV cache、softmax top-k router 与完整 forward |
 | 03 | O3 | ✅ | tokenizer、官方 chat template、生成与兼容 API 接线 |
 | 04 | O4 | ✅ | tiny fixture、错误边界、内存核算与自动化回归代码 |
-| 05 | O5 | 🚧 | 完整 int8 转换、专项回归、readiness 与非流式真实 forward 已通过；streaming、Anthropic、完整性能与 unload 证据待执行 |
+| 05 | O5 | 🚧 | 完整 int8 转换、33/33 专项回归、readiness、Tomur Chat 与 OpenAI 非流式真实 forward 已通过；真实 streaming、Anthropic、完整性能与 unload 证据待执行 |
 
 ## 实现边界
 
@@ -48,10 +48,11 @@
 ## 验收
 
 1. ✅ tiny OLMoE fixture 已建立独立 scalar reference，覆盖 embedding、attention、router、MoE、逐 token teacher forcing 与 greedy oracle；F32 和 signed-int8 expert 共用同一逻辑权重基线。
-2. 🚧 tiny OLMoE session 的三协议非流式/streaming 回归已通过专项测试；真实 int8 instruct 模型的 Tomur Chat 与 OpenAI 非流式请求已返回真实 token，streaming 与 Anthropic 尚未执行。
-3. 🚧 readiness、session 与 fixture 回归已统一核对 resident/KV/scratch/minimum expert cache 总账；真实 int8 session 已记录加载、首 token、总生成与 output token/s，至少 2 token decode、冷/热矩阵和独占性能仍待执行。
-4. ✅ 已建立预算先于 payload 读取、损坏 shard、shape/quantization/tokenizer、context/token/cancellation、faulted forward 和重复 dispose 回归代码，并检查 shard handle 可独占重开。
-5. ✅ OLMoE 模型错误保持 provider 级结构化诊断，不修改 `managed-glm` 与现有 llama.cpp provider 的选择和运行路径。
-6. README 可以声明 int8 真实非流式 forward 已通过；完整协议、streaming 与性能矩阵完成前，O5 继续标记为进行中。
+2. ✅ Linux 专项构建与 33/33 回归已通过，覆盖 tiny session 三协议非流式/streaming 序列化、转换取消与原子发布、readiness 和性能诊断字段。
+3. ✅ 完整 rowwise int8 产物已通过源/产物 SHA-256、probe、Catalog/readiness 和原子发布校验；Tomur Chat 与 OpenAI 非流式真实请求均返回 HTTP 200 和真实 token。
+4. ✅ readiness、session 与 fixture 回归已统一核对 resident/KV/scratch/minimum expert cache 总账；真实 int8 session 已记录加载、首 token、总生成与 output token/s。
+5. ✅ 已建立预算先于 payload 读取、损坏 shard、shape/quantization/tokenizer、context/token/cancellation、faulted forward 和重复 dispose 回归，并检查 shard handle 可独占重开。
+6. ✅ OLMoE 模型错误保持 provider 级结构化诊断，不修改 `managed-glm` 与现有 llama.cpp provider 的选择和运行路径。
+7. 🚧 真实 int8 streaming、Anthropic、至少 2 token decode、cold/warm/hot 性能、峰值内存和 unload 后资源独占复核仍待执行；这些任务完成前 O5 继续标记为进行中。
 
 O4/O5 自动化回归代码已接入现有 `Tomur.Providers.Olmoe.Tests` 项目。2026-07-16 Linux 服务器专项构建通过、33/33 测试通过，完整 int8 模型转换、Catalog/readiness、Tomur Web 入口与非流式真实 forward 已形成证据；未执行项继续保留在 O5 验证记录中。

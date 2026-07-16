@@ -60,6 +60,9 @@
 40. OLMoE O4 已在现有测试项目中增加确定性 tiny fixture 与独立 scalar reference，覆盖 embedding、attention、softmax top-k router、MoE、逐 token teacher forcing、greedy decode、F32/signed-int8 等价路径、预算先于 payload 读取、损坏或缺失资产、上下文/token/取消、faulted forward、重复 dispose、shard handle 释放，以及 readiness/session 的 resident/KV/scratch/minimum expert cache 总账；provider 内部增加只读 MoE trace 和明确的 disposed/缺失资产诊断。本轮未执行构建或测试。
 41. OLMoE O5 已增加 extend-only managed model 转换契约与隐藏转换命令；转换器以有界逐行读取把 floating routed expert gate/up/down 投影写为 signed int8 `rowwise-qs`，保留 dense dtype，使用同盘临时目录、输出 probe、源/产物 SHA-256 清单和原子发布。现有测试项目已增加转换取消/不覆盖、真实 tiny session 三协议非流式与 streaming 矩阵，以及加载、首 token、总生成、output token/s 和 decode token/s 诊断回归代码。本轮未执行构建、测试、完整模型转换或服务 smoke。
 42. managed GLM 生产 attention 默认模式已从 Reference 切换到 Absorbed，reference 路径继续作为显式 oracle/诊断入口。本机 M7 7/7 与 M9 6/6、Linux 隔离副本 M7 6/6 与 M9 6/6 均通过；完整 GLM-4.7 的固定 1-token completion 从 `186.596971s` 降至 `26.595764s`，返回相同 token，端到端改善 `7.02x`。该结果只完成 P0 与最短真实推理验证，完整性能和协议矩阵仍待执行。
+43. 完整 GLM-4.7 已通过 Tomur Web Chat 完成一次英文非流式真实对话；另一次活动 completion 经 unload 取消后返回结构化 `503 session_unloaded`，服务保持可响应。该证据完成单次 Chat 与定向取消路径，不替代 streaming、Anthropic、重复资源释放和完整性能矩阵。
+44. OLMoE Linux 专项构建与 33/33 回归已通过，完整 rowwise int8 转换产物通过源/产物 SHA-256、probe、Catalog/readiness 和原子发布校验；Tomur Chat 与 OpenAI 非流式请求均由同一真实 int8 session 返回 HTTP 200 和真实 token。真实 streaming、Anthropic、至少 2-token decode、cold/warm/hot 性能与 unload 资源复核仍待执行。
+45. managed provider 加载已收敛为编译期项目引用：新增 `Tomur.Providers.Abstractions` 稳定契约项目，GLM 与 OLMoE 不再反向引用主程序，`Tomur.csproj` 直接引用并静态注册两个 provider；已删除外部目录扫描、反射激活、发布后 DLL 复制与 provider checksum 清单代码。本机 `dotnet build app/Tomur.csproj` 通过，完整 solution `128/128` 测试通过，隔离数据目录下 `tomur doctor` 报告 `managed-glm` 与 `managed-olmoe` 均为静态注册；本机 native bundle 未准备的既有诊断仍独立存在。
 
 ### R14 当前已接入
 
