@@ -30,7 +30,7 @@ internal static class MoeRouter
         }
 
         var prefix = $"model.layers.{layer}.mlp.gate";
-        ScalarKernels.MatVec(
+        OptimizedKernels.MatVec(
             model.GetResidentWeight($"{prefix}.weight"),
             configuration.RoutedExpertCount,
             configuration.HiddenSize,

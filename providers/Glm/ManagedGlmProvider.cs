@@ -216,14 +216,12 @@ internal sealed class ManagedGlmSession : IChatGenerationSession
         {
             if (candidate.ExpertLayout.MoeLayerCount > 0)
             {
-                var minimumCacheBytes = checked(
-                    candidate.ExpertLayout.SlotBudgetedBytes *
-                    candidate.ExpertLayout.MoeLayerCount *
-                    candidate.Configuration.ExpertsPerToken);
-                expertCache = candidate.CreateExpertCache(new ExpertCacheOptions(
-                    minimumCacheBytes,
+                var cacheOptions = ExpertCacheOptions.CreateAutomatic(
+                    candidate.ExpertLayout,
+                    candidate.MemoryPlan,
                     WorkerCount: Math.Min(2, candidate.Configuration.ExpertsPerToken),
-                    QueueCapacity: Math.Max(8, candidate.Configuration.ExpertsPerToken)));
+                    QueueCapacity: Math.Max(8, candidate.Configuration.ExpertsPerToken));
+                expertCache = candidate.CreateExpertCache(cacheOptions);
             }
 
             loadedModel = candidate;
@@ -377,7 +375,7 @@ internal sealed class ManagedGlmSession : IChatGenerationSession
             RequestCount: Interlocked.Read(ref requestCount),
             PromptTokens: Interlocked.Read(ref promptTokens),
             CompletionTokens: Interlocked.Read(ref completionTokens),
-            Diagnostics: BuildDiagnostics("forward execution: scalar reference"))
+            Diagnostics: BuildDiagnostics($"forward execution: {OptimizedKernels.Description}"))
         {
             ProviderId = ProviderId,
             Architecture = loadedModel.Configuration.ModelType,
@@ -435,13 +433,15 @@ internal sealed class ManagedGlmSession : IChatGenerationSession
             $"expert storage format: {loadedModel.ExpertLayout.Format}",
             $"quantization layout: {loadedModel.Manifest.QuantizationLayout}",
             $"expert cache slot bytes: {loadedModel.ExpertLayout.SlotBudgetedBytes}",
-            $"load budget bytes: {loadedModel.MemoryPlan.RequiredBytes}/{loadedModel.MemoryPlan.AvailableBytes}"
+            $"load budget bytes: {loadedModel.MemoryPlan.RequiredBytes}/{loadedModel.MemoryPlan.AvailableBytes}",
+            $"kernel execution: {OptimizedKernels.Description}"
         };
         if (expertCache is not null)
         {
             var snapshot = expertCache.GetSnapshot();
             diagnostics.Add($"expert cache bytes: {snapshot.BudgetedBytes}");
             diagnostics.Add($"expert cache slots per layer: {snapshot.SlotCapacityPerLayer}");
+            diagnostics.Add($"expert cache hot pins/prefetches: {snapshot.HotExpertCount}/{snapshot.Prefetches}");
             diagnostics.Add($"expert cache hit/miss/eviction: {snapshot.Hits}/{snapshot.Misses}/{snapshot.Evictions}");
             diagnostics.Add($"expert disk reads/bytes: {snapshot.DiskReads}/{snapshot.DiskBytes}");
         }

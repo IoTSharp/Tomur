@@ -189,7 +189,7 @@ Disk
 | 08 | M8 | ✅ | MoE router、shared expert 与 expert streaming |
 | 09 | M9 | ✅ | 完整 forward、prefill、decode 与 sampling |
 | 10 | M10 | 🚧 | Tomur API、session、streaming 与诊断闭环 |
-| 11 | M11 | ⏳ | SIMD、并行、缓存与 I/O 优化 |
+| 11 | M11 | 🚧 | SIMD、并行、缓存与 I/O 优化 |
 | 12 | M12 | ⏳ | DSA、MTP、grammar draft 与 KV 持久化 |
 | 13 | M13 | ⏳ | 打包、版本兼容与 Native AOT 策略 |
 | 14 | M14 | ⏳ | 集中测试、完整模型验证与发布证据 |
@@ -467,24 +467,27 @@ forward 顺序：
 11. `session_unloading`
 12. `session_unloaded`
 
-## 11. ⏳ M11：性能优化
+## 11. 🚧 M11：性能优化
 
 目标：在不改变模型语义的前提下提高 CPU、RAM 和磁盘利用率。
 
-优化顺序：
+已落地：
+
+1. ✅ 保留 `ScalarKernels` oracle 基线，并增加 `OptimizedKernels` shape dispatch；`TOMUR_GLM_KERNEL_MODE=scalar` 可强制回退原路径。
+2. ✅ 使用硬件加速的 `Vector<float>` 宽度选择覆盖 `Vector128/256/512` 的 F32、int8 与 packed int4 matvec；量化权重直接按 row scale 计算，不展开完整矩阵。
+3. ✅ F32 matvec 根据 rows、总 work 与并行度阈值选择同步 `Parallel.For`，小 shape 和禁用配置保持单线程。
+4. ✅ resident dense、shared expert 与 routed expert 的 gate/up projection 已合并为 paired dispatch，固定 tensor/attention/MoE workspace 继续位于 token loop 外。
+5. ✅ expert cache 已按 RAM budget 在 top-k 最小 working set 之上计算有界 per-layer capacity，使用 usage histogram 保护 hot experts，并提供不累计模型 usage 的显式异步 prefetch 边界。
+6. ✅ cache acquire 热路径已移除 LINQ 排序和 `HashSet`，使用有界数组去重与单次 slot 扫描；session 诊断增加 kernel、hot pin 与 prefetch 状态。
+7. ✅ M11 独立测试项目已加入 solution，覆盖 scalar fallback、F32 SIMD/强制并行、int8/int4、paired dispatch、自动 cache capacity、prefetch 与 hot eviction；本轮未执行构建或测试。
+
+剩余顺序：
 
 1. 建立 scalar 基准和阶段耗时分解。
-2. 使用 `Vector128/256/512` 实现 F32、int8 和 int4 matvec。
-3. 评估 activation int8 quantization 与 integer dot-product。
-4. 按 shape 选择 kernel，不假定单 token 与 batch 使用同一最优路径。
-5. 将固定工作区移出 token loop。
-6. 合并 gate/up dispatch。
-7. 对 unique experts 做 batch union。
-8. 异步预读下一批已知 expert。
-9. 根据 RAM budget 自动计算每层 cache capacity。
-10. 根据 usage histogram pin hot experts。
-11. 为内存映射和复杂 I/O 策略保留可切换边界，未经 M14 性能证据不设为默认路径。
-12. 所有优化路径均可通过配置关闭并回退到 scalar path。
+2. 评估 activation int8 quantization 与 integer dot-product；未经 oracle 与性能证据不接入默认 projection。
+3. 对 prefill 的 unique experts 做 batch union，并将显式 prefetch 边界接到下一批已知 expert。
+4. 建立内存映射和复杂 I/O 的可切换实验边界，未经 M14 性能证据不设为默认路径。
+5. 在 M14 对 SIMD、并行、cache 与 I/O 路径逐项执行 oracle、吞吐、allocation 和跨平台验证。
 
 ## 12. ⏳ M12：高级能力
 

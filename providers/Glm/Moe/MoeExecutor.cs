@@ -128,8 +128,12 @@ internal static class MoeExecutor
         var up = activations.Slice(intermediateSize, intermediateSize);
         var activated = activations.Slice(checked(intermediateSize * 2), intermediateSize);
         var prefix = $"model.layers.{layer}.mlp.shared_experts.";
-        model.MultiplyResidentWeight($"{prefix}gate_proj.weight", input.Span, gate);
-        model.MultiplyResidentWeight($"{prefix}up_proj.weight", input.Span, up);
+        model.MultiplyResidentWeightPair(
+            $"{prefix}gate_proj.weight",
+            $"{prefix}up_proj.weight",
+            input.Span,
+            gate,
+            up);
         ScalarKernels.SiLU(gate, activated);
         ScalarKernels.Multiply(activated, up, gate);
         model.MultiplyResidentWeight($"{prefix}down_proj.weight", gate, destination);

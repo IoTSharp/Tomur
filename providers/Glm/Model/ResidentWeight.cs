@@ -74,7 +74,7 @@ internal sealed class ResidentWeight : IDisposable
                     $"Resident matrix '{Spec.Descriptor.Name}' must have a two-dimensional managed shape.");
             }
 
-            ScalarKernels.MatVec(
+            OptimizedKernels.MatVec(
                 GetFloatingValues(),
                 (int)shape[0],
                 (int)shape[1],
@@ -87,12 +87,57 @@ internal sealed class ResidentWeight : IDisposable
         var view = GetQuantizedView();
         if (view.Shape.Format == QuantizedTensorFormat.Int8)
         {
-            ScalarKernels.Int8DequantMatVec(view, input, destination);
+            OptimizedKernels.Int8DequantMatVec(view, input, destination);
         }
         else
         {
-            ScalarKernels.Int4DequantMatVec(view, input, destination);
+            OptimizedKernels.Int4DequantMatVec(view, input, destination);
         }
+    }
+
+    public void MultiplyPair(
+        ResidentWeight second,
+        ReadOnlySpan<float> input,
+        Span<float> firstDestination,
+        Span<float> secondDestination)
+    {
+        ArgumentNullException.ThrowIfNull(second);
+        if (Spec.Quantized is null && second.Spec.Quantized is null)
+        {
+            var firstShape = Spec.Descriptor.LogicalShape;
+            var secondShape = second.Spec.Descriptor.LogicalShape;
+            if (firstShape.Count != 2 || secondShape.Count != 2 ||
+                firstShape[0] != secondShape[0] || firstShape[1] != secondShape[1] ||
+                firstShape[0] > int.MaxValue || firstShape[1] > int.MaxValue)
+            {
+                throw new InvalidDataException("Paired resident projections must have the same two-dimensional managed shape.");
+            }
+
+            OptimizedKernels.MatVecPair(
+                GetFloatingValues(),
+                second.GetFloatingValues(),
+                (int)firstShape[0],
+                (int)firstShape[1],
+                (int)firstShape[1],
+                input,
+                firstDestination,
+                secondDestination);
+            return;
+        }
+
+        if (Spec.Quantized is not null && second.Spec.Quantized is not null)
+        {
+            OptimizedKernels.DequantMatVecPair(
+                GetQuantizedView(),
+                second.GetQuantizedView(),
+                input,
+                firstDestination,
+                secondDestination);
+            return;
+        }
+
+        Multiply(input, firstDestination);
+        second.Multiply(input, secondDestination);
     }
 
     public float GetValue(int row, int column)

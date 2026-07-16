@@ -12,5 +12,6 @@
   <Project Path="tests/Tomur.Providers.M8.Tests/Tomur.Providers.M8.Tests.csproj" />
   <Project Path="tests/Tomur.Providers.M9.Tests/Tomur.Providers.M9.Tests.csproj" />
   <Project Path="tests/Tomur.Providers.M10.Tests/Tomur.Providers.M10.Tests.csproj" />
+  <Project Path="tests/Tomur.Providers.M11.Tests/Tomur.Providers.M11.Tests.csproj" />
   <Project Path="tests/Tomur.Providers.Olmoe.Tests/Tomur.Providers.Olmoe.Tests.csproj" />
 </Solution>

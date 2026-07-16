@@ -8,7 +8,7 @@
 
 1. 已建立 `Tomur.Providers.Glm` 独立纯 C# 类库、extend-only provider 契约、非 AOT 动态发现边界与 `SessionManager` 选择路径；未匹配的现有模型继续使用 llama.cpp。
 2. 已建立 `model.tomur.json`、GLM 配置、tokenizer 基础结构和 safetensors header/tensor index 的有界只读探测，并接入 provider discovery、Catalog、doctor、Runtime API 与 Web Runtime 诊断。
-3. 已建立固定 seed 的 tiny F32 fixture、版本化 oracle、tensor manifest、SHA-256 校验、隐藏 generate/verify 入口与 M1-M10 独立测试项目；fixture generator 1.1.0 增加 dense MLP checkpoint，同时保留既有 MoE teacher-forcing 基线。
+3. 已建立固定 seed 的 tiny F32 fixture、版本化 oracle、tensor manifest、SHA-256 校验、隐藏 generate/verify 入口与 M1-M11 独立测试项目；fixture generator 1.1.0 增加 dense MLP checkpoint，同时保留既有 MoE teacher-forcing 基线。
 4. 已建立统一 tensor descriptor、只读 shard 随机访问、F32/F16/BF16 resident 转换、int4/int8 量化视图、池化 workspace 与 expert slab 基础层。
 5. 已建立无并行、无 intrinsics 的 scalar reference kernels，覆盖 embedding、normalization、F32 与 int8/int4 矩阵乘、activation int8 量化、基础激活、elementwise、residual 和 stable top-k，并显式校验 shape、stride、buffer、alias 与量化边界。
 6. 已实现 WordLevel/BPE tokenizer、必要的 normalizer/pre-tokenizer/decoder 子集、byte-level UTF-8 映射、added/special token、GLM role prompt template、多个 token stop，以及跨 token UTF-8 和文本 stop 增量解码。
@@ -37,6 +37,9 @@
 29. `SessionManager` 已拆分状态锁与单请求执行门；session unload 会取消活动生成，等待请求退出后再释放 session，并通过 `session_unloading` / `session_unloaded` 保持并发请求和协议错误边界。
 30. session 快照已增加 provider、architecture、context、busy、resident/KV/scratch、expert cache、expert I/O、请求/token 统计与最近错误；`tomur ps`、`tomur doctor`、Runtime API 和 Web Runtime 使用同一 readiness/session 状态。
 31. M10 独立测试项目已加入 solution，覆盖 Ollama 增量/终帧、readiness 内存计划、不完整资产可见性拦截、forward verified 状态与 unload 取消/释放；本轮未执行构建、测试或服务 smoke。
+32. managed GLM 已增加可配置的 SIMD/shape-aware kernel dispatch：F32、int8 与 packed int4 matvec 按硬件 `Vector<float>` 宽度执行，F32 大 shape 可有界并行，dense/shared/routed expert gate/up 使用 paired dispatch；`TOMUR_GLM_KERNEL_MODE=scalar` 保留原 scalar oracle 回退。
+33. expert cache 已增加 RAM budget 自动 per-layer capacity、usage histogram hot pin 与显式异步 prefetch，并移除 acquire 热路径的 LINQ 排序和 `HashSet` 分配；session 诊断报告 kernel、hot pin 与 prefetch 状态。
+34. M11 独立测试项目已加入 solution，覆盖 scalar fallback、SIMD/并行、int8/int4、paired dispatch、cache capacity、prefetch 与 hot eviction；本轮未执行构建、测试或性能测量。
 
 ### R14 当前已接入
 

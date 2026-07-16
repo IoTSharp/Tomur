@@ -8,8 +8,42 @@ internal sealed record ExpertCacheOptions(
     long BudgetBytes,
     int WorkerCount = 2,
     int QueueCapacity = 8,
-    long SafetyMarginBytes = 0)
+    long SafetyMarginBytes = 0,
+    int HotExpertCount = 0)
 {
+    public static ExpertCacheOptions CreateAutomatic(
+        ExpertDescriptorLayout layout,
+        ModelMemoryPlan memoryPlan,
+        int WorkerCount = 2,
+        int QueueCapacity = 8,
+        long SafetyMarginBytes = 0)
+    {
+        ArgumentNullException.ThrowIfNull(layout);
+        ArgumentNullException.ThrowIfNull(memoryPlan);
+        if (layout.MoeLayerCount <= 0)
+        {
+            throw new InvalidOperationException("The model has no MoE layers and does not require an expert cache.");
+        }
+
+        var available = Math.Max(
+            0,
+            Math.Max(0, memoryPlan.AvailableBytes - memoryPlan.RequiredBytes) - SafetyMarginBytes);
+        var maximumCapacity = checked((int)Math.Min(
+            layout.Configuration.RoutedExpertCount,
+            available / checked(layout.SlotBudgetedBytes * layout.MoeLayerCount)));
+        var targetCapacity = Math.Min(
+            maximumCapacity,
+            checked(layout.Configuration.ExpertsPerToken + Math.Max(1, layout.Configuration.ExpertsPerToken / 2)));
+        var capacity = Math.Max(layout.Configuration.ExpertsPerToken, targetCapacity);
+        var budget = checked(layout.SlotBudgetedBytes * layout.MoeLayerCount * capacity);
+        return new ExpertCacheOptions(
+            budget,
+            WorkerCount,
+            QueueCapacity,
+            SafetyMarginBytes,
+            HotExpertCount: Math.Max(0, capacity - layout.Configuration.ExpertsPerToken));
+    }
+
     public void Validate()
     {
         if (BudgetBytes <= 0)
@@ -31,6 +65,11 @@ internal sealed record ExpertCacheOptions(
         {
             throw new ArgumentOutOfRangeException(nameof(SafetyMarginBytes));
         }
+
+        if (HotExpertCount < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(HotExpertCount));
+        }
     }
 }
 
@@ -45,6 +84,8 @@ internal sealed record ExpertCacheSnapshot(
     long DiskBytes,
     TimeSpan DiskReadTime,
     TimeSpan ForegroundWaitTime,
+    int HotExpertCount,
+    long Prefetches,
     IReadOnlyDictionary<ExpertKey, long> UsageHistogram);
 
 internal sealed class ExpertCacheBudgetExceededException : InvalidOperationException
@@ -83,6 +124,7 @@ internal sealed class ExpertCache : IDisposable
     private readonly CancellationTokenSource shutdown = new();
     private readonly Task[] workers;
     private readonly long[][] usage;
+    private readonly int hotExpertCount;
     private long accessClock;
     private long hits;
     private long misses;
@@ -91,6 +133,7 @@ internal sealed class ExpertCache : IDisposable
     private long diskBytes;
     private long diskReadTicks;
     private long foregroundWaitTicks;
+    private long prefetches;
     private int disposed;
 
     public ExpertCache(
@@ -158,6 +201,9 @@ internal sealed class ExpertCache : IDisposable
                 available,
                 options.SafetyMarginBytes);
         }
+
+
+        hotExpertCount = Math.Min(options.HotExpertCount, Math.Max(0, SlotCapacityPerLayer - 1));
 
         TotalSlotCount = checked(SlotCapacityPerLayer * layout.MoeLayerCount);
         BudgetedBytes = checked((long)TotalSlotCount * layout.SlotBudgetedBytes);
@@ -231,6 +277,34 @@ internal sealed class ExpertCache : IDisposable
         CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
+        return await AcquireLayerCoreAsync(
+            layer,
+            expertIds,
+            countUsage: true,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async ValueTask PrefetchLayerAsync(
+        int layer,
+        ReadOnlyMemory<int> expertIds,
+        CancellationToken cancellationToken = default)
+    {
+        using var leases = await AcquireLayerCoreAsync(
+            layer,
+            expertIds,
+            countUsage: false,
+            cancellationToken).ConfigureAwait(false);
+        await leases.WaitReadyAsync(cancellationToken).ConfigureAwait(false);
+        Interlocked.Add(ref prefetches, leases.Count);
+    }
+
+    private async ValueTask<ExpertLeaseBatch> AcquireLayerCoreAsync(
+        int layer,
+        ReadOnlyMemory<int> expertIds,
+        bool countUsage,
+        CancellationToken cancellationToken)
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
         var state = GetLayer(layer);
         if (expertIds.IsEmpty)
         {
@@ -239,28 +313,34 @@ internal sealed class ExpertCache : IDisposable
 
         var unique = GetUniqueExpertIds(expertIds);
 
-        if (unique.Count > SlotCapacityPerLayer)
+        if (unique.Length > SlotCapacityPerLayer)
         {
             throw new InvalidOperationException(
-                $"Layer {layer} requested {unique.Count} unique experts, but its cache has {SlotCapacityPerLayer} slots.");
+                $"Layer {layer} requested {unique.Length} unique experts, but its cache has {SlotCapacityPerLayer} slots.");
         }
 
-        var leases = new List<ExpertLease>(unique.Count);
+        var leases = new ExpertLease[unique.Length];
+        var acquired = 0;
         try
         {
             foreach (var expertId in unique)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                leases.Add(await AcquireOneAsync(state, layer, expertId, cancellationToken).ConfigureAwait(false));
+                leases[acquired++] = await AcquireOneAsync(
+                    state,
+                    layer,
+                    expertId,
+                    countUsage,
+                    cancellationToken).ConfigureAwait(false);
             }
 
-            return new ExpertLeaseBatch(this, leases.ToArray());
+            return new ExpertLeaseBatch(this, leases);
         }
         catch
         {
-            foreach (var lease in leases)
+            for (var index = 0; index < acquired; index++)
             {
-                lease.Dispose();
+                leases[index].Dispose();
             }
 
             throw;
@@ -296,6 +376,8 @@ internal sealed class ExpertCache : IDisposable
             Interlocked.Read(ref diskBytes),
             TimeSpan.FromTicks(Interlocked.Read(ref diskReadTicks)),
             TimeSpan.FromTicks(Interlocked.Read(ref foregroundWaitTicks)),
+            hotExpertCount,
+            Interlocked.Read(ref prefetches),
             new ReadOnlyDictionary<ExpertKey, long>(histogram));
     }
 
@@ -383,6 +465,7 @@ internal sealed class ExpertCache : IDisposable
         LayerState state,
         int layer,
         int expertId,
+        bool countUsage,
         CancellationToken cancellationToken)
     {
         var key = new ExpertKey(layer, expertId, layout.Format);
@@ -395,8 +478,16 @@ internal sealed class ExpertCache : IDisposable
             lock (state.Gate)
             {
                 ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
-                var existing = state.Slots.FirstOrDefault(slot =>
-                    slot.Key == key && slot.State is SlotState.Loading or SlotState.Loaded);
+                ExpertSlot? existing = null;
+                foreach (var slot in state.Slots)
+                {
+                    if (slot.Key == key && slot.State is SlotState.Loading or SlotState.Loaded)
+                    {
+                        existing = slot;
+                        break;
+                    }
+                }
+
                 if (existing is not null)
                 {
                     existing.ReferenceCount++;
@@ -406,16 +497,16 @@ internal sealed class ExpertCache : IDisposable
                         Interlocked.Increment(ref hits);
                     }
 
-                    Interlocked.Increment(ref usage[layer][expertId]);
+                    if (countUsage)
+                    {
+                        Interlocked.Increment(ref usage[layer][expertId]);
+                    }
+
                     lease = new ExpertLease(this, existing);
                 }
                 else
                 {
-                    var candidate = state.Slots.FirstOrDefault(slot => slot.State == SlotState.Empty);
-                    candidate ??= state.Slots
-                        .Where(slot => slot.ReferenceCount == 0 && slot.State is SlotState.Loaded or SlotState.Failed)
-                        .OrderBy(slot => slot.LastAccess)
-                        .FirstOrDefault();
+                    var candidate = SelectCandidate(state, layer);
                     if (candidate is null)
                     {
                         changed = state.Changed.Task;
@@ -435,7 +526,11 @@ internal sealed class ExpertCache : IDisposable
                         candidate.Completion = new TaskCompletionSource<bool>(
                             TaskCreationOptions.RunContinuationsAsynchronously);
                         Interlocked.Increment(ref misses);
-                        Interlocked.Increment(ref usage[layer][expertId]);
+                        if (countUsage)
+                        {
+                            Interlocked.Increment(ref usage[layer][expertId]);
+                        }
+
                         request = new ReadRequest(state, candidate, candidate.Generation, layout.Get(layer, expertId));
                         lease = new ExpertLease(this, candidate);
                     }
@@ -465,6 +560,75 @@ internal sealed class ExpertCache : IDisposable
 
             await changed!.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private ExpertSlot? SelectCandidate(LayerState state, int layer)
+    {
+        foreach (var slot in state.Slots)
+        {
+            if (slot.State == SlotState.Empty)
+            {
+                return slot;
+            }
+
+            if (slot.ReferenceCount == 0 && slot.State == SlotState.Failed)
+            {
+                return slot;
+            }
+        }
+
+        ExpertSlot? oldestUnpinned = null;
+        ExpertSlot? oldest = null;
+        foreach (var slot in state.Slots)
+        {
+            if (slot.ReferenceCount != 0 || slot.State is not (SlotState.Loaded or SlotState.Failed))
+            {
+                continue;
+            }
+
+            if (oldest is null || slot.LastAccess < oldest.LastAccess)
+            {
+                oldest = slot;
+            }
+
+            if (!IsHot(slot, layer) &&
+                (oldestUnpinned is null || slot.LastAccess < oldestUnpinned.LastAccess))
+            {
+                oldestUnpinned = slot;
+            }
+        }
+
+        return oldestUnpinned ?? oldest;
+    }
+
+    private bool IsHot(ExpertSlot slot, int layer)
+    {
+        if (hotExpertCount == 0 || slot.Key is not { } key)
+        {
+            return false;
+        }
+
+        var candidateUsage = Interlocked.Read(ref usage[layer][key.ExpertId]);
+        if (candidateUsage == 0)
+        {
+            return false;
+        }
+
+        var rank = 0;
+        for (var expertId = 0; expertId < layout.Configuration.RoutedExpertCount; expertId++)
+        {
+            var count = Interlocked.Read(ref usage[layer][expertId]);
+            if (count > candidateUsage || (count == candidateUsage && expertId < key.ExpertId))
+            {
+                rank++;
+                if (rank >= hotExpertCount)
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 
     private async Task WorkerAsync()
@@ -569,10 +733,10 @@ internal sealed class ExpertCache : IDisposable
         return layers[layer] ?? throw new InvalidOperationException($"Layer cache is unavailable: {layer}.");
     }
 
-    private List<int> GetUniqueExpertIds(ReadOnlyMemory<int> expertIds)
+    private int[] GetUniqueExpertIds(ReadOnlyMemory<int> expertIds)
     {
-        var unique = new List<int>(expertIds.Length);
-        var seen = new HashSet<int>();
+        var unique = new int[expertIds.Length];
+        var count = 0;
         foreach (var expertId in expertIds.Span)
         {
             if ((uint)expertId >= (uint)layout.Configuration.RoutedExpertCount)
@@ -580,10 +744,25 @@ internal sealed class ExpertCache : IDisposable
                 throw new ArgumentOutOfRangeException(nameof(expertIds), $"Expert ID is out of range: {expertId}.");
             }
 
-            if (seen.Add(expertId))
+            var found = false;
+            for (var index = 0; index < count; index++)
             {
-                unique.Add(expertId);
+                if (unique[index] == expertId)
+                {
+                    found = true;
+                    break;
+                }
             }
+
+            if (!found)
+            {
+                unique[count++] = expertId;
+            }
+        }
+
+        if (count != unique.Length)
+        {
+            Array.Resize(ref unique, count);
         }
 
         return unique;

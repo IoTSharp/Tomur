@@ -122,23 +122,18 @@ internal sealed class FloatingExpertWeightBuffer : ExpertWeightBuffer
         var gateOutput = activations[..intermediateSize];
         var upOutput = activations.Slice(intermediateSize, intermediateSize);
         var activated = activations.Slice(checked(intermediateSize * 2), intermediateSize);
-        ScalarKernels.MatVec(
+        OptimizedKernels.MatVecPair(
             gateWeight,
-            intermediateSize,
-            hiddenSize,
-            hiddenSize,
-            input,
-            gateOutput);
-        ScalarKernels.MatVec(
             upWeight,
             intermediateSize,
             hiddenSize,
             hiddenSize,
             input,
+            gateOutput,
             upOutput);
         ScalarKernels.SiLU(gateOutput, activated);
         ScalarKernels.Multiply(activated, upOutput, gateOutput);
-        ScalarKernels.MatVec(
+        OptimizedKernels.MatVec(
             downWeight,
             hiddenSize,
             intermediateSize,
@@ -245,8 +240,12 @@ internal sealed class QuantizedExpertWeightBuffer : ExpertWeightBuffer
         var gateOutput = activations[..intermediateSize];
         var upOutput = activations.Slice(intermediateSize, intermediateSize);
         var activated = activations.Slice(checked(intermediateSize * 2), intermediateSize);
-        RunProjection(slab.Gate, input, gateOutput);
-        RunProjection(slab.Up, input, upOutput);
+        OptimizedKernels.DequantMatVecPair(
+            slab.Gate,
+            slab.Up,
+            input,
+            gateOutput,
+            upOutput);
         ScalarKernels.SiLU(gateOutput, activated);
         ScalarKernels.Multiply(activated, upOutput, gateOutput);
         RunProjection(slab.Down, gateOutput, destination);
@@ -261,11 +260,11 @@ internal sealed class QuantizedExpertWeightBuffer : ExpertWeightBuffer
     {
         if (format == ExpertWeightFormat.Int8)
         {
-            ScalarKernels.Int8DequantMatVec(weight, input, destination);
+            OptimizedKernels.Int8DequantMatVec(weight, input, destination);
         }
         else
         {
-            ScalarKernels.Int4DequantMatVec(weight, input, destination);
+            OptimizedKernels.Int4DequantMatVec(weight, input, destination);
         }
     }
 }

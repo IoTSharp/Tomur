@@ -117,17 +117,7 @@ internal static class ScalarKernels
         ReadOnlySpan<float> input,
         Span<float> destination)
     {
-        ValidateMatrix(
-            matrix.Length,
-            rows,
-            columns,
-            rowStride,
-            allowEmptyRows: false,
-            nameof(matrix));
-        RequireExactLength(input.Length, columns, nameof(input));
-        RequireExactLength(destination.Length, rows, nameof(destination));
-        EnsureNoOverlap(matrix, destination, nameof(matrix), nameof(destination));
-        EnsureNoOverlap(input, destination, nameof(input), nameof(destination));
+        ValidateMatVec(matrix, rows, columns, rowStride, input, destination);
 
         for (var row = 0; row < rows; row++)
         {
@@ -431,6 +421,49 @@ internal static class ScalarKernels
         ReadOnlySpan<float> input,
         Span<float> destination)
     {
+        ValidateDequantMatVec(matrix, expectedFormat, input, destination);
+
+        for (var row = 0; row < matrix.Shape.Rows; row++)
+        {
+            double sum = 0;
+            var scale = matrix.Scales[row];
+            for (var column = 0; column < matrix.Shape.Columns; column++)
+            {
+                var dequantized = matrix.GetQuantizedValue(row, column) * scale;
+                sum += (double)dequantized * input[column];
+            }
+
+            destination[row] = (float)sum;
+        }
+    }
+
+    internal static void ValidateMatVec(
+        ReadOnlySpan<float> matrix,
+        int rows,
+        int columns,
+        int rowStride,
+        ReadOnlySpan<float> input,
+        Span<float> destination)
+    {
+        ValidateMatrix(
+            matrix.Length,
+            rows,
+            columns,
+            rowStride,
+            allowEmptyRows: false,
+            nameof(matrix));
+        RequireExactLength(input.Length, columns, nameof(input));
+        RequireExactLength(destination.Length, rows, nameof(destination));
+        EnsureNoOverlap(matrix, destination, nameof(matrix), nameof(destination));
+        EnsureNoOverlap(input, destination, nameof(input), nameof(destination));
+    }
+
+    internal static void ValidateDequantMatVec(
+        QuantizedTensorView matrix,
+        QuantizedTensorFormat expectedFormat,
+        ReadOnlySpan<float> input,
+        Span<float> destination)
+    {
         if (matrix.Shape.Format != expectedFormat)
         {
             throw new ArgumentException(
@@ -452,19 +485,6 @@ internal static class ScalarKernels
                     $"Quantized matrix scale at row {row} must be positive and finite.",
                     nameof(matrix));
             }
-        }
-
-        for (var row = 0; row < matrix.Shape.Rows; row++)
-        {
-            double sum = 0;
-            var scale = matrix.Scales[row];
-            for (var column = 0; column < matrix.Shape.Columns; column++)
-            {
-                var dequantized = matrix.GetQuantizedValue(row, column) * scale;
-                sum += (double)dequantized * input[column];
-            }
-
-            destination[row] = (float)sum;
         }
     }
 

@@ -158,6 +158,29 @@ internal sealed class ManagedGlmModel : IDisposable
         tensor.Multiply(input, destination);
     }
 
+    public void MultiplyResidentWeightPair(
+        string firstName,
+        string secondName,
+        ReadOnlySpan<float> input,
+        Span<float> firstDestination,
+        Span<float> secondDestination)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(firstName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(secondName);
+        _ = GetDataSource();
+        if (!residentWeights.TryGetValue(firstName, out var first))
+        {
+            throw new KeyNotFoundException($"Resident model weight was not found: {firstName}");
+        }
+
+        if (!residentWeights.TryGetValue(secondName, out var second))
+        {
+            throw new KeyNotFoundException($"Resident model weight was not found: {secondName}");
+        }
+
+        first.MultiplyPair(second, input, firstDestination, secondDestination);
+    }
+
     public float GetResidentWeightValue(string name, int row, int column)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
@@ -251,8 +274,12 @@ internal sealed class ManagedGlmModel : IDisposable
         var activated = work.Slice(checked(intermediateSize * 2), intermediateSize);
         var prefix = $"model.layers.{layer}.mlp.";
 
-        MultiplyResidentWeight($"{prefix}gate_proj.weight", input, gate);
-        MultiplyResidentWeight($"{prefix}up_proj.weight", input, up);
+        MultiplyResidentWeightPair(
+            $"{prefix}gate_proj.weight",
+            $"{prefix}up_proj.weight",
+            input,
+            gate,
+            up);
         ScalarKernels.SiLU(gate, activated);
         ScalarKernels.Multiply(activated, up, gate);
         MultiplyResidentWeight($"{prefix}down_proj.weight", gate, destination);
