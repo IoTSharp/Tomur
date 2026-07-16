@@ -7,7 +7,8 @@ internal sealed record ManagedGenerationResult(
     int PromptTokenCount,
     IReadOnlyList<int> GeneratedTokenIds,
     string StopReason,
-    int Seed);
+    int Seed,
+    ForwardTimingSnapshot Timing);
 
 internal sealed class ManagedTextGenerator(
     ManagedGlmModel model,
@@ -104,6 +105,7 @@ internal sealed class ManagedTextGenerator(
             promptTokenIds.Length,
             generated.ToArray(),
             stopReason,
-            sampler.Seed);
+            sampler.Seed,
+            forward.Timing.Snapshot());
     }
 }

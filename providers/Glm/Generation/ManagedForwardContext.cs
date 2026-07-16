@@ -17,6 +17,8 @@ internal sealed class ManagedForwardContext : IDisposable
     private float[]? residualStates;
     private bool faulted;
 
+    public ForwardTiming Timing { get; } = new();
+
     public ManagedForwardContext(
         ManagedGlmModel model,
         ExpertCache? expertCache,
@@ -167,28 +169,39 @@ internal sealed class ManagedForwardContext : IDisposable
         CancellationToken cancellationToken)
     {
         var tokenCount = tokenIds.Length;
+        var started = ForwardTimingScope.Start();
         GatherEmbeddings(tokenIds, tokenCount);
+        Timing.AddEmbedding(ForwardTimingScope.Elapsed(started));
+        Timing.AddBatch(tokenCount);
         for (var layer = 0; layer < model.Configuration.LayerCount; layer++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             NormalizeLayerInputs(layer, tokenCount);
+            started = ForwardTimingScope.Start();
             RunAttention(layer, tokenCount, cancellationToken);
+            Timing.AddAttention(ForwardTimingScope.Elapsed(started));
             AddAttentionResidual(tokenCount);
             NormalizePostAttention(layer, tokenCount);
 
             if (layer < model.Configuration.FirstMoeLayer)
             {
+                started = ForwardTimingScope.Start();
                 RunDenseLayer(layer, tokenCount);
+                Timing.AddDense(ForwardTimingScope.Elapsed(started));
             }
             else
             {
+                started = ForwardTimingScope.Start();
                 await RunMoeLayerAsync(layer, tokenCount, cancellationToken).ConfigureAwait(false);
+                Timing.AddMoe(ForwardTimingScope.Elapsed(started));
             }
 
             CommitLayer(tokenCount);
         }
 
+        started = ForwardTimingScope.Start();
         ProjectLastToken(tokenCount);
+        Timing.AddProjection(ForwardTimingScope.Elapsed(started));
     }
 
     private void GatherEmbeddings(ReadOnlyMemory<int> tokenIds, int tokenCount)
@@ -271,6 +284,12 @@ internal sealed class ManagedForwardContext : IDisposable
         CancellationToken cancellationToken)
     {
         var hiddenSize = model.Configuration.HiddenSize;
+        if (tokenCount > 1)
+        {
+            await PrefetchBatchExpertsAsync(layer, tokenCount, hiddenSize, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
         for (var token = 0; token < tokenCount; token++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -282,6 +301,60 @@ internal sealed class ManagedForwardContext : IDisposable
                 moeWorkspace!,
                 GetSublayerOutputs().AsMemory(offset, hiddenSize),
                 cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async ValueTask PrefetchBatchExpertsAsync(
+        int layer,
+        int tokenCount,
+        int hiddenSize,
+        CancellationToken cancellationToken)
+    {
+        var expertsPerToken = model.Configuration.ExpertsPerToken;
+        var ids = ArrayPool<int>.Shared.Rent(checked(tokenCount * expertsPerToken));
+        try
+        {
+            var uniqueCount = 0;
+            var normalized = GetNormalizedStates();
+            for (var token = 0; token < tokenCount; token++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var offset = checked(token * hiddenSize);
+                MoeRouter.Route(
+                    model,
+                    layer,
+                    normalized.AsSpan(offset, hiddenSize),
+                    moeWorkspace!);
+                foreach (var expertId in moeWorkspace.SelectedExpertIds)
+                {
+                    var found = false;
+                    for (var index = 0; index < uniqueCount; index++)
+                    {
+                        if (ids[index] == expertId)
+                        {
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if (!found)
+                    {
+                        ids[uniqueCount++] = expertId;
+                    }
+                }
+            }
+
+            if (uniqueCount > 0 && uniqueCount <= expertCache!.SlotCapacityPerLayer)
+            {
+                await expertCache.PrefetchLayerAsync(
+                    layer,
+                    ids.AsMemory(0, uniqueCount),
+                    cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            ArrayPool<int>.Shared.Return(ids, clearArray: true);
         }
     }
 

@@ -4,6 +4,10 @@
 
 ## 未发布
 
+### M11 性能优化
+
+已完成性能优化基础代码：managed GLM forward 阶段 timing、可回退的 activation int8 integer dot 评估 kernel、prefill 批次级 unique expert union/prefetch，以及默认 RandomAccess、可选 mmap 的 tensor I/O 实验边界。默认推理路径和 scalar oracle 保持不变；完整 benchmark、allocation、跨平台和真实模型验证仍归 M14。
+
 ### R15 当前已接入
 
 1. 已建立 `Tomur.Providers.Glm` 独立纯 C# 类库、extend-only provider 契约、非 AOT 动态发现边界与 `SessionManager` 选择路径；未匹配的现有模型继续使用 llama.cpp。

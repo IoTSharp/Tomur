@@ -44,6 +44,8 @@ internal sealed class ManagedGlmModel : IDisposable
 
     public int OpenShardCount => GetDataSource().ShardCount;
 
+    public TensorIoMode IoMode => GetDataSource().IoMode;
+
     public ModelMemoryPlan MemoryPlan { get; }
 
     public long ActualResidentBytes { get; }

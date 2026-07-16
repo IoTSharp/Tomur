@@ -189,7 +189,7 @@ Disk
 | 08 | M8 | ✅ | MoE router、shared expert 与 expert streaming |
 | 09 | M9 | ✅ | 完整 forward、prefill、decode 与 sampling |
 | 10 | M10 | ✅ | Tomur API、session、streaming 与诊断闭环 |
-| 11 | M11 | 🚧 | SIMD、并行、缓存与 I/O 优化 |
+| 11 | M11 | ✅ | SIMD、并行、缓存与 I/O 优化 |
 | 12 | M12 | ⏳ | DSA、MTP、grammar draft 与 KV 持久化 |
 | 13 | M13 | ⏳ | 打包、版本兼容与 Native AOT 策略 |
 | 14 | M14 | ⏳ | 集中测试、完整模型验证与发布证据 |
@@ -467,7 +467,7 @@ forward 顺序：
 11. `session_unloading`
 12. `session_unloaded`
 
-## 11. 🚧 M11：性能优化
+## 11. ✅ M11：性能优化
 
 目标：在不改变模型语义的前提下提高 CPU、RAM 和磁盘利用率。
 
@@ -480,14 +480,14 @@ forward 顺序：
 5. ✅ expert cache 已按 RAM budget 在 top-k 最小 working set 之上计算有界 per-layer capacity，使用 usage histogram 保护 hot experts，并提供不累计模型 usage 的显式异步 prefetch 边界。
 6. ✅ cache acquire 热路径已移除 LINQ 排序和 `HashSet`，使用有界数组去重与单次 slot 扫描；session 诊断增加 kernel、hot pin 与 prefetch 状态。
 7. ✅ M11 独立测试项目已加入 solution，覆盖 scalar fallback、F32 SIMD/强制并行、int8/int4、paired dispatch、自动 cache capacity、prefetch 与 hot eviction；本轮未执行构建或测试。
+8. ✅ 已加入 forward 阶段 timing（embedding、attention、dense、MoE、projection），并通过请求诊断输出批次数与 token 数。
+9. ✅ 已加入 activation int8 integer dot-product 的独立评估 kernel 和误差回归；默认 projection 不启用，保留 scalar/dequant 路径作为语义基线。
+10. ✅ prefill 已在批次级收集 unique routed experts，并在执行前通过显式 prefetch 边界加载；union 超出 cache 容量时自动跳过，保持原有逐 token 路径。
+11. ✅ TensorDataSource 已增加 `TOMUR_GLM_IO_MODE=random-access|mmap` 实验开关；默认仍为 RandomAccess，mmap 路径仅用于后续 M14 对比验证。
 
-剩余顺序：
+M14 性能验证仍待执行：
 
-1. 建立 scalar 基准和阶段耗时分解。
-2. 评估 activation int8 quantization 与 integer dot-product；未经 oracle 与性能证据不接入默认 projection。
-3. 对 prefill 的 unique experts 做 batch union，并将显式 prefetch 边界接到下一批已知 expert。
-4. 建立内存映射和复杂 I/O 的可切换实验边界，未经 M14 性能证据不设为默认路径。
-5. 在 M14 对 SIMD、并行、cache 与 I/O 路径逐项执行 oracle、吞吐、allocation 和跨平台验证。
+1. 在 M14 对 SIMD、并行、cache 与 I/O 路径逐项执行 oracle、吞吐、allocation 和跨平台验证。
 
 ## 12. ⏳ M12：高级能力
 

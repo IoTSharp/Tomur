@@ -244,7 +244,7 @@ GLM 基础代码顺序、性能计划、集中验证门槛与发布标准见 [pr
 12. ✅ M10 集成基础代码已完成：显式标记的 packed rowwise safetensors 目录已接通 offset-binary int4、`*.qs` per-row scale、量化 resident 权重、GLM role token Chat、managed model readiness、兼容 API 可见性校验、OpenAI / Anthropic SSE、Ollama 增量 NDJSON、可取消 unload、结构化 session/resource 诊断以及三协议 streaming 回归测试代码。转换后的随机 tiny 模型已完成三类兼容 API 链路 smoke，证据见 [R15 packed GLM smoke 记录](./docs/r15-packed-glm-smoke.md)；新增 M10 回归代码尚未执行构建、测试与服务 smoke，完整验证仍归 M14。
 13. 🚧 将 `glm4_moe_lite` 作为 managed GLM 的显式兼容架构目标，首个真实候选为 `cerebras/GLM-4.7-Flash-REAP-23B-A3B`。当前工作只实现 architecture/config/tensor/prompt 契约与可执行测试代码；完整模型转换、加载、自然语言质量和性能验证转移到具备充足存储与算力的独立机器执行。
 14. 🚧 独立 `managed-olmoe` provider 已接通标准 causal attention、q/k RMSNorm、softmax top-k router、BF16 与 rowwise int8 experts、官方 chat template 和生成链路；原始 BF16 `allenai/OLMoE-1B-7B-0125-Instruct` 已通过 Catalog、provider load 与中文 Ollama 非流式真实对话，证据见 [R15 OLMoE real-model smoke](./docs/r15-olmoe-smoke.md)。OpenAI、Anthropic、SSE、完整 int8 转换和性能优化仍待验证。
-15. 🚧 M11 性能基础代码正在推进：managed GLM 已增加可回退 scalar 的 SIMD/shape-aware F32、int8、int4 matvec，gate/up paired dispatch，RAM budget 自动 cache capacity，usage histogram hot pin、显式 expert prefetch、cache 热路径降分配与 M11 独立测试代码。阶段 timing、activation integer dot、prefill batch expert union、mmap 实验边界和全部性能验证仍待完成；本轮未执行构建或测试。
+15. ✅ M11 性能优化基础代码已完成：managed GLM 已增加可回退 scalar 的 SIMD/shape-aware F32、int8、int4 matvec，gate/up paired dispatch，RAM budget 自动 cache capacity，usage histogram hot pin、显式 expert prefetch、cache 热路径降分配、forward 阶段 timing、activation integer dot 评估、prefill batch expert union 和可切换 mmap I/O 实验边界。全部性能基准、allocation 与跨平台验证仍归 M14；本轮未执行构建或测试。
 
 集中验证：
 

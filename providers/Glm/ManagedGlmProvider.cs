@@ -319,7 +319,8 @@ internal sealed class ManagedGlmSession : IChatGenerationSession
                 $"prompt tokens: {result.PromptTokenCount}",
                 $"completion tokens: {generatedCount}",
                 $"stop reason: {result.StopReason}",
-                $"sampling seed: {result.Seed}");
+                $"sampling seed: {result.Seed}",
+                result.Timing.ToString());
             return new CompletionResult(
                 result.Text,
                 new TokenUsage(
@@ -421,6 +422,7 @@ internal sealed class ManagedGlmSession : IChatGenerationSession
             $"tokenizer stop tokens: {new GlmPromptTemplate(loadedModel.Tokenizer, loadedModel.Configuration.ModelType).ResolveStopTokenIds().Count}",
             $"tensor files: {loadedModel.TensorFileCount}",
             $"open tensor shards: {loadedModel.OpenShardCount}",
+            $"tensor I/O mode: {loadedModel.IoMode}",
             $"indexed tensors: {loadedModel.Tensors.Count}",
             $"resident tensors: {loadedModel.ResidentTensorCount}",
             $"resident bytes: {loadedModel.ActualResidentBytes}",

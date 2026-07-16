@@ -238,6 +238,33 @@ internal static class ScalarKernels
         return scale;
     }
 
+    public static void Int8ActivationDot(
+        QuantizedTensorView matrix,
+        ReadOnlySpan<float> input,
+        Span<sbyte> quantizedInput,
+        Span<float> destination)
+    {
+        if (matrix.Shape.Format != QuantizedTensorFormat.Int8)
+        {
+            throw new ArgumentException("Activation integer dot-product requires an int8 weight matrix.", nameof(matrix));
+        }
+
+        ValidateDequantMatVec(matrix, QuantizedTensorFormat.Int8, input, destination);
+        RequireExactLength(quantizedInput.Length, input.Length, nameof(quantizedInput));
+        var scale = QuantizeActivationToInt8(input, quantizedInput);
+        for (var row = 0; row < matrix.Shape.Rows; row++)
+        {
+            var sum = 0L;
+            var offset = checked(row * matrix.Shape.Columns);
+            for (var column = 0; column < matrix.Shape.Columns; column++)
+            {
+                sum += (long)unchecked((sbyte)matrix.Payload[offset + column]) * quantizedInput[column];
+            }
+
+            destination[row] = (float)(sum * matrix.Scales[row] * scale);
+        }
+    }
+
     public static void SiLU(ReadOnlySpan<float> input, Span<float> destination)
     {
         ValidateUnary(input, destination);

@@ -109,6 +109,36 @@ public sealed class OptimizedKernelTests
     }
 
     [Fact]
+    public void ActivationInt8IntegerDotMatchesReferenceWithinQuantizationError()
+    {
+        const int rows = 3;
+        const int columns = 11;
+        var input = CreateValues(columns, 71);
+        var payload = new byte[rows * columns];
+        var scales = new[] { 0.02f, 0.05f, 0.1f };
+        for (var index = 0; index < payload.Length; index++)
+        {
+            payload[index] = unchecked((byte)(sbyte)((index % 17) - 8));
+        }
+
+        var matrix = new QuantizedTensorView(
+            new QuantizedTensorShape(QuantizedTensorFormat.Int8, rows, columns),
+            payload,
+            scales);
+        var quantized = new sbyte[columns];
+        var expected = new float[rows];
+        var actual = new float[rows];
+
+        ScalarKernels.Int8DequantMatVec(matrix, input, expected);
+        OptimizedKernels.Int8ActivationDot(matrix, input, quantized, actual);
+
+        for (var row = 0; row < rows; row++)
+        {
+            Assert.InRange(Math.Abs(expected[row] - actual[row]), 0, Math.Max(0.25f, Math.Abs(expected[row]) * 0.15f));
+        }
+    }
+
+    [Fact]
     public void PairedDispatchMatchesIndependentProjections()
     {
         var columns = checked(Vector<float>.Count + 1);

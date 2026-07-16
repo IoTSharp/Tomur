@@ -1,9 +1,38 @@
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Runtime.InteropServices;
+using System.IO.MemoryMappedFiles;
 using Microsoft.Win32.SafeHandles;
 
 namespace Tomur.Providers.Glm;
+
+internal enum TensorIoMode
+{
+    RandomAccess,
+    MemoryMapped
+}
+
+internal sealed record TensorDataSourceOptions(TensorIoMode Mode = TensorIoMode.RandomAccess)
+{
+    public const string EnvironmentVariable = "TOMUR_GLM_IO_MODE";
+
+    public static TensorDataSourceOptions FromEnvironment()
+    {
+        var value = Environment.GetEnvironmentVariable(EnvironmentVariable)?.Trim();
+        if (string.IsNullOrWhiteSpace(value) || value.Equals("random-access", StringComparison.OrdinalIgnoreCase))
+        {
+            return new TensorDataSourceOptions();
+        }
+
+        if (value.Equals("mmap", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("memory-mapped", StringComparison.OrdinalIgnoreCase))
+        {
+            return new TensorDataSourceOptions(TensorIoMode.MemoryMapped);
+        }
+
+        throw new InvalidDataException($"{EnvironmentVariable} must be 'random-access' or 'mmap'.");
+    }
+}
 
 internal sealed class TensorDataSource : IDisposable
 {
@@ -12,11 +41,13 @@ internal sealed class TensorDataSource : IDisposable
     private readonly Dictionary<string, Shard> shards;
     private readonly IReadOnlyDictionary<string, TensorDescriptor> descriptors;
     private readonly StringComparer pathComparer;
+    private readonly TensorDataSourceOptions options;
     private bool disposed;
 
-    public TensorDataSource(SafeTensorCatalog catalog)
+    public TensorDataSource(SafeTensorCatalog catalog, TensorDataSourceOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(catalog);
+        this.options = options ?? TensorDataSourceOptions.FromEnvironment();
         pathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
         descriptors = catalog.Items.ToDictionary(static item => item.Name, StringComparer.Ordinal);
         shards = new Dictionary<string, Shard>(pathComparer);
@@ -33,8 +64,19 @@ internal sealed class TensorDataSource : IDisposable
                     FileOptions.RandomAccess);
                 try
                 {
-                    var shard = new Shard(path, handle, RandomAccess.GetLength(handle));
-                    shards.Add(path, shard);
+                    var mapping = this.options.Mode == TensorIoMode.MemoryMapped
+                        ? MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read)
+                        : null;
+                    try
+                    {
+                        var shard = new Shard(path, handle, RandomAccess.GetLength(handle), mapping);
+                        shards.Add(path, shard);
+                    }
+                    catch
+                    {
+                        mapping?.Dispose();
+                        throw;
+                    }
                 }
                 catch
                 {
@@ -61,6 +103,8 @@ internal sealed class TensorDataSource : IDisposable
     }
 
     public int ShardCount => shards.Count;
+
+    public TensorIoMode IoMode => options.Mode;
 
     public byte[] ReadTensor(
         TensorDescriptor descriptor,
@@ -259,7 +303,7 @@ internal sealed class TensorDataSource : IDisposable
         disposed = true;
         foreach (var shard in shards.Values)
         {
-            shard.Handle.Dispose();
+            shard.Dispose();
         }
 
         shards.Clear();
@@ -287,13 +331,19 @@ internal sealed class TensorDataSource : IDisposable
         return shard;
     }
 
-    private static void ReadFileExactly(
+    private void ReadFileExactly(
         Shard shard,
         Span<byte> destination,
         long fileOffset,
         string label,
         CancellationToken cancellationToken)
     {
+        if (options.Mode == TensorIoMode.MemoryMapped)
+        {
+            ReadMemoryMapped(shard, destination, fileOffset, label, cancellationToken);
+            return;
+        }
+
         var read = 0;
         while (read < destination.Length)
         {
@@ -310,6 +360,46 @@ internal sealed class TensorDataSource : IDisposable
             }
 
             read += count;
+        }
+    }
+
+    private static void ReadMemoryMapped(
+        Shard shard,
+        Span<byte> destination,
+        long fileOffset,
+        string label,
+        CancellationToken cancellationToken)
+    {
+        if (shard.Mapping is null)
+        {
+            throw new InvalidOperationException($"Memory-mapped shard is unavailable for {label}.");
+        }
+
+        var read = 0;
+        var scratch = ArrayPool<byte>.Shared.Rent(Math.Min(MaximumReadBytes, Math.Max(1, destination.Length)));
+        try
+        {
+            while (read < destination.Length)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var count = Math.Min(scratch.Length, destination.Length - read);
+                using var view = shard.Mapping.CreateViewAccessor(
+                    checked(fileOffset + read),
+                    count,
+                    MemoryMappedFileAccess.Read);
+                var mapped = view.ReadArray(0, scratch, 0, count);
+                if (mapped != count)
+                {
+                    throw new EndOfStreamException(
+                        $"Unexpected end of shard '{shard.Path}' while reading tensor data for {label}.");
+                }
+                scratch.AsSpan(0, count).CopyTo(destination.Slice(read, count));
+                read += count;
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(scratch, clearArray: true);
         }
     }
 
@@ -334,5 +424,12 @@ internal sealed class TensorDataSource : IDisposable
         }
     }
 
-    private sealed record Shard(string Path, SafeFileHandle Handle, long Length);
+    private sealed record Shard(string Path, SafeFileHandle Handle, long Length, MemoryMappedFile? Mapping) : IDisposable
+    {
+        public void Dispose()
+        {
+            Mapping?.Dispose();
+            Handle.Dispose();
+        }
+    }
 }
