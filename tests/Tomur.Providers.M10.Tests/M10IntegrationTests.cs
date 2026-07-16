@@ -16,6 +16,108 @@ namespace Tomur.Providers.M10.Tests;
 public sealed class M10IntegrationTests
 {
     [Fact]
+    public async Task OpenAiChatStreamingWritesIncrementalTerminalAndDoneFrames()
+    {
+        var context = CreateStreamingContext(out var body);
+        await using (body)
+        {
+            await ApiRouteExtensions.WriteOpenAiChatCompletionStreamAsync(
+                context,
+                "ready",
+                emit =>
+                {
+                    emit("first");
+                    emit(" second");
+                    return CreateCompletionResult();
+                },
+                CreateRuntimeDiagnostic);
+
+            var events = ReadSseEvents(body);
+            Assert.Equal(4, events.Count);
+            Assert.Equal("[DONE]", events[^1].Data);
+
+            using var first = JsonDocument.Parse(events[0].Data);
+            using var second = JsonDocument.Parse(events[1].Data);
+            using var terminal = JsonDocument.Parse(events[2].Data);
+            Assert.Equal("assistant", first.RootElement.GetProperty("choices")[0].GetProperty("delta").GetProperty("role").GetString());
+            Assert.Equal("first", first.RootElement.GetProperty("choices")[0].GetProperty("delta").GetProperty("content").GetString());
+            Assert.Equal(" second", second.RootElement.GetProperty("choices")[0].GetProperty("delta").GetProperty("content").GetString());
+            Assert.Equal("stop", terminal.RootElement.GetProperty("choices")[0].GetProperty("finish_reason").GetString());
+            Assert.Equal(5, terminal.RootElement.GetProperty("usage").GetProperty("total_tokens").GetInt32());
+        }
+    }
+
+    [Fact]
+    public async Task AnthropicStreamingWritesProtocolEventSequenceAndUsage()
+    {
+        var context = CreateStreamingContext(out var body);
+        await using (body)
+        {
+            await ApiRouteExtensions.WriteAnthropicMessageStreamAsync(
+                context,
+                "ready",
+                inputTokens: 3,
+                emit =>
+                {
+                    emit("first");
+                    emit(" second");
+                    return CreateCompletionResult();
+                },
+                CreateRuntimeDiagnostic);
+
+            var events = ReadSseEvents(body);
+            Assert.Equal(
+                [
+                    "message_start",
+                    "content_block_start",
+                    "content_block_delta",
+                    "content_block_delta",
+                    "content_block_stop",
+                    "message_delta",
+                    "message_stop"
+                ],
+                events.Select(static item => item.Event).ToArray());
+
+            using var firstDelta = JsonDocument.Parse(events[2].Data);
+            using var secondDelta = JsonDocument.Parse(events[3].Data);
+            using var messageDelta = JsonDocument.Parse(events[5].Data);
+            Assert.Equal("first", firstDelta.RootElement.GetProperty("delta").GetProperty("text").GetString());
+            Assert.Equal(" second", secondDelta.RootElement.GetProperty("delta").GetProperty("text").GetString());
+            Assert.Equal(2, messageDelta.RootElement.GetProperty("usage").GetProperty("output_tokens").GetInt32());
+        }
+    }
+
+    [Fact]
+    public async Task OpenAiChatStreamingPreservesStructuredFailureAfterPartialOutput()
+    {
+        var context = CreateStreamingContext(out var body);
+        await using (body)
+        {
+            await ApiRouteExtensions.WriteOpenAiChatCompletionStreamAsync(
+                context,
+                "ready",
+                emit =>
+                {
+                    emit("partial");
+                    throw new InferenceException(
+                        "managed_inference_failed",
+                        "The managed forward pass failed.",
+                        ["Inspect the managed session diagnostics."]);
+                },
+                CreateRuntimeDiagnostic);
+
+            var events = ReadSseEvents(body);
+            var errorEvent = Assert.Single(events, static item => item.Event == "error");
+            using var error = JsonDocument.Parse(errorEvent.Data);
+            Assert.Equal("managed_inference_failed", error.RootElement.GetProperty("error").GetProperty("code").GetString());
+            Assert.Equal(
+                "managed_inference_failed",
+                error.RootElement.GetProperty("error").GetProperty("diagnostic").GetProperty("code").GetString());
+            Assert.Equal("[DONE]", events[^1].Data);
+        }
+    }
+
+    [Fact]
     public async Task OllamaChatStreamingWritesIncrementalAndTerminalFrames()
     {
         var context = new DefaultHttpContext();
@@ -221,6 +323,61 @@ public sealed class M10IntegrationTests
                     provider.GetType().Assembly.Location)
             ],
             diagnostics: []);
+
+    private static DefaultHttpContext CreateStreamingContext(out MemoryStream body)
+    {
+        var context = new DefaultHttpContext();
+        body = new MemoryStream();
+        context.Response.Body = body;
+        return context;
+    }
+
+    private static CompletionResult CreateCompletionResult()
+        => new(
+            "first second",
+            new TokenUsage(3, 2, 5),
+            TimeSpan.FromMilliseconds(25),
+            []);
+
+    private static RuntimeDiagnostic CreateRuntimeDiagnostic(InferenceException exception)
+        => new(
+            "error",
+            exception.Code,
+            exception.Message,
+            "ready",
+            exception.Actions);
+
+    private static IReadOnlyList<SseEvent> ReadSseEvents(MemoryStream body)
+    {
+        var blocks = Encoding.UTF8.GetString(body.ToArray())
+            .Split("\n\n", StringSplitOptions.RemoveEmptyEntries);
+        var events = new List<SseEvent>(blocks.Length);
+        foreach (var block in blocks)
+        {
+            string? eventName = null;
+            string? data = null;
+            foreach (var line in block.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (line.StartsWith("event: ", StringComparison.Ordinal))
+                {
+                    eventName = line[7..];
+                }
+                else if (line.StartsWith("data: ", StringComparison.Ordinal))
+                {
+                    data = line[6..];
+                }
+            }
+
+            if (data is not null)
+            {
+                events.Add(new SseEvent(eventName, data));
+            }
+        }
+
+        return events;
+    }
+
+    private sealed record SseEvent(string? Event, string Data);
 
     private static LocalModelDescriptor CreateDescriptor(string directory, string id)
     {

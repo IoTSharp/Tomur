@@ -36,7 +36,7 @@
 28. Ollama `generate` 与 `chat` streaming 已接入 provider 增量 callback，按 NDJSON 输出 `done=false` 文本增量和带 usage/duration 的 `done=true` 终帧；流中失败继续返回 Ollama 风格结构化错误。
 29. `SessionManager` 已拆分状态锁与单请求执行门；session unload 会取消活动生成，等待请求退出后再释放 session，并通过 `session_unloading` / `session_unloaded` 保持并发请求和协议错误边界。
 30. session 快照已增加 provider、architecture、context、busy、resident/KV/scratch、expert cache、expert I/O、请求/token 统计与最近错误；`tomur ps`、`tomur doctor`、Runtime API 和 Web Runtime 使用同一 readiness/session 状态。
-31. M10 独立测试项目已加入 solution，覆盖 Ollama 增量/终帧、readiness 内存计划、不完整资产可见性拦截、forward verified 状态与 unload 取消/释放；本轮未执行构建、测试或服务 smoke。
+31. M10 独立测试项目已加入 solution，覆盖 OpenAI SSE、Anthropic SSE、Ollama NDJSON 的增量与终帧、流中结构化错误、readiness 内存计划、不完整资产可见性拦截、forward verified 状态与 unload 取消/释放；本轮未执行构建、测试或服务 smoke。
 32. managed GLM 已增加可配置的 SIMD/shape-aware kernel dispatch：F32、int8 与 packed int4 matvec 按硬件 `Vector<float>` 宽度执行，F32 大 shape 可有界并行，dense/shared/routed expert gate/up 使用 paired dispatch；`TOMUR_GLM_KERNEL_MODE=scalar` 保留原 scalar oracle 回退。
 33. expert cache 已增加 RAM budget 自动 per-layer capacity、usage histogram hot pin 与显式异步 prefetch，并移除 acquire 热路径的 LINQ 排序和 `HashSet` 分配；session 诊断报告 kernel、hot pin 与 prefetch 状态。
 34. M11 独立测试项目已加入 solution，覆盖 scalar fallback、SIMD/并行、int8/int4、paired dispatch、cache capacity、prefetch 与 hot eviction；本轮未执行构建、测试或性能测量。

@@ -2983,7 +2983,7 @@ public static class ApiRouteExtensions
             AppJsonSerializerContext.Default.AnthropicMessageResponse);
     }
 
-    private static async Task WriteAnthropicMessageStreamAsync(
+    internal static async Task WriteAnthropicMessageStreamAsync(
         HttpContext context,
         string model,
         int inputTokens,
@@ -3108,7 +3108,7 @@ public static class ApiRouteExtensions
         }
     }
 
-    private static async Task WriteOpenAiChatCompletionStreamAsync(
+    internal static async Task WriteOpenAiChatCompletionStreamAsync(
         HttpContext context,
         string model,
         Func<Action<string>, CompletionResult> onGenerate,
