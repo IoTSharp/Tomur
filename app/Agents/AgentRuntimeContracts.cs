@@ -156,7 +156,17 @@ public sealed record AgentChatToolCall(
     [property: JsonPropertyName("elapsed_ms")] long ElapsedMs,
     [property: JsonPropertyName("result")] JsonElement? Result,
     [property: JsonPropertyName("diagnostics")] IReadOnlyList<string> Diagnostics,
-    [property: JsonPropertyName("audit")] AgentToolInvokeAudit Audit);
+    [property: JsonPropertyName("audit")] AgentToolInvokeAudit Audit)
+{
+    [JsonPropertyName("id")]
+    public string? Id { get; init; }
+
+    [JsonPropertyName("arguments")]
+    public JsonElement? Arguments { get; init; }
+
+    [JsonPropertyName("model_selected")]
+    public bool ModelSelected { get; init; }
+}
 
 public sealed record AgentToolInvokeRequest(
     [property: JsonPropertyName("tool")] string? Tool,
@@ -185,7 +195,58 @@ public sealed record AgentToolInvokeAudit(
     [property: JsonPropertyName("mode")] string Mode,
     [property: JsonPropertyName("side_effect")] string SideEffect,
     [property: JsonPropertyName("requires_confirmation")] bool RequiresConfirmation,
-    [property: JsonPropertyName("actions")] IReadOnlyList<string> Actions);
+    [property: JsonPropertyName("actions")] IReadOnlyList<string> Actions)
+{
+    [JsonPropertyName("call_id")]
+    public string? CallId { get; init; }
+
+    [JsonPropertyName("model_selected")]
+    public bool ModelSelected { get; init; }
+
+    [JsonPropertyName("arguments_sha256")]
+    public string? ArgumentsSha256 { get; init; }
+
+    [JsonPropertyName("confirmation_requested")]
+    public bool? ConfirmationRequested { get; init; }
+
+    [JsonPropertyName("confirmation_effective")]
+    public bool? ConfirmationEffective { get; init; }
+
+    [JsonPropertyName("confirmation_consumed")]
+    public bool? ConfirmationConsumed { get; init; }
+
+    [JsonPropertyName("confirmation_reused")]
+    public bool? ConfirmationReused { get; init; }
+}
+
+internal sealed record AgentToolInvocationAuditContext(
+    string CallId,
+    bool ModelSelected,
+    string? ArgumentsSha256,
+    bool ConfirmationRequested,
+    bool ConfirmationEffective,
+    bool ConfirmationConsumed,
+    bool ConfirmationReused)
+{
+    /// <summary>
+    /// 为模型自主调用创建只包含参数指纹的审计上下文，原始参数不会进入持久化事件。
+    /// </summary>
+    public static AgentToolInvocationAuditContext CreateModelSelected(
+        string callId,
+        JsonElement? arguments,
+        bool confirmationRequested,
+        bool confirmationEffective,
+        bool confirmationConsumed,
+        bool confirmationReused)
+        => new(
+            callId,
+            true,
+            arguments is { } value ? AgentToolArgumentFingerprint.ComputeSha256(value) : null,
+            confirmationRequested,
+            confirmationEffective,
+            confirmationConsumed,
+            confirmationReused);
+}
 
 public sealed record AgentToolExecutionResult(
     [property: JsonPropertyName("status")] string Status,

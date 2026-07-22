@@ -97,6 +97,14 @@ The default local service URL is `http://127.0.0.1:5137`.
 
 Tomur does not fabricate inference results when the local runtime is unavailable. Missing models, unavailable native runtime or managed providers, damaged bundle assets, context length limits, capability mismatches, and insufficient memory are reported as diagnosable errors through the API, CLI, and UI.
 
+## 🛠️ Tool Calling
+
+The OpenAI-compatible `POST /v1/chat/completions` and Ollama-compatible `POST /api/chat` endpoints support function tool declarations, model-returned tool calls, and follow-up messages that feed back client-executed results. Compatibility endpoints do not execute arbitrary client-declared functions on the server; tool implementation and execution permissions remain the client's responsibility. OpenAI `strict=true` currently returns an explicit 400 response.
+
+`POST /api/agents/chat` uses a different boundary for Tomur-local tools: the model can autonomously select tools within a server-side loop capped by a maximum round count. Read-only tools may run automatically. Any side-effecting tool must be in the request's explicit tool allowlist; confirmation must exactly match the complete pre-approved JSON arguments and is consumed once. Call IDs, argument fingerprints, and confirmation state are written to the local event audit on a best-effort basis with an independent timeout.
+
+The base implementation has passed the focused M10 test suite (`49/49`) and a win-x64 Native AOT publish. Tool-call streaming emits aggregatable frames only after complete inference and protocol parsing; it is not incremental token-by-token argument streaming. Real-model smoke, the complete Agent tool loop, side-effect auditing after request cancellation, and concurrent event-log behavior remain unverified.
+
 ## 🔌 API Examples
 
 Health check:
@@ -124,6 +132,37 @@ curl.exe http://127.0.0.1:5137/v1/chat/completions `
     "stream": false
   }'
 ```
+
+Declare an OpenAI tool that the client will execute:
+
+```powershell
+curl.exe http://127.0.0.1:5137/v1/chat/completions `
+  -H "Content-Type: application/json" `
+  -d '{
+    "model": "qwen35-9b-q4km",
+    "messages": [
+      { "role": "user", "content": "Check the current Tomur runtime status." }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_runtime_status",
+          "description": "Read the Tomur runtime status available to the client",
+          "parameters": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+          }
+        }
+      }
+    ],
+    "tool_choice": "auto",
+    "stream": false
+  }'
+```
+
+If the model returns `choices[0].message.tool_calls`, the client executes the requested function, then appends the original assistant message and `{ "role": "tool", "tool_call_id": "<call-id>", "content": "<tool-result>" }` to `messages` before requesting again. The Ollama-compatible endpoint uses the corresponding `message.tool_calls` and `role=tool` message to complete the same loop.
 
 Call the Ollama-style chat API:
 

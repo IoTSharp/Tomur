@@ -522,7 +522,7 @@ public static class ApiRouteExtensions
             var response = await agentRuntime.RunChatAsync(request, toolInvoker, context.RequestAborted);
             await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.AgentChatResponse);
         }
-        catch (InferenceException exception) when (IsInvalidRequestInferenceException(exception))
+        catch (InferenceException exception) when (IsAgentRequestInferenceException(exception))
         {
             var diagnostic = diagnosticsProvider.GetRuntimeFailure(request.Model, exception);
             await eventLog.WriteErrorAsync(
@@ -1168,7 +1168,8 @@ public static class ApiRouteExtensions
         RuntimeDiagnosticsProvider diagnosticsProvider,
         LocalModelCatalog modelCatalog,
         LocalInferenceService inferenceService,
-        MultimodalExecutionService multimodalExecution)
+        MultimodalExecutionService multimodalExecution,
+        LocalChatClient chatClient)
     {
         var request = await ReadOpenAiRequestAsync(
             context,
@@ -1178,7 +1179,22 @@ public static class ApiRouteExtensions
             return;
         }
 
-        var model = await RequireOpenAiModelAsync(context, request.Model, diagnosticsProvider, modelCatalog, request.Stream == true);
+        if (request.Messages?.Any(static message => message is null) == true)
+        {
+            await WriteOpenAiInvalidRequestAsync(
+                context,
+                "The messages field cannot contain null entries.");
+            return;
+        }
+
+        var hasToolProtocolFields = HasOpenAiToolProtocolFields(request);
+        var usesToolProtocol = UsesOpenAiToolProtocol(request);
+        var model = await RequireOpenAiModelAsync(
+            context,
+            request.Model,
+            diagnosticsProvider,
+            modelCatalog,
+            request.Stream == true && !usesToolProtocol);
         if (model is null)
         {
             return;
@@ -1189,12 +1205,35 @@ public static class ApiRouteExtensions
             await WriteOpenAiInvalidRequestAsync(
                 context,
                 "The messages field must contain at least one message.",
-                request.Stream == true);
+                request.Stream == true && !usesToolProtocol);
             return;
+        }
+
+        int? toolInputCharacters = null;
+        if (hasToolProtocolFields)
+        {
+            try
+            {
+                // 工具声明、tool_choice 与历史关联必须在任何 SSE 响应开始前完成校验。
+                toolInputCharacters = ToolCallingChatAdapter.EstimateOpenAiInputCharacters(request);
+            }
+            catch (InferenceException exception) when (IsToolProtocolRequestError(exception))
+            {
+                await WriteOpenAiInvalidRequestAsync(context, exception.Message);
+                return;
+            }
         }
 
         if (ContainsOpenAiImageContent(request.Messages))
         {
+            if (usesToolProtocol)
+            {
+                await WriteOpenAiInvalidRequestAsync(
+                    context,
+                    "Tool calling cannot currently be combined with image content in the same local chat request.");
+                return;
+            }
+
             if (!ModelHasCapability(model, "vision"))
             {
                 var diagnostic = multimodalExecution.CreateCapabilityMismatchDiagnostic(
@@ -1239,8 +1278,14 @@ public static class ApiRouteExtensions
             return;
         }
 
-        var inputCharacters = request.Messages.Sum(static message => EstimateJsonElementCharacters(message.Content));
-        if (!await RequireOpenAiInputWithinLimitAsync(context, diagnosticsProvider, request.Model, inputCharacters, request.Stream == true))
+        var inputCharacters = toolInputCharacters ??
+            request.Messages.Sum(static message => EstimateJsonElementCharacters(message.Content));
+        if (!await RequireOpenAiInputWithinLimitAsync(
+                context,
+                diagnosticsProvider,
+                request.Model,
+                inputCharacters,
+                request.Stream == true && !usesToolProtocol))
         {
             return;
         }
@@ -1256,6 +1301,20 @@ public static class ApiRouteExtensions
 
         try
         {
+            if (usesToolProtocol)
+            {
+                var toolCompletion = await ToolCallingChatAdapter.CompleteOpenAiAsync(
+                    chatClient,
+                    request with { Model = model.Id },
+                    context.RequestAborted);
+                await WriteOpenAiChatCompletionSuccessAsync(
+                    context,
+                    model.Id,
+                    toolCompletion,
+                    request.Stream == true);
+                return;
+            }
+
             if (request.Stream == true)
             {
                 await WriteOpenAiChatCompletionStreamAsync(
@@ -1271,11 +1330,17 @@ public static class ApiRouteExtensions
         }
         catch (InferenceException exception)
         {
-            await WriteOpenAiRuntimeUnavailableAsync(context, diagnosticsProvider.GetRuntimeFailure(model.Id, exception), request.Stream == true);
+            await WriteOpenAiRuntimeUnavailableAsync(
+                context,
+                diagnosticsProvider.GetRuntimeFailure(model.Id, exception),
+                request.Stream == true && !usesToolProtocol);
         }
         catch (Exception exception) when (IsNativeRuntimeException(exception))
         {
-            await WriteOpenAiRuntimeUnavailableAsync(context, diagnosticsProvider.GetRuntimeFailure(model.Id, CreateNativeRuntimeException(exception)), request.Stream == true);
+            await WriteOpenAiRuntimeUnavailableAsync(
+                context,
+                diagnosticsProvider.GetRuntimeFailure(model.Id, CreateNativeRuntimeException(exception)),
+                request.Stream == true && !usesToolProtocol);
         }
     }
 
@@ -2022,7 +2087,12 @@ public static class ApiRouteExtensions
         }
 
         var stream = request.Stream != false;
-        var model = await RequireOllamaModelAsync(context, request.Model, diagnosticsProvider, modelCatalog, stream);
+        var model = await RequireOllamaModelAsync(
+            context,
+            request.Model,
+            diagnosticsProvider,
+            modelCatalog,
+            stream);
         if (model is null)
         {
             return;
@@ -2081,7 +2151,8 @@ public static class ApiRouteExtensions
         HttpContext context,
         RuntimeDiagnosticsProvider diagnosticsProvider,
         LocalModelCatalog modelCatalog,
-        LocalInferenceService inferenceService)
+        LocalInferenceService inferenceService,
+        LocalChatClient chatClient)
     {
         var request = await ReadOllamaRequestAsync(
             context,
@@ -2091,8 +2162,23 @@ public static class ApiRouteExtensions
             return;
         }
 
+        if (request.Messages?.Any(static message => message is null) == true)
+        {
+            await WriteOllamaInvalidRequestAsync(
+                context,
+                "The messages field cannot contain null entries.");
+            return;
+        }
+
         var stream = request.Stream != false;
-        var model = await RequireOllamaModelAsync(context, request.Model, diagnosticsProvider, modelCatalog, stream);
+        var hasToolProtocolFields = HasOllamaToolProtocolFields(request);
+        var usesToolProtocol = UsesOllamaToolProtocol(request);
+        var model = await RequireOllamaModelAsync(
+            context,
+            request.Model,
+            diagnosticsProvider,
+            modelCatalog,
+            stream && !usesToolProtocol);
         if (model is null)
         {
             return;
@@ -2104,8 +2190,26 @@ public static class ApiRouteExtensions
             return;
         }
 
-        var inputCharacters = request.Messages.Sum(static message => message.Content?.Length ?? 0);
-        if (!await RequireOllamaInputWithinLimitAsync(context, diagnosticsProvider, request.Model, inputCharacters, stream))
+        int inputCharacters;
+        try
+        {
+            // Ollama 工具 schema 与历史关联在 NDJSON 开始前校验，空 tools 数组仍保留旧文本 streaming。
+            inputCharacters = hasToolProtocolFields
+                ? ToolCallingChatAdapter.EstimateOllamaInputCharacters(request)
+                : request.Messages.Sum(static message => message.Content?.Length ?? 0);
+        }
+        catch (InferenceException exception) when (IsToolProtocolRequestError(exception))
+        {
+            await WriteOllamaInvalidRequestAsync(context, exception.Message);
+            return;
+        }
+
+        if (!await RequireOllamaInputWithinLimitAsync(
+                context,
+                diagnosticsProvider,
+                request.Model,
+                inputCharacters,
+                stream && !usesToolProtocol))
         {
             return;
         }
@@ -2122,6 +2226,21 @@ public static class ApiRouteExtensions
 
         try
         {
+            if (usesToolProtocol)
+            {
+                var toolCompletion = await ToolCallingChatAdapter.CompleteOllamaAsync(
+                    chatClient,
+                    request with { Model = model.Id },
+                    options,
+                    context.RequestAborted);
+                await WriteOllamaChatSuccessAsync(
+                    context,
+                    model.Id,
+                    toolCompletion,
+                    stream);
+                return;
+            }
+
             if (stream)
             {
                 await WriteOllamaChatStreamAsync(
@@ -2142,11 +2261,17 @@ public static class ApiRouteExtensions
         }
         catch (InferenceException exception)
         {
-            await WriteOllamaRuntimeUnavailableAsync(context, diagnosticsProvider.GetRuntimeFailure(model.Id, exception), stream);
+            await WriteOllamaRuntimeUnavailableAsync(
+                context,
+                diagnosticsProvider.GetRuntimeFailure(model.Id, exception),
+                stream && !usesToolProtocol);
         }
         catch (Exception exception) when (IsNativeRuntimeException(exception))
         {
-            await WriteOllamaRuntimeUnavailableAsync(context, diagnosticsProvider.GetRuntimeFailure(model.Id, CreateNativeRuntimeException(exception)), stream);
+            await WriteOllamaRuntimeUnavailableAsync(
+                context,
+                diagnosticsProvider.GetRuntimeFailure(model.Id, CreateNativeRuntimeException(exception)),
+                stream && !usesToolProtocol);
         }
     }
 
@@ -2911,6 +3036,78 @@ public static class ApiRouteExtensions
             AppJsonSerializerContext.Default.OpenAiChatCompletionResponse);
     }
 
+    /// <summary>
+    /// 写入包含模型工具调用的 OpenAI Chat 响应，并保留旧文本 writer 的响应形状。
+    /// </summary>
+    internal static async Task WriteOpenAiChatCompletionSuccessAsync(
+        HttpContext context,
+        string model,
+        ToolAwareCompletion result,
+        bool stream)
+    {
+        var id = $"chatcmpl-{Guid.NewGuid():N}";
+        var created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var usage = ToOpenAiUsage(result.Completion.Usage);
+        var toolCalls = CreateOpenAiToolCalls(result.ToolCalls, includeIndex: stream);
+        var finishReason = toolCalls.Count > 0 ? "tool_calls" : "stop";
+        var content = toolCalls.Count > 0 && string.IsNullOrEmpty(result.Text)
+            ? null
+            : result.Text;
+
+        if (stream)
+        {
+            StartOpenAiStream(context);
+            await WriteOpenAiChatChunkAsync(
+                context,
+                new OpenAiChatCompletionChunk(
+                    id,
+                    "chat.completion.chunk",
+                    created,
+                    model,
+                    [new OpenAiChatCompletionChunkChoice(
+                        0,
+                        new OpenAiChatCompletionDelta("assistant", content)
+                        {
+                            ToolCalls = toolCalls.Count == 0 ? null : toolCalls
+                        },
+                        null)],
+                    null));
+            await WriteOpenAiChatChunkAsync(
+                context,
+                new OpenAiChatCompletionChunk(
+                    id,
+                    "chat.completion.chunk",
+                    created,
+                    model,
+                    [new OpenAiChatCompletionChunkChoice(
+                        0,
+                        new OpenAiChatCompletionDelta(null, null),
+                        finishReason)],
+                    usage));
+            await context.Response.WriteAsync("data: [DONE]\n\n", context.RequestAborted);
+            await context.Response.Body.FlushAsync(context.RequestAborted);
+            return;
+        }
+
+        var response = new OpenAiChatCompletionResponse(
+            id,
+            "chat.completion",
+            created,
+            model,
+            [new OpenAiChatCompletionChoice(
+                0,
+                new OpenAiChatCompletionMessage("assistant", content)
+                {
+                    ToolCalls = toolCalls.Count == 0 ? null : toolCalls
+                },
+                finishReason)],
+            usage);
+        await JsonHttpResponse.WriteAsync(
+            context,
+            response,
+            AppJsonSerializerContext.Default.OpenAiChatCompletionResponse);
+    }
+
     private static async Task WriteOpenAiCompletionSuccessAsync(
         HttpContext context,
         string model,
@@ -3431,7 +3628,10 @@ public static class ApiRouteExtensions
                 ToNanoseconds(result.Elapsed),
                 0,
                 result.Usage.PromptTokens,
-                result.Usage.CompletionTokens));
+                result.Usage.CompletionTokens)
+            {
+                DoneReason = "stop"
+            });
     }
 
     internal static async Task WriteOllamaChatStreamAsync(
@@ -3491,7 +3691,10 @@ public static class ApiRouteExtensions
                 ToNanoseconds(result.Elapsed),
                 0,
                 result.Usage.PromptTokens,
-                result.Usage.CompletionTokens));
+                result.Usage.CompletionTokens)
+            {
+                DoneReason = "stop"
+            });
     }
 
     private static void StartOllamaStream(HttpContext context)
@@ -3560,7 +3763,10 @@ public static class ApiRouteExtensions
             ToNanoseconds(result.Elapsed),
             0,
             result.Usage.PromptTokens,
-            result.Usage.CompletionTokens);
+            result.Usage.CompletionTokens)
+        {
+            DoneReason = "stop"
+        };
 
         if (stream)
         {
@@ -3595,7 +3801,10 @@ public static class ApiRouteExtensions
             ToNanoseconds(result.Elapsed),
             0,
             result.Usage.PromptTokens,
-            result.Usage.CompletionTokens);
+            result.Usage.CompletionTokens)
+        {
+            DoneReason = "stop"
+        };
 
         if (stream)
         {
@@ -3615,6 +3824,102 @@ public static class ApiRouteExtensions
             response,
             AppJsonSerializerContext.Default.OllamaChatResponse);
     }
+
+    /// <summary>
+    /// 写入 Ollama 工具调用对象；流式模式先发送调用帧，再发送带统计的终帧。
+    /// </summary>
+    internal static async Task WriteOllamaChatSuccessAsync(
+        HttpContext context,
+        string model,
+        ToolAwareCompletion result,
+        bool stream)
+    {
+        var toolCalls = CreateOllamaToolCalls(result.ToolCalls);
+        var message = new OllamaChatMessage("assistant", result.Text)
+        {
+            ToolCalls = toolCalls.Count == 0 ? null : toolCalls
+        };
+
+        if (stream)
+        {
+            StartOllamaStream(context);
+            if (!string.IsNullOrEmpty(result.Text) || toolCalls.Count > 0)
+            {
+                await WriteOllamaChatChunkAsync(
+                    context,
+                    new OllamaChatResponse(
+                        model,
+                        DateTimeOffset.UtcNow,
+                        message,
+                        false,
+                        0,
+                        0,
+                        0,
+                        0));
+            }
+
+            await WriteOllamaChatChunkAsync(
+                context,
+                new OllamaChatResponse(
+                    model,
+                    DateTimeOffset.UtcNow,
+                    new OllamaChatMessage("assistant", string.Empty),
+                    true,
+                    ToNanoseconds(result.Completion.Elapsed),
+                    0,
+                    result.Completion.Usage.PromptTokens,
+                    result.Completion.Usage.CompletionTokens)
+                {
+                    DoneReason = "stop"
+                });
+            return;
+        }
+
+        var response = new OllamaChatResponse(
+            model,
+            DateTimeOffset.UtcNow,
+            message,
+            true,
+            ToNanoseconds(result.Completion.Elapsed),
+            0,
+            result.Completion.Usage.PromptTokens,
+            result.Completion.Usage.CompletionTokens)
+        {
+            DoneReason = "stop"
+        };
+        await JsonHttpResponse.WriteAsync(
+            context,
+            response,
+            AppJsonSerializerContext.Default.OllamaChatResponse);
+    }
+
+    /// <summary>
+    /// 将内部调用转换为 OpenAI function tool call，并为 SSE 写入稳定 index。
+    /// </summary>
+    private static IReadOnlyList<OpenAiChatToolCall> CreateOpenAiToolCalls(
+        IReadOnlyList<ModelToolCall> calls,
+        bool includeIndex)
+        => calls.Select((call, index) => new OpenAiChatToolCall(
+            call.Id,
+            "function",
+            new OpenAiChatToolCallFunction(call.Name, call.Arguments.GetRawText()))
+        {
+            Index = includeIndex ? index : null
+        }).ToArray();
+
+    /// <summary>
+    /// 将内部调用转换为 Ollama 对象参数，避免把 arguments 降级成 JSON 字符串。
+    /// </summary>
+    private static IReadOnlyList<OllamaChatToolCall> CreateOllamaToolCalls(
+        IReadOnlyList<ModelToolCall> calls)
+        => calls.Select(static (call, index) => new OllamaChatToolCall(
+            new OllamaChatToolCallFunction(call.Name, call.Arguments.Clone())
+            {
+                Index = index
+            })
+        {
+            Id = call.Id
+        }).ToArray();
 
     private static async Task WriteOpenAiChatChunkAsync(HttpContext context, OpenAiChatCompletionChunk chunk)
     {
@@ -3697,12 +4002,46 @@ public static class ApiRouteExtensions
         }
     }
 
+    /// <summary>
+    /// Agent 输入错误返回 400；模型生成的非法工具调用属于本地推理失败，不能归责于调用方。
+    /// </summary>
+    private static bool IsAgentRequestInferenceException(InferenceException exception)
+        => IsInvalidRequestInferenceException(exception) &&
+            exception.Code is not
+                "duplicate_tool_call_id" and not
+                "invalid_tool_arguments" and not
+                "invalid_tool_call" and not
+                "invalid_tool_schema" and not
+                "parallel_tool_calls_not_allowed" and not
+                "required_tool_mismatch" and not
+                "tool_call_required" and not
+                "tool_not_declared";
+
+    /// <summary>
+    /// 识别由调用方参数或工具协议造成的错误，避免把它们误报为本地 runtime 故障。
+    /// </summary>
     private static bool IsInvalidRequestInferenceException(InferenceException exception)
         => exception.Code is
             "invalid_audio" or
             "invalid_request" or
+            "invalid_tool_arguments" or
+            "invalid_tool_call" or
+            "invalid_tool_schema" or
+            "duplicate_tool_call_id" or
+            "model_capability_mismatch" or
+            "no_model_tools_available" or
+            "parallel_tool_calls_not_allowed" or
+            "required_tool_mismatch" or
+            "too_many_tools" or
+            "tool_call_required" or
+            "tool_not_callable" or
+            "tool_not_declared" or
             "tool_not_found" or
             "tool_round_limit_exceeded" or
+            "tool_requires_confirmation" or
+            "tool_requires_controlled_mode" or
+            "unsupported_runtime_repair_action" or
+            "unsupported_tool_argument" or
             "unsupported_audio_format";
 
     private static InferenceException CreateNativeRuntimeException(Exception exception)
@@ -4062,8 +4401,97 @@ public static class ApiRouteExtensions
         return inputs;
     }
 
+    /// <summary>
+    /// 判断 OpenAI 消息是否包含图像内容，空消息元素由请求预检处理且不会在此触发空引用。
+    /// </summary>
     private static bool ContainsOpenAiImageContent(IReadOnlyList<OpenAiChatMessage> messages)
-        => messages.Any(static message => ContainsImageContent(message.Content));
+        => messages.Any(static message => message is not null && ContainsImageContent(message.Content));
+
+    /// <summary>
+    /// 判断 OpenAI 请求是否出现工具协议字段，用于在写流前完成校验和上下文检查。
+    /// </summary>
+    private static bool HasOpenAiToolProtocolFields(OpenAiChatCompletionRequest request)
+        => request.Tools is not null ||
+            request.ToolChoice is not null ||
+            request.ParallelToolCalls is not null ||
+            request.Messages?.Any(static message =>
+                message is not null &&
+                (message.ToolCalls is not null ||
+                 !string.IsNullOrWhiteSpace(message.ToolCallId) ||
+                 string.Equals(message.Role, "tool", StringComparison.OrdinalIgnoreCase))) == true;
+
+    /// <summary>
+    /// 仅在存在非空声明或历史调用时进入缓冲工具路径，空 tools 和无工具选项保留旧 streaming。
+    /// </summary>
+    internal static bool UsesOpenAiToolProtocol(OpenAiChatCompletionRequest request)
+        => HasOpenAiToolHistory(request) ||
+            (request.Tools is { Count: > 0 } && OpenAiToolChoiceAllowsCalls(request.ToolChoice));
+
+    /// <summary>
+    /// 判断 OpenAI 历史是否包含必须按调用 ID 序列化的 assistant 调用或工具结果。
+    /// </summary>
+    private static bool HasOpenAiToolHistory(OpenAiChatCompletionRequest request)
+        => request.Messages?.Any(static message =>
+                message is not null &&
+                (message.ToolCalls is { Count: > 0 } ||
+                 !string.IsNullOrWhiteSpace(message.ToolCallId) ||
+                 string.Equals(message.Role, "tool", StringComparison.OrdinalIgnoreCase))) == true;
+
+    /// <summary>
+    /// 显式 tool_choice=none 禁止新调用；其他值交给预检返回 auto、required 或明确 400。
+    /// </summary>
+    private static bool OpenAiToolChoiceAllowsCalls(JsonElement? toolChoice)
+    {
+        if (toolChoice is null || toolChoice.Value.ValueKind != JsonValueKind.String)
+        {
+            return true;
+        }
+
+        return !string.Equals(
+            toolChoice.Value.GetString()?.Trim(),
+            "none",
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// 判断 Ollama 请求是否出现工具字段，用于提前校验空数组和非法历史。
+    /// </summary>
+    private static bool HasOllamaToolProtocolFields(OllamaChatRequest request)
+        => request.Tools is not null ||
+            request.Messages?.Any(static message =>
+                message is not null &&
+                (message.ToolCalls is not null ||
+                 !string.IsNullOrWhiteSpace(message.ToolName) ||
+                 !string.IsNullOrWhiteSpace(message.ToolCallId) ||
+                 string.Equals(message.Role, "tool", StringComparison.OrdinalIgnoreCase))) == true;
+
+    /// <summary>
+    /// 仅在 Ollama 非空工具声明或历史调用存在时进入缓冲工具路径。
+    /// </summary>
+    internal static bool UsesOllamaToolProtocol(OllamaChatRequest request)
+        => request.Tools is { Count: > 0 } ||
+            request.Messages?.Any(static message =>
+                message is not null &&
+                (message.ToolCalls is { Count: > 0 } ||
+                 !string.IsNullOrWhiteSpace(message.ToolName) ||
+                 !string.IsNullOrWhiteSpace(message.ToolCallId) ||
+                 string.Equals(message.Role, "tool", StringComparison.OrdinalIgnoreCase))) == true;
+
+    /// <summary>
+    /// 区分可返回 HTTP 400 的工具协议错误与需要运行时诊断的推理失败。
+    /// </summary>
+    private static bool IsToolProtocolRequestError(InferenceException exception)
+        => exception.Code is
+            "invalid_request" or
+            "invalid_tool_schema" or
+            "invalid_tool_arguments" or
+            "invalid_tool_call" or
+            "tool_call_required" or
+            "parallel_tool_calls_not_allowed" or
+            "tool_not_declared" or
+            "duplicate_tool_call_id" or
+            "required_tool_mismatch" or
+            "unsupported_tool_argument";
 
     private static bool TryCreateOpenAiVisionInput(
         IReadOnlyList<OpenAiChatMessage> messages,

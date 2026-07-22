@@ -15,7 +15,11 @@ public sealed class AgentRuntimeService
     private const string AgentName = "tomur-local-agent";
     private const string AgentRuntime = "Microsoft.Agents.AI.ChatClientAgent";
     private const string WorkflowRuntime = "Tomur read-only tool plan with optional Microsoft.Agents.AI.Workflows summary";
-    private const string ChatRespondInputSchema = """{"type":"object","properties":{"message":{"type":"string"},"messages":{"type":"array","items":{"type":"object","properties":{"role":{"type":"string"},"content":{"type":"string"}}}},"tool_results":{"type":"array","items":{"type":"object","properties":{"tool":{"type":"string"},"content":{"type":"string"},"result":{"type":"object"}}}},"tool_mode":{"type":"string","enum":["none","read_only","auto_read_only","controlled","auto_controlled"]},"tools":{"type":"array","items":{"type":"object","required":["tool"],"properties":{"tool":{"type":"string","enum":["runtime.diagnose","tools.inspect","files.search","runtime.repair","vision.analyze","ocr.recognize","audio.transcribe","image.generate","audio.speak"]},"arguments":{"type":"object"},"confirm":{"type":"boolean"}}}},"max_tool_rounds":{"type":"integer"},"model":{"type":"string"},"instructions":{"type":"string"},"max_tokens":{"type":"integer"}}}""";
+    private const string ChatRespondInputSchema = """{"type":"object","properties":{"message":{"type":"string"},"messages":{"type":"array","items":{"type":"object","properties":{"role":{"type":"string"},"content":{"type":"string"}}}},"tool_results":{"type":"array","items":{"type":"object","properties":{"tool":{"type":"string"},"content":{"type":"string"},"result":{"type":"object"}}}},"tool_mode":{"type":"string","enum":["none","read_only","auto_read_only","controlled","auto_controlled","model_auto_read_only","model_auto_controlled"]},"tools":{"type":"array","items":{"type":"object","required":["tool"],"properties":{"tool":{"type":"string","enum":["runtime.diagnose","tools.inspect","files.search","runtime.repair","vision.analyze","ocr.recognize","audio.transcribe","image.generate","audio.speak"]},"arguments":{"type":"object"},"confirm":{"type":"boolean"}}}},"max_tool_rounds":{"type":"integer"},"model":{"type":"string"},"instructions":{"type":"string"},"max_tokens":{"type":"integer"}}}""";
+
+    private sealed record ModelToolSelection(
+        AgentToolDescriptor Descriptor,
+        AgentChatToolRequest? Request);
 
     private readonly LocalModelCatalog modelCatalog;
     private readonly MultimodalRuntimeService multimodalRuntime;
@@ -64,9 +68,9 @@ public sealed class AgentRuntimeService
             new AgentFrameworkStatus(
                 "wired",
                 "Microsoft.Agents.AI.ChatClientAgent / Microsoft.Agents.AI.Workflows",
-                "Agent Framework packages and Tomur-local AI boundaries are present. Plain local ChatClientAgent execution is wired, read-only Tomur diagnostics are exposed as Microsoft.Extensions.AI.AITool objects, and R8 multimodal adapters are available through an explicit controlled tool path. Model-selected arbitrary tool execution remains disabled; artifact-generating tools require explicit confirmation.",
+                "Agent Framework packages and Tomur-local AI boundaries are present. Local models can select declared Tomur tools through bounded model_auto_* modes; read-only calls run automatically, while controlled side effects keep explicit allowlist and confirmation requirements.",
                 [
-                    "POST /api/agents/chat runs the local ChatClientAgent text path.",
+                    "POST /api/agents/chat runs plain text, planned context, and bounded model-selected tool loops.",
                     "GET /api/agents/tools exposes the Tomur tool map.",
                     "GET /api/agents/tool-bindings exposes the current AITool binding set.",
                     "GET /api/agents/events exposes recent local Agent Framework event summaries.",
@@ -85,12 +89,12 @@ public sealed class AgentRuntimeService
                 "POST /api/agents/chat",
                 defaultChatModel is null
                     ? "A ChatClientAgent can be constructed only after a local chat model is visible."
-                    : "A ChatClientAgent can run plain local text conversations and summarize bounded read-only tool results through Microsoft.Extensions.AI.IChatClient."),
+                    : "A ChatClientAgent can run plain local text conversations, bounded model-selected tool loops, and read-only workflow summaries through Microsoft.Extensions.AI.IChatClient."),
             tools,
             [
                 "Community keeps Agent Framework optional and local-first.",
                 "Tool schemas are represented by source-generated JSON contracts before full workflow persistence is added.",
-                "R9 does not make side-effect multimodal tools callable automatically by default.",
+                "Model-selected side-effect tools require an explicit controlled allowlist and confirmation.",
                 "Runtime repair actions require explicit user confirmation and stay outside automatic read-only planning."
             ]);
     }
@@ -111,15 +115,18 @@ public sealed class AgentRuntimeService
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(toolInvoker);
+        ValidateChatRequestCollections(request);
 
         var messages = BuildMessages(request);
         var requestedToolMode = ResolveToolMode(request);
+        var modelSelectedMode = IsModelSelectedMode(requestedToolMode);
         var maxToolRounds = NormalizeMaxToolRounds(request.MaxToolRounds);
         var started = DateTimeOffset.UtcNow;
         var toolCalls = new List<AgentChatToolCall>();
         using var activity = telemetry.StartChat(request, AgentRuntime);
 
-        if (requestedToolMode is "read_only" or "auto_read_only" or "controlled" or "auto_controlled")
+        if (!modelSelectedMode &&
+            requestedToolMode is "read_only" or "auto_read_only" or "controlled" or "auto_controlled")
         {
             var requestedTools = requestedToolMode is "auto_read_only" or "auto_controlled"
                 ? ResolveAutoTools(request.Tools, messages, maxToolRounds)
@@ -145,14 +152,33 @@ public sealed class AgentRuntimeService
             request.TopP);
         var modelId = ResolveChatModelId(options.ModelId);
         options.ModelId = modelId;
-        var agent = CreateAgent(modelId);
-        var session = await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
-        var response = await agent.RunAsync(
-                messages,
-                session,
-                new ChatClientAgentRunOptions(options),
-                cancellationToken)
-            .ConfigureAwait(false);
+        string responseText;
+        if (modelSelectedMode)
+        {
+            responseText = await RunModelSelectedChatAsync(
+                    request,
+                    messages,
+                    options,
+                    modelId,
+                    requestedToolMode,
+                    maxToolRounds,
+                    toolInvoker,
+                    toolCalls,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        else
+        {
+            var agent = CreateAgent(modelId);
+            var session = await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+            var response = await agent.RunAsync(
+                    messages,
+                    session,
+                    new ChatClientAgentRunOptions(options),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            responseText = response.Text ?? string.Empty;
+        }
 
         var agentResponse = new AgentChatResponse(
             toolCalls.Any(static tool => IsNonOkToolStatus(tool.Status)) ? "partial" : "ok",
@@ -162,7 +188,7 @@ public sealed class AgentRuntimeService
             requestedToolMode,
             toolCalls.Count,
             toolCalls,
-            response.Text ?? string.Empty,
+            responseText,
             (long)Math.Round((DateTimeOffset.UtcNow - started).TotalMilliseconds),
             BuildChatDiagnostics(requestedToolMode, toolCalls));
         telemetry.CompleteChat(activity, agentResponse);
@@ -177,6 +203,7 @@ public sealed class AgentRuntimeService
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(toolInvoker);
+        ValidateWorkflowRequestCollections(request);
 
         var started = DateTimeOffset.UtcNow;
         var messages = BuildMessagesForWorkflow(request);
@@ -314,6 +341,15 @@ public sealed class AgentRuntimeService
             diagnostics.Add("tool-boundary: artifact-generating tools require confirm=true");
             diagnostics.Add($"tool-rounds: {toolCalls.Count}");
         }
+        else if (toolMode is "model_auto_read_only" or "model_auto_controlled")
+        {
+            diagnostics.Add("tool-planner: local model-selected function calls");
+            diagnostics.Add("tool-loop: Microsoft.Extensions.AI.FunctionInvokingChatClient");
+            diagnostics.Add(toolMode == "model_auto_controlled"
+                ? "tool-boundary: explicit controlled allowlist; side effects require confirm=true"
+                : "tool-boundary: callable read-only tools only");
+            diagnostics.Add($"tool-rounds: {toolCalls.Count}");
+        }
 
         return diagnostics;
     }
@@ -363,6 +399,234 @@ public sealed class AgentRuntimeService
             loggerFactory,
             services);
     }
+
+    /// <summary>
+    /// 使用指定聊天管线创建 Agent，模型自主模式会传入函数调用装饰器。
+    /// </summary>
+    private ChatClientAgent CreateAgent(string modelId, IChatClient client, ChatOptions options)
+    {
+        options.ModelId = modelId;
+        return new ChatClientAgent(
+            client,
+            new ChatClientAgentOptions
+            {
+                Id = "tomur.local",
+                Name = AgentName,
+                Description = "Local-first Tomur Community agent backed by the monolithic Tomur runtime.",
+                // 工具和 instructions 只通过 run options 传入，避免 Agent 默认选项再次合并造成重复。
+                ChatOptions = new ChatOptions
+                {
+                    ModelId = modelId,
+                    ToolMode = ChatToolMode.None
+                },
+                UseProvidedChatClientAsIs = true
+            },
+            loggerFactory,
+            services);
+    }
+
+    /// <summary>
+    /// 运行模型选择、工具执行、结果回灌和继续推理的有界服务端循环。
+    /// </summary>
+    private async Task<string> RunModelSelectedChatAsync(
+        AgentChatRequest request,
+        IReadOnlyList<ChatMessage> messages,
+        ChatOptions options,
+        string modelId,
+        string toolMode,
+        int maxToolRounds,
+        ToolInvoker toolInvoker,
+        List<AgentChatToolCall> toolCalls,
+        CancellationToken cancellationToken)
+    {
+        var selections = ResolveModelSelectedTools(request.Tools, toolMode);
+        var selectionByName = selections.ToDictionary(
+            static selection => selection.Descriptor.Name,
+            StringComparer.Ordinal);
+        options.Tools = selections
+            .Select(static selection => (AITool)new ModelSelectedToolFunction(
+                selection.Descriptor,
+                selection.Request?.Confirm == true ? selection.Request.Arguments : null))
+            .ToArray();
+        options.ToolMode = ChatToolMode.Auto;
+        options.AllowMultipleToolCalls = false;
+
+        var functionClient = new FunctionInvokingChatClient(chatClient, loggerFactory, services)
+        {
+            AllowConcurrentInvocation = false,
+            // 多留一次迭代让自定义执行器把超限调用转换为明确诊断，同时仍只执行 maxToolRounds 次工具。
+            MaximumIterationsPerRequest = maxToolRounds + 2,
+            MaximumConsecutiveErrorsPerRequest = 0,
+            TerminateOnUnknownCalls = true
+        };
+        var seenCallIds = new HashSet<string>(StringComparer.Ordinal);
+        var approvalTracker = new ModelToolApprovalTracker();
+        functionClient.FunctionInvoker = async (context, invocationToken) =>
+        {
+            var call = context.CallContent;
+            if (!selectionByName.TryGetValue(call.Name, out var selection))
+            {
+                context.Terminate = true;
+                throw new InferenceException(
+                    "tool_not_declared",
+                    $"The model requested tool '{call.Name}' outside the current allowlist.",
+                    ["Use only tools declared for the current Agent request."]);
+            }
+
+            if (toolCalls.Count >= maxToolRounds)
+            {
+                context.Terminate = true;
+                var roundLimit = new InferenceException(
+                    "tool_round_limit_exceeded",
+                    $"The model exceeded max_tool_rounds={maxToolRounds}.",
+                    ["Increase max_tool_rounds up to 4 or ask the model to complete with fewer tool calls."]);
+                var roundLimitAudit = AgentToolInvocationAuditContext.CreateModelSelected(
+                    call.CallId,
+                    null,
+                    selection.Request?.Confirm == true,
+                    confirmationEffective: false,
+                    confirmationConsumed: false,
+                    confirmationReused: false);
+                var roundLimitResponse = await toolInvoker.RecordModelSelectedFailureAsync(
+                        selection.Descriptor,
+                        toolMode == "model_auto_controlled" ? "model-auto-controlled" : "model-auto-read-only",
+                        toolMode == "model_auto_controlled" ? "auto-controlled" : "model-auto",
+                        roundLimitAudit,
+                        roundLimit,
+                        invocationToken)
+                    .ConfigureAwait(false);
+                toolCalls.Add(ToModelSelectedToolCall(roundLimitResponse, call.CallId, null));
+                return roundLimitResponse.Result.HasValue ? roundLimitResponse.Result.Value : null;
+            }
+
+            var confirmationRequested = selection.Request?.Confirm == true;
+            if (!seenCallIds.Add(call.CallId))
+            {
+                context.Terminate = true;
+                var duplicate = new InferenceException(
+                    "duplicate_tool_call_id",
+                    $"The model reused tool call id '{call.CallId}' across Agent rounds.",
+                    ["Return a unique call id for every tool invocation in the current request."]);
+                var duplicateAudit = AgentToolInvocationAuditContext.CreateModelSelected(
+                    call.CallId,
+                    null,
+                    confirmationRequested,
+                    confirmationEffective: false,
+                    confirmationConsumed: false,
+                    confirmationReused: false);
+                var duplicateResponse = await toolInvoker.RecordModelSelectedFailureAsync(
+                        selection.Descriptor,
+                        toolMode == "model_auto_controlled" ? "model-auto-controlled" : "model-auto-read-only",
+                        toolMode == "model_auto_controlled" ? "auto-controlled" : "model-auto",
+                        duplicateAudit,
+                        duplicate,
+                        invocationToken)
+                    .ConfigureAwait(false);
+                toolCalls.Add(ToModelSelectedToolCall(duplicateResponse, call.CallId, null));
+                return duplicateResponse.Result.HasValue ? duplicateResponse.Result.Value : null;
+            }
+
+            JsonElement arguments;
+            try
+            {
+                arguments = ModelToolProtocol.ToJsonElement(call.Arguments);
+            }
+            catch (Exception exception) when (IsRecoverableModelToolException(exception))
+            {
+                var failureAudit = AgentToolInvocationAuditContext.CreateModelSelected(
+                    call.CallId,
+                    null,
+                    confirmationRequested,
+                    confirmationEffective: false,
+                    confirmationConsumed: false,
+                    confirmationReused: false);
+                var failureResponse = await toolInvoker.RecordModelSelectedFailureAsync(
+                        selection.Descriptor,
+                        toolMode == "model_auto_controlled" ? "model-auto-controlled" : "model-auto-read-only",
+                        toolMode == "model_auto_controlled" ? "auto-controlled" : "model-auto",
+                        failureAudit,
+                        exception,
+                        invocationToken)
+                    .ConfigureAwait(false);
+                toolCalls.Add(ToModelSelectedToolCall(failureResponse, call.CallId, null));
+                return failureResponse.Result.HasValue ? failureResponse.Result.Value : null;
+            }
+
+            var controlled = toolMode == "model_auto_controlled";
+            var hasSideEffect = HasModelToolSideEffect(selection.Descriptor);
+            var approval = approvalTracker.Evaluate(
+                selection.Descriptor.Name,
+                hasSideEffect,
+                selection.Request,
+                arguments);
+            var confirmed = !hasSideEffect || approval.Effective;
+            var auditContext = AgentToolInvocationAuditContext.CreateModelSelected(
+                call.CallId,
+                arguments,
+                approval.Requested,
+                approval.Effective,
+                approval.Consumed,
+                approval.Reused);
+            var invokeRequest = new AgentToolInvokeRequest(call.Name, arguments)
+            {
+                Mode = controlled ? "auto_controlled" : "read_only",
+                Confirm = confirmed
+            };
+            var invokeResponse = await toolInvoker.InvokeAsync(
+                    invokeRequest,
+                    controlled ? "model-auto-controlled" : "model-auto-read-only",
+                    controlled ? "auto-controlled" : "model-auto",
+                    auditContext,
+                    invocationToken)
+                .ConfigureAwait(false);
+            toolCalls.Add(ToModelSelectedToolCall(invokeResponse, call.CallId, arguments));
+
+            if (string.Equals(invokeResponse.Status, "blocked", StringComparison.OrdinalIgnoreCase))
+            {
+                context.Terminate = true;
+            }
+
+            return invokeResponse.Result.HasValue
+                ? invokeResponse.Result.Value
+                : null;
+        };
+
+        var agent = CreateAgent(modelId, functionClient, options);
+        var session = await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+        var response = await agent.RunAsync(
+                messages,
+                session,
+                new ChatClientAgentRunOptions(options),
+                cancellationToken)
+            .ConfigureAwait(false);
+        return response.Text ?? string.Empty;
+    }
+
+    /// <summary>
+    /// 将副作用工具的确认绑定到 allowlist 中预批准的完整参数，模型不得自行替换具体动作。
+    /// </summary>
+    internal static bool IsConfirmedModelToolArguments(
+        AgentChatToolRequest? requested,
+        JsonElement modelArguments)
+        => requested?.Confirm == true &&
+            requested.Arguments is { ValueKind: JsonValueKind.Object } approvedArguments &&
+            JsonElement.DeepEquals(approvedArguments, modelArguments);
+
+    /// <summary>
+    /// 判断模型工具是否具有副作用，确认边界以 side_effect 为准而不是依赖可误配的提示标志。
+    /// </summary>
+    internal static bool HasModelToolSideEffect(AgentToolDescriptor descriptor)
+        => !string.Equals(descriptor.SideEffect, "none", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(descriptor.SideEffect, "read", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// 仅把可转换成工具错误结果的异常留在模型循环内，致命进程异常继续向上传播。
+    /// </summary>
+    private static bool IsRecoverableModelToolException(Exception exception)
+        => exception is not OperationCanceledException and
+            not OutOfMemoryException and
+            not StackOverflowException and
+            not AccessViolationException;
 
     private ChatOptions CreateChatOptions(
         string? model,
@@ -423,6 +687,62 @@ public sealed class AgentRuntimeService
             "invalid_request",
             "The agent chat request requires message, messages[].content or tool_results[].content.",
             ["Provide a user message or a prior read-only tool result before invoking /api/agents/chat."]);
+    }
+
+    /// <summary>
+    /// 在进入消息和工具规划前拒绝 JSON 数组中的空元素，避免无效请求退化为服务器空引用错误。
+    /// </summary>
+    internal static void ValidateChatRequestCollections(AgentChatRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.Messages?.Any(static message => message is null) == true)
+        {
+            throw new InferenceException(
+                "invalid_request",
+                "The agent messages field cannot contain null entries.",
+                ["Remove null entries from messages and retry."]);
+        }
+
+        if (request.ToolResults?.Any(static result => result is null) == true)
+        {
+            throw new InferenceException(
+                "invalid_request",
+                "The agent tool_results field cannot contain null entries.",
+                ["Remove null entries from tool_results and retry."]);
+        }
+
+        ValidateToolRequestEntries(request.Tools);
+    }
+
+    /// <summary>
+    /// 校验只读工作流的消息和工具集合，保证所有后续规划代码只处理有效对象。
+    /// </summary>
+    internal static void ValidateWorkflowRequestCollections(AgentReadOnlyWorkflowRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.Messages?.Any(static message => message is null) == true)
+        {
+            throw new InferenceException(
+                "invalid_request",
+                "The workflow messages field cannot contain null entries.",
+                ["Remove null entries from messages and retry."]);
+        }
+
+        ValidateToolRequestEntries(request.Tools);
+    }
+
+    /// <summary>
+    /// 拒绝工具 allowlist 中的空元素，避免手工和模型自主两条执行路径产生不一致诊断。
+    /// </summary>
+    private static void ValidateToolRequestEntries(IReadOnlyList<AgentChatToolRequest>? tools)
+    {
+        if (tools?.Any(static tool => tool is null) == true)
+        {
+            throw new InferenceException(
+                "invalid_request",
+                "The tools field cannot contain null entries.",
+                ["Remove null entries from tools and retry."]);
+        }
     }
 
     private static List<ChatMessage> BuildMessagesForWorkflow(AgentReadOnlyWorkflowRequest request)
@@ -490,6 +810,20 @@ public sealed class AgentRuntimeService
             response.Diagnostics,
             response.Audit);
 
+    /// <summary>
+    /// 将工具响应关联到模型生成的调用 ID 和已解析参数，持久化日志仍只记录参数指纹。
+    /// </summary>
+    private static AgentChatToolCall ToModelSelectedToolCall(
+        AgentToolInvokeResponse response,
+        string callId,
+        JsonElement? arguments)
+        => ToChatToolCall(response) with
+        {
+            Id = callId,
+            Arguments = arguments?.Clone(),
+            ModelSelected = true
+        };
+
     private static string ResolveToolMode(AgentChatRequest request)
     {
         var hasToolRequests = request.Tools is { Count: > 0 };
@@ -540,6 +874,24 @@ public sealed class AgentRuntimeService
             return "auto_controlled";
         }
 
+        if (normalized is "model_auto_read_only" or "model_read_only" or "model_auto")
+        {
+            return "model_auto_read_only";
+        }
+
+        if (normalized is "model_auto_controlled" or "model_controlled")
+        {
+            if (!hasToolRequests)
+            {
+                throw new InferenceException(
+                    "invalid_request",
+                    "tool_mode model_auto_controlled requires an explicit tools[] allowlist.",
+                    ["List the controlled tools the model may select and set confirm=true where required."]);
+            }
+
+            return "model_auto_controlled";
+        }
+
         throw new InferenceException(
             "invalid_request",
             $"Unsupported tool_mode '{request.ToolMode}'.",
@@ -548,12 +900,106 @@ public sealed class AgentRuntimeService
                 "Use tool_mode read_only with tools[] to invoke runtime.diagnose, tools.inspect or files.search before the agent answers.",
                 "Use tool_mode auto_read_only to let Tomur select bounded read-only tools from the current request.",
                 "Use tool_mode controlled with explicit tools[] to invoke connected R8 tools or runtime.repair; artifact generation and repair actions require confirm=true.",
-                "Model-selected arbitrary tool-calling is not enabled in this R9 boundary."
+                "Use tool_mode model_auto_read_only for bounded model-selected read-only tools.",
+                "Use tool_mode model_auto_controlled with an explicit tools[] allowlist; side-effect tools still require confirm=true."
             ]);
     }
 
     private static int NormalizeMaxToolRounds(int? value)
         => value is > 0 ? Math.Clamp(value.Value, 1, 4) : 2;
+
+    /// <summary>
+    /// 判断当前模式是否由本地模型逐轮选择工具。
+    /// </summary>
+    private static bool IsModelSelectedMode(string toolMode)
+        => toolMode is "model_auto_read_only" or "model_auto_controlled";
+
+    /// <summary>
+    /// 解析模型可见工具；受控模式只接受调用方显式列出的本地工具。
+    /// </summary>
+    private IReadOnlyList<ModelToolSelection> ResolveModelSelectedTools(
+        IReadOnlyList<AgentChatToolRequest>? requestedTools,
+        string toolMode)
+    {
+        var controlled = toolMode == "model_auto_controlled";
+        var descriptors = BuildToolDescriptors(modelCatalog.ListModels())
+            .Where(static descriptor => descriptor.Name != "chat.respond")
+            .ToDictionary(static descriptor => descriptor.Name, StringComparer.OrdinalIgnoreCase);
+
+        if (requestedTools is null || requestedTools.Count == 0)
+        {
+            var defaults = descriptors.Values
+                .Where(static descriptor =>
+                    descriptor.Callable &&
+                    string.Equals(descriptor.SideEffect, "read", StringComparison.OrdinalIgnoreCase))
+                .Select(static descriptor => new ModelToolSelection(descriptor, null))
+                .ToArray();
+            if (defaults.Length > 0 && !controlled)
+            {
+                return defaults;
+            }
+
+            throw new InferenceException(
+                "no_model_tools_available",
+                "No callable tools are available for the requested model-selected mode.",
+                ["Inspect GET /api/agents/tools and provide an explicit tools[] allowlist."]);
+        }
+
+        if (requestedTools.Count > 32)
+        {
+            throw new InferenceException(
+                "too_many_tools",
+                "A model-selected Agent request can declare at most 32 tools.",
+                ["Reduce the tools[] allowlist for this request."]);
+        }
+
+        var selections = new List<ModelToolSelection>(requestedTools.Count);
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var requested in requestedTools)
+        {
+            var name = requested.Tool?.Trim();
+            if (string.IsNullOrWhiteSpace(name) || !names.Add(name))
+            {
+                throw new InferenceException(
+                    "invalid_request",
+                    string.IsNullOrWhiteSpace(name)
+                        ? "Every model-selected tools[] entry requires a tool name."
+                        : $"Tool '{name}' appears more than once in the allowlist.",
+                    ["Provide unique tool names from GET /api/agents/tools."]);
+            }
+
+            if (!descriptors.TryGetValue(name, out var descriptor) || !descriptor.Callable)
+            {
+                throw new InferenceException(
+                    "tool_not_callable",
+                    $"Tool '{name}' is not ready and callable for model-selected execution.",
+                    ["Inspect GET /api/agents/tools for current readiness and supported actions."]);
+            }
+
+            if (!controlled && !string.Equals(descriptor.SideEffect, "read", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InferenceException(
+                    "tool_requires_controlled_mode",
+                    $"Tool '{name}' is not read-only and cannot be declared in model_auto_read_only mode.",
+                    ["Use model_auto_controlled with an explicit allowlist and confirm=true where required."]);
+            }
+
+            if (controlled &&
+                HasModelToolSideEffect(descriptor) &&
+                requested.Confirm == true &&
+                requested.Arguments is not { ValueKind: JsonValueKind.Object })
+            {
+                throw new InferenceException(
+                    "invalid_request",
+                    $"Confirmed tool '{name}' requires an object arguments value that identifies the approved action.",
+                    ["Provide the exact arguments to approve, or omit confirm so the call remains blocked."]);
+            }
+
+            selections.Add(new ModelToolSelection(descriptor, requested));
+        }
+
+        return selections;
+    }
 
     private static IReadOnlyList<AgentChatToolRequest> NormalizeRequestedTools(
         IReadOnlyList<AgentChatToolRequest>? tools,
@@ -831,7 +1277,7 @@ public sealed class AgentRuntimeService
             "read",
             true,
             false,
-            ["manual-read-only", "chat-context", "auto-read-only", "read-only-workflow"],
+            ["manual-read-only", "chat-context", "auto-read-only", "read-only-workflow", "model-auto-read-only", "model-auto-controlled"],
             "Local file Q&A searches Tomur-managed text files through SQLite FTS without PostgreSQL.",
             ["Place text documents under the Tomur data files directory before invoking files.search."]);
 
@@ -846,7 +1292,7 @@ public sealed class AgentRuntimeService
             "read",
             true,
             false,
-            ["manual-read-only", "chat-context", "auto-read-only", "read-only-workflow"],
+            ["manual-read-only", "chat-context", "auto-read-only", "read-only-workflow", "model-auto-read-only", "model-auto-controlled"],
             "Runtime status can be exposed as a read-only local tool; repair actions remain user-confirmed.",
             []);
 
@@ -861,7 +1307,7 @@ public sealed class AgentRuntimeService
             "read",
             true,
             false,
-            ["manual-read-only", "chat-context", "auto-read-only", "read-only-workflow"],
+            ["manual-read-only", "chat-context", "auto-read-only", "read-only-workflow", "model-auto-read-only", "model-auto-controlled"],
             "Agent Framework tool declarations can be inspected without invoking side-effect tools.",
             []);
 
@@ -876,7 +1322,7 @@ public sealed class AgentRuntimeService
             "repairs-local-runtime",
             true,
             true,
-            ["manual-controlled", "chat-controlled", "requires-confirmation"],
+            ["manual-controlled", "chat-controlled", "model-auto-controlled", "requires-confirmation"],
             "Runtime repair actions are explicit controlled tools and require confirm=true; read-only diagnosis remains runtime.diagnose.",
             ["Confirm the specific repair action with the user before invoking runtime.repair."]);
     }
@@ -917,8 +1363,8 @@ public sealed class AgentRuntimeService
 
     private static IReadOnlyList<string> ResolveInvocationModes(string backendId)
         => RequiresConfirmation(backendId)
-            ? ["dedicated-endpoint", "manual-controlled", "chat-controlled", "requires-confirmation"]
-            : ["dedicated-endpoint", "manual-controlled", "chat-controlled", "planned-agent-tool"];
+            ? ["dedicated-endpoint", "manual-controlled", "chat-controlled", "model-auto-controlled", "requires-confirmation"]
+            : ["dedicated-endpoint", "manual-controlled", "chat-controlled", "model-auto-read-only", "model-auto-controlled", "planned-agent-tool"];
 
     private static string ResolveExecutableToolStatus(string backendId)
         => "ready";
@@ -984,4 +1430,60 @@ public sealed class AgentRuntimeService
         };
 
     private sealed record WorkflowSummary(string Model, string Text);
+}
+
+internal readonly record struct ModelToolApprovalDecision(
+    bool Requested,
+    bool Effective,
+    bool Consumed,
+    bool Reused);
+
+internal sealed class ModelToolApprovalTracker
+{
+    private readonly HashSet<string> consumedTools = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// 计算本次模型调用的确认状态；匹配的副作用批准会在执行尝试前原子式消费一次。
+    /// </summary>
+    public ModelToolApprovalDecision Evaluate(
+        string toolName,
+        bool hasSideEffect,
+        AgentChatToolRequest? requested,
+        JsonElement modelArguments)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(toolName);
+        var confirmationRequested = requested?.Confirm == true;
+        if (!hasSideEffect)
+        {
+            return new ModelToolApprovalDecision(
+                confirmationRequested,
+                Effective: false,
+                Consumed: false,
+                Reused: false);
+        }
+
+        if (!AgentRuntimeService.IsConfirmedModelToolArguments(requested, modelArguments))
+        {
+            return new ModelToolApprovalDecision(
+                confirmationRequested,
+                Effective: false,
+                Consumed: false,
+                Reused: false);
+        }
+
+        if (!consumedTools.Add(toolName))
+        {
+            return new ModelToolApprovalDecision(
+                confirmationRequested,
+                Effective: false,
+                Consumed: false,
+                Reused: true);
+        }
+
+        return new ModelToolApprovalDecision(
+            confirmationRequested,
+            Effective: true,
+            Consumed: true,
+            Reused: false);
+    }
 }

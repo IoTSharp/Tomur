@@ -217,7 +217,7 @@ public sealed class AgentTelemetry : IDisposable
                 new AgentTelemetryAttributeDescriptor("tomur.agent.model", "string", "bounded", "Requested or selected local model id."),
                 new AgentTelemetryAttributeDescriptor("tomur.agent.tool.name", "string", "bounded", "Tomur tool-map name, such as runtime.diagnose or tools.inspect."),
                 new AgentTelemetryAttributeDescriptor("tomur.agent.status", "string", "low", "ok, partial, blocked or error."),
-                new AgentTelemetryAttributeDescriptor("tomur.agent.blocked", "boolean", "low", "Whether the operation hit the R9 safety or readiness boundary."),
+                new AgentTelemetryAttributeDescriptor("tomur.agent.blocked", "boolean", "low", "Whether the operation hit a local tool safety or readiness boundary."),
                 new AgentTelemetryAttributeDescriptor("tomur.agent.elapsed_ms", "int64", "high", "Operation duration in milliseconds."),
                 new AgentTelemetryAttributeDescriptor("tomur.agent.diagnostic.code", "string", "bounded", "Structured Tomur diagnostic code for failures."),
                 new AgentTelemetryAttributeDescriptor("tomur.agent.side_effect", "string", "low", "none, read, generates-local-artifact or repairs-local-runtime."),
@@ -227,7 +227,7 @@ public sealed class AgentTelemetry : IDisposable
                 "No user message body, prompt text or full tool result is added to ActivitySource tags.",
                 "The local JSONL event log remains available through GET /api/agents/events.",
                 "External OpenTelemetry export is opt-in through TOMUR_AGENTS_OTEL_EXPORTER=otlp and TOMUR_AGENTS_OTEL_ENDPOINT.",
-                "Ready R8 multimodal tools can be invoked through Tomur's explicit controlled path; model-selected automatic multimodal tool-calling remains disabled.",
+                "Ready local tools may be selected in bounded model_auto_* loops; side-effect calls require an explicit controlled allowlist and confirmation.",
                 "Image generation and TTS require explicit confirmation before local artifacts are written."
             ]);
 

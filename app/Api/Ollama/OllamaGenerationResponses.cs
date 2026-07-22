@@ -11,7 +11,11 @@ public sealed record OllamaGenerateResponse(
     [property: JsonPropertyName("total_duration")] long TotalDuration,
     [property: JsonPropertyName("load_duration")] long LoadDuration,
     [property: JsonPropertyName("prompt_eval_count")] int PromptEvalCount,
-    [property: JsonPropertyName("eval_count")] int EvalCount);
+    [property: JsonPropertyName("eval_count")] int EvalCount)
+{
+    [JsonPropertyName("done_reason")]
+    public string? DoneReason { get; init; }
+}
 
 public sealed record OllamaChatResponse(
     [property: JsonPropertyName("model")] string Model,
@@ -21,4 +25,8 @@ public sealed record OllamaChatResponse(
     [property: JsonPropertyName("total_duration")] long TotalDuration,
     [property: JsonPropertyName("load_duration")] long LoadDuration,
     [property: JsonPropertyName("prompt_eval_count")] int PromptEvalCount,
-    [property: JsonPropertyName("eval_count")] int EvalCount);
+    [property: JsonPropertyName("eval_count")] int EvalCount)
+{
+    [JsonPropertyName("done_reason")]
+    public string? DoneReason { get; init; }
+}

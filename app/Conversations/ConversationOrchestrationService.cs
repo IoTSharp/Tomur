@@ -236,7 +236,7 @@ public sealed class ConversationOrchestrationService
                         "One or more requested tools were blocked by the current local orchestration boundary.",
                         agentResponse.Model,
                         RuntimeName,
-                        ["Inspect GET /api/agents/tools and use dedicated endpoints for side-effect tools until automatic tool-calling is enabled."],
+                        ["Inspect GET /api/agents/tools; model-selected side-effect tools require an explicit allowlist and confirmation, while dedicated endpoints remain available for manual execution."],
                         null));
                 diagnostics.Add(diagnosticAppend.Diagnostic);
             }
