@@ -7,6 +7,68 @@ public sealed class ModelCatalog
     public IReadOnlyList<ModelPackage> Packages { get; } = new ReadOnlyCollection<ModelPackage>(
     [
         new ModelPackage(
+            Id: "qwen35-35b-a3b-q4km",
+            DisplayName: "Qwen3.5 35B-A3B Q4_K_M",
+            Description: "High-capability sparse MoE assistant with a required F16 vision projector.",
+            Segment: "text",
+            FolderName: "qwen3.5-35b-a3b-q4-k-m",
+            Task: "vision",
+            Runtime: "llama.cpp",
+            Family: "llama",
+            Format: "gguf",
+            Quantization: "Q4_K_M",
+            License: "apache-2.0",
+            SizeBytes: 22_285_080_384,
+            ParameterCount: 35_000_000_000,
+            PrimaryFileName: "Qwen_Qwen3.5-35B-A3B-Q4_K_M.gguf",
+            Recommended: false,
+            Optional: true,
+            Research: false,
+            Tags: ["local", "chat", "assistant", "tools", "vision", "vlm", "moe", "mmproj"],
+            Assets:
+            [
+                DownloadAsset.Direct(
+                    "bartowski/Qwen_Qwen3.5-35B-A3B-GGUF@3d2a22d4eb631b9c8fd2be94599dc2fd84b4a595",
+                    "https://huggingface.co/bartowski/Qwen_Qwen3.5-35B-A3B-GGUF/resolve/3d2a22d4eb631b9c8fd2be94599dc2fd84b4a595/Qwen_Qwen3.5-35B-A3B-Q4_K_M.gguf?download=true",
+                    targetRelativePath: "Qwen_Qwen3.5-35B-A3B-Q4_K_M.gguf",
+                    expectedSha256: "2f2df1e8b2e92b642c1850ea1734b341cc8ca5098c42cc0a8b8c436a8d4751ab"),
+                DownloadAsset.Direct(
+                    "bartowski/Qwen_Qwen3.5-35B-A3B-GGUF@3d2a22d4eb631b9c8fd2be94599dc2fd84b4a595",
+                    "https://huggingface.co/bartowski/Qwen_Qwen3.5-35B-A3B-GGUF/resolve/3d2a22d4eb631b9c8fd2be94599dc2fd84b4a595/mmproj-Qwen_Qwen3.5-35B-A3B-f16.gguf?download=true",
+                    targetRelativePath: "mmproj-Qwen_Qwen3.5-35B-A3B-f16.gguf",
+                    expectedSha256: "10cf13cb1f8434f30df8fa7e5bde98d542fbf397550cb489dfa9eb8ac7069035")
+            ],
+            BundleAssets:
+            [
+                new ModelBundleAsset(
+                    "primary",
+                    "vision-language-model",
+                    true,
+                    "Qwen_Qwen3.5-35B-A3B-Q4_K_M.gguf",
+                    "Qwen_Qwen3.5-35B-A3B-Q4_K_M.gguf",
+                    "gguf",
+                    "Q4_K_M",
+                    "apache-2.0",
+                    SizeBytes: 22_285_080_384,
+                    ExpectedSha256: "2f2df1e8b2e92b642c1850ea1734b341cc8ca5098c42cc0a8b8c436a8d4751ab"),
+                new ModelBundleAsset(
+                    "mmproj",
+                    "clip-vision-encoder",
+                    true,
+                    "mmproj-Qwen_Qwen3.5-35B-A3B-f16.gguf",
+                    "mmproj-Qwen_Qwen3.5-35B-A3B-f16.gguf",
+                    "gguf",
+                    "F16",
+                    "apache-2.0",
+                    SizeBytes: 899_283_552,
+                    ExpectedSha256: "10cf13cb1f8434f30df8fa7e5bde98d542fbf397550cb489dfa9eb8ac7069035")
+            ],
+            MinimumMemoryBytes: Gib(40),
+            HardwareTier: "high-memory",
+            LicenseNotice: "Apache-2.0 model package. Review upstream model card before redistribution.",
+            LowMemoryAlternativeId: "qwen35-4b-q4km"),
+
+        new ModelPackage(
             Id: "qwen35-9b-q4km",
             DisplayName: "Qwen3.5 9B Q4_K_M",
             Description: "Default local general assistant for chat, code, tool use and structured output.",

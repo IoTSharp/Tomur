@@ -92,6 +92,9 @@ public sealed class ManagedGlmProvider : IModelFixtureProvider, IModelReadinessP
         }
     }
 
+    /// <summary>
+    /// 检查模型资产与内存预算，并按当前 DSA dense 等价上限计算可用上下文。
+    /// </summary>
     public ModelPreparationResult InspectModel(LocalModelDescriptor model, ModelSessionOptions options)
     {
         ArgumentNullException.ThrowIfNull(model);
@@ -100,7 +103,7 @@ public sealed class ManagedGlmProvider : IModelFixtureProvider, IModelReadinessP
         try
         {
             var probe = ModelDirectoryProbe.Read(model, ProviderId);
-            var contextSize = Math.Min(options.ContextSize, probe.Configuration.MaxPositionEmbeddings);
+            var contextSize = Math.Min(options.ContextSize, probe.Configuration.EffectiveContextLimit);
             var residentWeights = ResidentWeightLayout.Create(
                 probe.Configuration,
                 probe.Tensors,
@@ -203,6 +206,9 @@ internal sealed class ManagedGlmSession : IChatGenerationSession
     private long completionTokens;
     private bool disposed;
 
+    /// <summary>
+    /// 加载托管 GLM 模型，并在有效上下文范围内初始化专家缓存与生成器。
+    /// </summary>
     public ManagedGlmSession(
         LocalModelDescriptor model,
         ModelSessionOptions options,
@@ -210,7 +216,7 @@ internal sealed class ManagedGlmSession : IChatGenerationSession
     {
         this.model = model;
         this.options = options;
-        var effectiveContextSize = Math.Min(options.ContextSize, probe.Configuration.MaxPositionEmbeddings);
+        var effectiveContextSize = Math.Min(options.ContextSize, probe.Configuration.EffectiveContextLimit);
         var candidate = ManagedGlmModel.Load(probe, effectiveContextSize);
         try
         {

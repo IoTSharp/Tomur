@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -201,6 +202,100 @@ std::string ensure_media_markers(
     patched += prompt;
     diagnostics.push_back("vlm-media-marker-inserted: " + std::to_string(missing));
     return patched;
+}
+
+// 判断托管层是否已经生成 ChatML，避免原生桥接再次套模板。
+bool is_preformatted_chatml(const std::string & prompt) {
+    return prompt.find("<|im_start|>user\n") != std::string::npos &&
+        prompt.find("<|im_start|>assistant\n") != std::string::npos;
+}
+
+// 优先读取 GGUF 架构识别 Qwen3.5；元数据不可用时保留文件名兼容判断。
+bool is_qwen35_model(const llama_model * model, const char * model_path) {
+    if (model != nullptr) {
+        const int32_t required = llama_model_meta_val_str(
+            model,
+            "general.architecture",
+            nullptr,
+            0);
+        if (required > 0) {
+            std::vector<char> buffer(static_cast<size_t>(required) + 1, '\0');
+            const int32_t written = llama_model_meta_val_str(
+                model,
+                "general.architecture",
+                buffer.data(),
+                buffer.size());
+            if (written == required) {
+                const std::string architecture(buffer.data(), static_cast<size_t>(written));
+                if (architecture == "qwen35" || architecture == "qwen35moe") {
+                    return true;
+                }
+            }
+        }
+    }
+
+    std::string normalized(model_path == nullptr ? "" : model_path);
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return normalized.find("qwen3.5") != std::string::npos ||
+        normalized.find("qwen35") != std::string::npos;
+}
+
+// 使用 GGUF 中的聊天模板建立完整 user/assistant 边界；不支持的模板保留旧提示作为兼容回退。
+std::string apply_model_chat_template(
+    llama_model * model,
+    const char * model_path,
+    const std::string & prompt,
+    std::vector<std::string> & diagnostics) {
+    if (is_preformatted_chatml(prompt)) {
+        diagnostics.push_back("chat-template: preformatted-chatml");
+        return prompt;
+    }
+
+    const char * chat_template = llama_model_chat_template(model, nullptr);
+    if (chat_template == nullptr || chat_template[0] == '\0') {
+        diagnostics.push_back("chat-template: unavailable-raw-fallback");
+        return prompt;
+    }
+
+    const llama_chat_message message {
+        "user",
+        prompt.c_str()
+    };
+    const int32_t required = llama_chat_apply_template(
+        chat_template,
+        &message,
+        1,
+        true,
+        nullptr,
+        0);
+    if (required <= 0) {
+        diagnostics.push_back("chat-template: unsupported-raw-fallback");
+        return prompt;
+    }
+
+    std::vector<char> buffer(static_cast<size_t>(required) + 1, '\0');
+    const int32_t written = llama_chat_apply_template(
+        chat_template,
+        &message,
+        1,
+        true,
+        buffer.data(),
+        static_cast<int32_t>(buffer.size()));
+    if (written <= 0 || written > required) {
+        diagnostics.push_back("chat-template: apply-failed-raw-fallback");
+        return prompt;
+    }
+
+    std::string formatted(buffer.data(), static_cast<size_t>(written));
+    diagnostics.push_back("chat-template: model-default");
+    if (is_qwen35_model(model, model_path)) {
+        formatted += "<think>\n\n</think>\n\n";
+        diagnostics.push_back("chat-template: qwen35-non-thinking");
+    }
+
+    return formatted;
 }
 
 std::vector<std::string> read_stop_sequences(const tomur_llama_vlm_request * request) {
@@ -405,6 +500,7 @@ TOMUR_VLM_EXPORT const char * tomur_llama_vlm_bridge_version(void) {
     return "tomur-llama-vlm/mtmd/1";
 }
 
+// 执行单次视觉语言生成，并将诊断与错误统一封装为稳定的 C ABI 结果。
 TOMUR_VLM_EXPORT tomur_llama_vlm_result * tomur_llama_vlm_generate(
     const tomur_llama_vlm_request * request) {
     const int64_t started = now_ms();
@@ -529,7 +625,9 @@ TOMUR_VLM_EXPORT tomur_llama_vlm_result * tomur_llama_vlm_generate(
             diagnostics.push_back("image-decode: ok:" + std::to_string(i));
         }
 
+        // 媒体标记和模型聊天模板都在 native 层只应用一次。
         std::string prompt = ensure_media_markers(request->prompt_utf8, request->image_count, diagnostics);
+        prompt = apply_model_chat_template(model, request->model_path, prompt, diagnostics);
         mtmd_input_text input_text {
             prompt.c_str(),
             true,

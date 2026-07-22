@@ -74,8 +74,9 @@ set_target_properties(tomur-llama-vlm PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
 
 if(MSVC)
-    target_compile_options(tomur_llama_mtmd PRIVATE /bigobj)
-    target_compile_options(tomur-llama-vlm PRIVATE /bigobj)
+    # 仓库包含中文注释，显式使用 UTF-8，避免 MSVC 按系统代码页误解析源码。
+    target_compile_options(tomur_llama_mtmd PRIVATE /bigobj /utf-8)
+    target_compile_options(tomur-llama-vlm PRIVATE /bigobj /utf-8)
 endif()
 
 # Install the shared library to CMAKE_INSTALL_PREFIX/runtimes/<rid>/native/

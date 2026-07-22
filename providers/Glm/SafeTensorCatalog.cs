@@ -59,6 +59,9 @@ internal sealed class SafeTensorCatalog
         return new SafeTensorCatalog(tensors, totalPayloadBytes);
     }
 
+    /// <summary>
+    /// 读取单个 safetensors 分片；允许合法空分片，整个模型为空时由目录级校验拒绝。
+    /// </summary>
     private static IReadOnlyList<TensorDescriptor> ReadFile(string path)
     {
         var file = new FileInfo(path);
@@ -116,11 +119,6 @@ internal sealed class SafeTensorCatalog
             }
 
             tensors.Add(ParseTensor(property, file.FullName, file.Length, dataStart));
-        }
-
-        if (tensors.Count == 0)
-        {
-            throw new InvalidDataException($"Safetensors shard does not contain any tensors: {path}");
         }
 
         ValidateDataRanges(tensors, file.FullName, file.Length, dataStart);

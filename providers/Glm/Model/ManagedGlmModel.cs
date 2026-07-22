@@ -58,6 +58,9 @@ internal sealed class ManagedGlmModel : IDisposable
 
     internal TensorDataSource DataSource => GetDataSource();
 
+    /// <summary>
+    /// 按有效上下文和内存预算加载常驻权重、专家布局及张量数据源。
+    /// </summary>
     public static ManagedGlmModel Load(
         ModelProbe probe,
         int contextSize,
@@ -65,12 +68,12 @@ internal sealed class ManagedGlmModel : IDisposable
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(probe);
-        if (contextSize > probe.Configuration.MaxPositionEmbeddings)
+        if (contextSize > probe.Configuration.EffectiveContextLimit)
         {
             throw new ContextLengthExceededException(
                 position: 0,
                 requestedTokenCount: contextSize,
-                contextLimit: probe.Configuration.MaxPositionEmbeddings);
+                contextLimit: probe.Configuration.EffectiveContextLimit);
         }
 
         var specs = ResidentWeightLayout.Create(
