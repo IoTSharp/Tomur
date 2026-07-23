@@ -22,18 +22,27 @@ native/
         ggml*.dll
         whisper/
           cpu/
+          cuda129/
           cuda13/
         stable-diffusion/
           cpu/
+          cuda129/
           cuda13/
         ocr/
           cpu/
+          cuda129/
           cuda13/
         tts/
           cpu/
+          cuda129/
           cuda13/
     linux-x64/
       native/
+        ggml-cuda.so
+        whisper/cuda129/
+        stable-diffusion/cuda129/
+        ocr/cuda129/
+        tts/cuda129/
 ```
 
 `*.cpp/` 目录用于上游 backend 源码或子模块，`*.native/` 目录用于 Tomur 自己的 CMake、编译选项、清单和发布打包边界。
@@ -73,10 +82,11 @@ Windows x64 的 native 构建由 Tomur CLI 统一触发：
 tomur native build --rid win-x64 --backend all
 ```
 
-`all` 是默认后端，会先构建顶层 llama.cpp / ggml 共享 runtime，再分别构建 Whisper、PaddleOCR-VL、stable-diffusion.cpp 和 llama.cpp GGUF TTS 的 `cpu` 与 `cuda13` 变体。只需要单一变体时可使用：
+`all` 是默认后端，会先构建顶层 llama.cpp / ggml 共享 runtime，再分别构建 Whisper、PaddleOCR-VL、stable-diffusion.cpp 和 llama.cpp GGUF TTS 的 `cpu` 与 `cuda129` 变体。只需要单一变体时可使用：
 
 ```powershell
 tomur native build --rid win-x64 --backend cpu
+tomur native build --rid win-x64 --backend cuda129
 tomur native build --rid win-x64 --backend cuda13
 tomur native build --rid win-x64 --backend vulkan
 tomur native build --rid win-x64 --backend sycl
@@ -84,11 +94,21 @@ tomur native build --rid win-x64 --backend openvino
 tomur native build --rid win-x64 --backend intel
 ```
 
-`vulkan`、`sycl` 与 `openvino` 当前只构建 llama.cpp dynamic backend；`intel` 会按顺序构建 `sycl`、`openvino` 与 `vulkan`。构建产物安装到 `native/runtimes/win-x64/native`。随后执行 `tomur native prepare`，Tomur 会把这些资产复制到受管理 runtime 目录，并由 `tomur doctor`、`GET /api/runtime/status` 与 `GET /api/runtime/multimodal` 报告 CPU、CUDA13、Vulkan、SYCL 与 OpenVINO 可见性。
+`vulkan`、`sycl` 与 `openvino` 当前只构建 llama.cpp dynamic backend；`intel` 会按顺序构建 `sycl`、`openvino` 与 `vulkan`。构建产物安装到 `native/runtimes/win-x64/native`。随后执行 `tomur native prepare`，Tomur 会把这些资产复制到受管理 runtime 目录，并由 `tomur doctor`、`GET /api/runtime/status` 与 `GET /api/runtime/multimodal` 报告 CPU、CUDA 12.9、Vulkan、SYCL 与 OpenVINO 可见性。
+
+## Linux CUDA 12.9 构建入口
+
+Linux x64 的 CUDA 构建固定使用 CUDA Toolkit 12.9，并为 RTX 4090 固定生成 compute capability 8.9 代码：
+
+```bash
+tomur native build --rid linux-x64 --backend cuda129
+```
+
+完整构建使用 `--backend all`，同时生成 CPU fallback 与 CUDA 12.9 变体。推荐在 `nvidia/cuda:12.9.1-devel-ubuntu24.04` 容器中执行构建；宿主机只需兼容的 NVIDIA 驱动，不要求安装 CUDA Toolkit。
 
 ## ggml 隔离
 
-`llama.native` 是顶层 `runtimes/<rid>/native/llama*` 与 `ggml*` 的唯一发布者。CUDA13、Vulkan、SYCL 与 OpenVINO 构建会把对应 `ggml-*` 作为可选 accelerator backend 发布到同一顶层目录；缺失时 CPU 运行时仍可诊断和加载。
+`llama.native` 是顶层 `runtimes/<rid>/native/llama*` 与 `ggml*` 的唯一发布者。CUDA 12.9、CUDA 13、Vulkan、SYCL 与 OpenVINO 构建会把对应 `ggml-*` 作为可选 accelerator backend 发布到同一顶层目录；缺失时 CPU 运行时仍可诊断和加载。
 
 `whisper.native` 的消费者运行时位于 `runtimes/<rid>/native/whisper/<backend>/`，并从同一 runtime 根目录解析共享 `ggml`。
 

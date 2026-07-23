@@ -8,10 +8,10 @@ internal static class RuntimeBackendCatalog
     [
         new(
             "cuda",
-            "CUDA / CUDA 13",
+            "CUDA / CUDA 12.9",
             "ggml-cuda",
-            "NVIDIA CUDA runtime backend, including CUDA 13 builds.",
-            ["Build or prepare the CUDA13 native runtime when NVIDIA offload is required."]),
+            "NVIDIA CUDA runtime backend, including CUDA 12.9 builds for compute capability 8.9.",
+            ["Build or prepare the CUDA 12.9 native runtime when NVIDIA offload is required."]),
         new(
             "cann",
             "CANN / NPU",

@@ -15,9 +15,17 @@ public static class NativeBuildPlanner
     {
         var normalizedRid = NormalizeRid(rid);
         var normalizedBackend = NormalizeBackend(backend);
-        if (normalizedRid != "win-x64")
+        if (normalizedRid is not ("win-x64" or "linux-x64"))
         {
-            throw new ArgumentException("The native build planner currently supports win-x64 only.", nameof(rid));
+            throw new ArgumentException("The native build planner supports win-x64 and linux-x64 only.", nameof(rid));
+        }
+
+        if (normalizedRid == "linux-x64" &&
+            normalizedBackend is not ("all" or "cpu" or "cuda129"))
+        {
+            throw new ArgumentException(
+                "Linux x64 native builds support the 'all', 'cpu', and 'cuda129' backends.",
+                nameof(backend));
         }
 
         var presetRid = ToPresetRid(normalizedRid);
@@ -42,9 +50,9 @@ public static class NativeBuildPlanner
 
         return
         [
-            CreateStep("llama", rid, "cuda13"),
+            CreateStep("llama", rid, "cuda129"),
             .. leafComponents.Select(component => CreateStep(component, rid, "cpu")),
-            .. leafComponents.Select(component => CreateStep(component, rid, "cuda13"))
+            .. leafComponents.Select(component => CreateStep(component, rid, "cuda129"))
         ];
     }
 
@@ -79,7 +87,7 @@ public static class NativeBuildPlanner
 
     private static string NormalizeRid(string rid)
     {
-        var normalized = string.IsNullOrWhiteSpace(rid) ? "win-x64" : rid.Trim().ToLowerInvariant();
+        var normalized = string.IsNullOrWhiteSpace(rid) ? NativeBundlePaths.ResolveRid() : rid.Trim().ToLowerInvariant();
         return normalized is "windows-x64" ? "win-x64" : normalized;
     }
 
@@ -95,15 +103,17 @@ public static class NativeBuildPlanner
         var normalized = string.IsNullOrWhiteSpace(backend) ? "all" : backend.Trim().ToLowerInvariant();
         return normalized switch
         {
-            "cuda" or "cu13" or "cuda-13" => "cuda13",
+            "cuda" or "cuda12" or "cuda12.9" or "cuda-12.9" or "cu129" => "cuda129",
             "cpu" => "cpu",
+            "cuda129" => "cuda129",
+            "cu13" or "cuda-13" => "cuda13",
             "cuda13" => "cuda13",
             "vk" or "vulkan" => "vulkan",
             "ov" or "openvino" => "openvino",
             "sycl" or "oneapi" => "sycl",
             "intel" => "intel",
             "all" or "both" => "all",
-            _ => throw new ArgumentException("Backend must be 'all', 'cpu', 'cuda13', 'vulkan', 'openvino', 'sycl', or 'intel'.", nameof(backend))
+            _ => throw new ArgumentException("Backend must be 'all', 'cpu', 'cuda129', 'cuda13', 'vulkan', 'openvino', 'sycl', or 'intel'.", nameof(backend))
         };
     }
 }

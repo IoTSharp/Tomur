@@ -91,7 +91,7 @@ internal static class NativeCommand
         try
         {
             plan = NativeBuildPlanner.Create(
-                rid ?? "win-x64",
+                rid ?? string.Empty,
                 backend ?? "all",
                 CommandLineHelpers.HasFlag(args, "--clean"));
         }
@@ -238,11 +238,12 @@ internal static class NativeCommand
 
 Usage:
   tomur native prepare [--data-dir <path>]
-  tomur native build [--rid win-x64] [--backend all|cpu|cuda13|vulkan|openvino|sycl|intel] [--clean]
+  tomur native build [--rid win-x64|linux-x64] [--backend all|cpu|cuda129|cuda13|vulkan|openvino|sycl|intel] [--clean]
 
 Commands:
   prepare    Extract or repair the versioned native runtime bundle.
   build      Build native runtime assets with CMake and install them into native/runtimes.
+             CUDA 12.9 is the default CUDA build and targets NVIDIA compute capability 8.9.
              Intel builds target llama.cpp dynamic backends; use --backend intel for sycl + openvino + vulkan.
 """);
     }

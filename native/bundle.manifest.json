@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "bundle_id": "tomur.native.r8.cuda13",
-  "version": "0.8.0-cuda13",
+  "bundle_id": "tomur.native.r8.cuda129",
+  "version": "0.8.1-cuda129",
   "runtime_root": "runtimes/{rid}/native",
   "components": [
     {
@@ -18,6 +18,18 @@
       "backend": "shared",
       "runtime_path": ".",
       "variants": [
+        {
+          "id": "cuda129",
+          "display_name": "llama.cpp CUDA 12.9",
+          "backend": "cuda",
+          "runtime_path": ".",
+          "priority": 110,
+          "required_backends": [ "ggml-cuda" ],
+          "diagnostic": "CUDA 12.9 targets NVIDIA compute capability 8.9; CPU inference remains available when this backend is absent.",
+          "actions": [
+            "Run tomur native build --rid linux-x64 --backend cuda129, then run tomur native prepare."
+          ]
+        },
         {
           "id": "cuda13",
           "display_name": "llama.cpp CUDA 13",
@@ -127,6 +139,17 @@
       "runtime_path": "whisper/cpu",
       "variants": [
         {
+          "id": "cuda129",
+          "display_name": "Whisper CUDA 12.9",
+          "backend": "cuda",
+          "runtime_path": "whisper/cuda129",
+          "priority": 110,
+          "required_backends": [ "ggml-cuda" ],
+          "libraries": [
+            { "name": "whisper", "required": true }
+          ]
+        },
+        {
           "id": "cuda13",
           "display_name": "Whisper CUDA 13",
           "backend": "cuda",
@@ -170,6 +193,17 @@
       "runtime_path": "stable-diffusion/cpu",
       "variants": [
         {
+          "id": "cuda129",
+          "display_name": "stable-diffusion.cpp CUDA 12.9",
+          "backend": "cuda",
+          "runtime_path": "stable-diffusion/cuda129",
+          "priority": 110,
+          "required_backends": [ "ggml-cuda" ],
+          "libraries": [
+            { "name": "stable-diffusion", "required": true }
+          ]
+        },
+        {
           "id": "cuda13",
           "display_name": "stable-diffusion.cpp CUDA 13",
           "backend": "cuda",
@@ -212,6 +246,18 @@
       "backend": "auto",
       "runtime_path": "ocr/cpu",
       "variants": [
+        {
+          "id": "cuda129",
+          "display_name": "PaddleOCR-VL CUDA 12.9",
+          "backend": "cuda",
+          "runtime_path": "ocr/cuda129",
+          "priority": 110,
+          "required_backends": [ "ggml-cuda" ],
+          "libraries": [
+            { "name": "tomur-ocr", "required": true },
+            { "name": "tomur-mtmd", "required": true }
+          ]
+        },
         {
           "id": "cuda13",
           "display_name": "PaddleOCR-VL CUDA 13",
@@ -258,6 +304,17 @@
       "backend": "auto",
       "runtime_path": "tts/cpu",
       "variants": [
+        {
+          "id": "cuda129",
+          "display_name": "llama.cpp GGUF TTS CUDA 12.9",
+          "backend": "cuda",
+          "runtime_path": "tts/cuda129",
+          "priority": 110,
+          "required_backends": [ "ggml-cuda" ],
+          "libraries": [
+            { "name": "tomur-tts", "required": true }
+          ]
+        },
         {
           "id": "cuda13",
           "display_name": "llama.cpp GGUF TTS CUDA 13",

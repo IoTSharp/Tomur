@@ -47,11 +47,29 @@
       }
     },
     {
+      "name": "windows-x64-cuda129",
+      "displayName": "Windows x64 (CUDA 12.9 Release)",
+      "inherits": "windows-x64",
+      "cacheVariables": {
+        "OCR_NATIVE_BACKEND": "cuda129",
+        "CMAKE_CUDA_ARCHITECTURES": "89"
+      }
+    },
+    {
       "name": "windows-x64-cuda13",
       "displayName": "Windows x64 (CUDA 13 Release)",
       "inherits": "windows-x64",
       "cacheVariables": {
         "OCR_NATIVE_BACKEND": "cuda13",
+        "CMAKE_CUDA_ARCHITECTURES": "89"
+      }
+    },
+    {
+      "name": "linux-x64-cuda129",
+      "displayName": "Linux x64 (CUDA 12.9 Release)",
+      "inherits": "linux-x64",
+      "cacheVariables": {
+        "OCR_NATIVE_BACKEND": "cuda129",
         "CMAKE_CUDA_ARCHITECTURES": "89"
       }
     }
@@ -71,9 +89,18 @@
       "configurePreset": "debug"
     },
     {
+      "name": "windows-x64-cuda129",
+      "configurePreset": "windows-x64-cuda129",
+      "configuration": "Release"
+    },
+    {
       "name": "windows-x64-cuda13",
       "configurePreset": "windows-x64-cuda13",
       "configuration": "Release"
+    },
+    {
+      "name": "linux-x64-cuda129",
+      "configurePreset": "linux-x64-cuda129"
     }
   ]
 }

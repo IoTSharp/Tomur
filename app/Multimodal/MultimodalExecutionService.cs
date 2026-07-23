@@ -728,7 +728,6 @@ public sealed class MultimodalExecutionService
             : resolution.Variant;
         var useGpu = IsCudaAcceleration(acceleration) &&
             string.Equals(effectiveVariant, requestedVariant, StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(effectiveVariant, "cuda13", StringComparison.OrdinalIgnoreCase) &&
             resolution.Exists &&
             !string.Equals(resolution.ChecksumStatus, "mismatch", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(resolution.ComponentStatus, "error", StringComparison.OrdinalIgnoreCase);
@@ -774,8 +773,8 @@ public sealed class MultimodalExecutionService
         return output;
     }
 
-    private static string ResolveNativeVariant(AccelerationPlan acceleration)
-        => IsCudaAcceleration(acceleration) ? "cuda13" : "cpu";
+    internal static string ResolveNativeVariant(AccelerationPlan acceleration)
+        => IsCudaAcceleration(acceleration) ? "cuda129" : "cpu";
 
     private static int ResolveGpuDeviceIndex(AccelerationPlan acceleration)
         => IsCudaAcceleration(acceleration) && acceleration.SelectedAccelerator is { } accelerator

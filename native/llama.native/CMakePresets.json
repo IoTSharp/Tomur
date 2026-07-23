@@ -85,12 +85,33 @@
       }
     },
     {
+      "name": "windows-x64-cuda129",
+      "displayName": "Windows x64 (CUDA 12.9 Release)",
+      "inherits": ["windows-x64", "gpu-base"],
+      "cacheVariables": {
+        "GGML_CUDA": "ON",
+        "GGML_CUDA_GRAPHS": "ON",
+        "CMAKE_CUDA_ARCHITECTURES": "89"
+      }
+    },
+    {
       "name": "windows-x64-cuda13",
       "displayName": "Windows x64 (CUDA 13 Release)",
       "inherits": ["windows-x64", "gpu-base"],
       "cacheVariables": {
         "GGML_CUDA": "ON",
         "GGML_CUDA_GRAPHS": "ON",
+        "CMAKE_CUDA_ARCHITECTURES": "89"
+      }
+    },
+    {
+      "name": "linux-x64-cuda129",
+      "displayName": "Linux x64 (CUDA 12.9 Release)",
+      "inherits": ["linux-x64", "gpu-base"],
+      "cacheVariables": {
+        "GGML_CUDA": "ON",
+        "GGML_CUDA_GRAPHS": "ON",
+        "GGML_CPU_ALL_VARIANTS": "OFF",
         "CMAKE_CUDA_ARCHITECTURES": "89"
       }
     },
@@ -164,9 +185,18 @@
       "configuration": "Release"
     },
     {
+      "name": "windows-x64-cuda129",
+      "configurePreset": "windows-x64-cuda129",
+      "configuration": "Release"
+    },
+    {
       "name": "windows-x64-cuda13",
       "configurePreset": "windows-x64-cuda13",
       "configuration": "Release"
+    },
+    {
+      "name": "linux-x64-cuda129",
+      "configurePreset": "linux-x64-cuda129"
     },
     {
       "name": "windows-x64-vulkan",
