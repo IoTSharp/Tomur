@@ -55,6 +55,61 @@ public static class ApiRouteExtensions
             await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.RuntimeStatusResponse);
         });
 
+        app.MapPost("/api/runtime/session/load", static async (
+            HttpContext context,
+            LocalInferenceService inferenceService,
+            LocalModelCatalog modelCatalog,
+            RuntimeDiagnosticsProvider diagnosticsProvider) =>
+        {
+            RuntimeSessionLoadRequest? request;
+            try
+            {
+                request = await JsonSerializer.DeserializeAsync(
+                    context.Request.Body,
+                    AppJsonSerializerContext.Default.RuntimeSessionLoadRequest,
+                    context.RequestAborted);
+            }
+            catch (JsonException exception)
+            {
+                await JsonHttpResponse.WriteAsync(
+                    context,
+                    new RuntimeSessionControlError("invalid_request", exception.Message, []),
+                    AppJsonSerializerContext.Default.RuntimeSessionControlError,
+                    StatusCodes.Status400BadRequest);
+                return;
+            }
+
+            var model = modelCatalog.Find(request?.Model);
+            if (model is null)
+            {
+                var diagnostic = diagnosticsProvider.GetModelNotDownloaded(request?.Model);
+                await JsonHttpResponse.WriteAsync(
+                    context,
+                    new RuntimeSessionControlError(diagnostic.Code, diagnostic.Message, diagnostic.Actions),
+                    AppJsonSerializerContext.Default.RuntimeSessionControlError,
+                    StatusCodes.Status404NotFound);
+                return;
+            }
+
+            try
+            {
+                inferenceService.Load(model, request?.ContextSize ?? 4096, context.RequestAborted);
+                var response = diagnosticsProvider.GetRuntimeStatus();
+                await JsonHttpResponse.WriteAsync(
+                    context,
+                    response,
+                    AppJsonSerializerContext.Default.RuntimeStatusResponse);
+            }
+            catch (InferenceException exception)
+            {
+                await JsonHttpResponse.WriteAsync(
+                    context,
+                    new RuntimeSessionControlError(exception.Code, exception.Message, exception.Actions),
+                    AppJsonSerializerContext.Default.RuntimeSessionControlError,
+                    StatusCodes.Status409Conflict);
+            }
+        });
+
         app.MapGet("/api/runtime/native", static async (HttpContext context, RuntimeDiagnosticsProvider diagnosticsProvider) =>
         {
             var response = diagnosticsProvider.GetRuntimeStatus().NativeBundle;

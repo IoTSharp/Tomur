@@ -64,6 +64,13 @@ public sealed class LocalInferenceService
     public SessionSnapshot GetSnapshot()
         => sessionManager.GetSnapshot();
 
+    public SessionSnapshot Load(LocalModelDescriptor model, int contextSize, CancellationToken cancellationToken)
+    {
+        EnsureTextModel(model);
+        sessionManager.Load(model, Math.Clamp(contextSize, 512, 131072), cancellationToken);
+        return sessionManager.GetSnapshot();
+    }
+
     public void Unload()
         => sessionManager.Unload();
 

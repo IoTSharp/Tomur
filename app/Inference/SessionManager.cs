@@ -146,6 +146,32 @@ public sealed class SessionManager : IDisposable
         });
     }
 
+    internal void Load(LocalModelDescriptor model, int contextSize, CancellationToken cancellationToken)
+    {
+        Execute<object?>(cancellationToken, unusedCancellationToken =>
+        {
+            lock (gate)
+            {
+                var provider = providerRegistry.FindTextProvider(model);
+                if (provider is not null)
+                {
+                    GetOrLoadManagedCore(provider, model, contextSize);
+                }
+                else
+                {
+                    if (string.Equals(model.Format, "managed-model", StringComparison.OrdinalIgnoreCase))
+                    {
+                        ThrowManagedProviderUnavailable(model);
+                    }
+
+                    GetOrLoadCore(model, embeddings: false, contextSize);
+                }
+            }
+
+            return null;
+        });
+    }
+
     private T Execute<T>(CancellationToken cancellationToken, Func<CancellationToken, T> action)
     {
         executionGate.Wait(cancellationToken);

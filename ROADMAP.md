@@ -315,10 +315,12 @@ GLM 基础代码顺序、性能计划、集中验证门槛与发布标准见 [pr
 
 计划范围：
 
+当前已接入基础：`POST /api/runtime/session/load` 可按已安装模型 ID 和上下文长度显式加载唯一文本 session；它与既有 status/unload API 共用 `SessionManager` 生命周期，加载新模型会释放旧模型。该接口已完成项目构建验证，真实 CUDA 模型加载、并发取消和显存释放仍归 R18 smoke。
+
 1. Settings 写入 API：API key 创建/撤销、server URL、默认 backend、proxy、GPU/offload 偏好。
 2. 下载队列 API：模型包选择、进度、暂停/恢复、失败重试、checksum 结果和 license 提示。
 3. 模型管理：本地模型删除、manifest 修复、可见性刷新和模型能力提示。
-4. Runtime 操作：session unload、native prepare、backend 选择和修复动作统一确认。
+4. Runtime 操作：session load/unload、native prepare、backend 选择和修复动作统一确认。
 5. 文件与检索配置：附件目录、生成产物目录、文件索引状态和本地 RAG 配置。
 
 验收：

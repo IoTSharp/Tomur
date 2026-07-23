@@ -192,6 +192,8 @@ namespace Tomur.Serialization;
 [JsonSerializable(typeof(AcceleratorDevice))]
 [JsonSerializable(typeof(AccelerationBackendStatus))]
 [JsonSerializable(typeof(RuntimeStatusResponse))]
+[JsonSerializable(typeof(RuntimeSessionLoadRequest))]
+[JsonSerializable(typeof(RuntimeSessionControlError))]
 [JsonSerializable(typeof(DoctorReport))]
 [JsonSerializable(typeof(ModelProviderStatus))]
 [JsonSerializable(typeof(ModelProviderInfo))]

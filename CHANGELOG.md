@@ -4,6 +4,10 @@
 
 ## 未发布
 
+### Runtime 会话控制
+
+新增 `POST /api/runtime/session/load`，只允许从本地可见模型目录解析文本模型 ID，并使用既有 `SessionManager` 显式加载唯一文本 session；请求可指定有界 context size，加载其他模型时沿用现有释放逻辑。接口与 `GET /api/runtime/status`、`POST /api/runtime/session/unload` 返回同一 session 状态，并为无效 JSON、模型不存在、能力不匹配和加载失败提供结构化错误。本机 `dotnet build app/Tomur.csproj` 已通过；真实 CUDA 模型加载、并发请求取消和显存释放尚未执行。
+
 ### Tool Calling
 
 OpenAI `POST /v1/chat/completions` 与 Ollama `POST /api/chat` 兼容端点已接入 function 工具声明、带调用 ID 的模型 tool calls，以及客户端执行工具后按 ID 回灌结果的消息契约；兼容端点保持客户端执行边界，不在服务端执行客户端声明的任意函数。`POST /api/agents/chat` 已接入模型自主选择 Tomur 本地工具的有界服务端循环：只读工具可自动执行，有副作用的工具必须位于请求显式 allowlist，确认与预批准的完整 JSON 参数精确绑定且只能消费一次。模型调用会跨轮拒绝重复 ID，工具错误以结构化结果回灌；调用 ID、规范化参数 SHA-256 和确认状态使用独立短超时尝试写入事件审计。工具调用 streaming 当前在完整本地推理和协议解析后发送可聚合调用帧，并非逐 token 参数增量；OpenAI `strict=true` 当前返回明确 400，不会被静默忽略。M10 专项 `49/49` 自动化测试和 win-x64 Native AOT 发布已通过；真实模型 smoke、完整 Agent 工具循环、请求取消后的副作用审计和并发事件日志仍未验证。
