@@ -6,6 +6,29 @@ namespace Tomur.Providers.M3.Tests;
 
 public sealed class TensorStorageTests
 {
+    /// <summary>
+    /// 验证合法空分片可作为占位文件，但全空模型仍会被拒绝。
+    /// </summary>
+    [Fact]
+    public void EmptyShardCanAccompanyPopulatedShardButCannotFormModelAlone()
+    {
+        using var directory = new TemporaryDirectory();
+        var populatedPath = SafeTensorTestFile.Write(
+            directory.Path,
+            "populated.safetensors",
+            new TestTensor("value", "U8", [1], [7]));
+        var emptyPath = SafeTensorTestFile.Write(
+            directory.Path,
+            "empty.safetensors");
+
+        var catalog = SafeTensorCatalog.Read([emptyPath, populatedPath]);
+
+        Assert.Equal(1, catalog.Count);
+        Assert.Equal(1, catalog.TotalPayloadBytes);
+        Assert.Equal("value", catalog.GetRequired("value").Name);
+        Assert.Throws<InvalidDataException>(() => SafeTensorCatalog.Read([emptyPath]));
+    }
+
     [Fact]
     public void RandomSlicesWholeTensorsAndAdjacentRangesMatchShardBytes()
     {

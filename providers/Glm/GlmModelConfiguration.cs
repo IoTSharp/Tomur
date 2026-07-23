@@ -39,9 +39,18 @@ internal sealed record GlmModelConfiguration(
 
     public int DsaIndexHeadSize { get; init; }
 
+    public IReadOnlyList<string>? DsaIndexerTypes { get; init; }
+
     public int MtpLayerCount { get; init; }
 
     public bool HasDsaConfiguration => DsaTopK > 0;
+
+    /// <summary>
+    /// 当前 DSA 运行时仅支持 top-k 覆盖全部因果键的 dense 等价上下文。
+    /// </summary>
+    public int EffectiveContextLimit => HasDsaConfiguration
+        ? Math.Min(MaxPositionEmbeddings, DsaTopK)
+        : MaxPositionEmbeddings;
 
     public bool HasMtpConfiguration => MtpLayerCount > 0;
 
@@ -117,6 +126,7 @@ internal sealed record GlmModelConfiguration(
             DsaStartLayer = GetOptionalInt(root, "indexer_start_layer") ?? 0,
             DsaIndexHeadCount = GetOptionalInt(root, "index_n_heads") ?? 0,
             DsaIndexHeadSize = GetOptionalInt(root, "index_head_dim") ?? 0,
+            DsaIndexerTypes = GetOptionalStringArray(root, "indexer_types"),
             MtpLayerCount = GetOptionalInt(root, "num_nextn_predict_layers") ?? 0
         };
 
@@ -156,6 +166,38 @@ internal sealed record GlmModelConfiguration(
         {
             RequireRange(DsaIndexHeadCount, 1, AttentionHeadCount, "index_n_heads");
             RequireRange(DsaIndexHeadSize, 1, HiddenSize, "index_head_dim");
+
+            // GLM-5.2 只为 full 层保存 indexer 权重，shared 层复用最近的 full 层。
+            if (DsaIndexerTypes is not null)
+            {
+                if (DsaIndexerTypes.Count != LayerCount)
+                {
+                    throw new InvalidDataException(
+                        $"Model configuration property 'indexer_types' must contain {LayerCount} entries.");
+                }
+
+                var hasFullIndexer = false;
+                for (var layer = 0; layer < DsaIndexerTypes.Count; layer++)
+                {
+                    var indexerType = DsaIndexerTypes[layer];
+                    if (!indexerType.Equals("full", StringComparison.OrdinalIgnoreCase) &&
+                        !indexerType.Equals("shared", StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new InvalidDataException(
+                            $"Model DSA indexer type at layer {layer} must be 'full' or 'shared'.");
+                    }
+
+                    if (indexerType.Equals("full", StringComparison.OrdinalIgnoreCase))
+                    {
+                        hasFullIndexer = true;
+                    }
+                    else if (layer >= DsaStartLayer && !hasFullIndexer)
+                    {
+                        throw new InvalidDataException(
+                            $"Model DSA shared indexer at layer {layer} has no preceding full indexer.");
+                    }
+                }
+            }
         }
         else if (DsaIndexHeadCount != 0 || DsaIndexHeadSize != 0)
         {
@@ -300,6 +342,36 @@ internal sealed record GlmModelConfiguration(
         }
 
         return property.GetString()!;
+    }
+
+    /// <summary>
+    /// 读取可选字符串数组，并拒绝空值或非字符串元素。
+    /// </summary>
+    private static IReadOnlyList<string>? GetOptionalStringArray(JsonElement root, string name)
+    {
+        if (!root.TryGetProperty(name, out var property))
+        {
+            return null;
+        }
+
+        if (property.ValueKind != JsonValueKind.Array)
+        {
+            throw new InvalidDataException($"Model configuration property '{name}' must be an array.");
+        }
+
+        var values = new List<string>();
+        foreach (var item in property.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(item.GetString()))
+            {
+                throw new InvalidDataException(
+                    $"Model configuration property '{name}' must contain non-empty strings.");
+            }
+
+            values.Add(item.GetString()!);
+        }
+
+        return values.ToArray();
     }
 
     private static void RequireOptionalString(JsonElement root, string name, string expected)

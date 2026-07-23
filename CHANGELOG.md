@@ -4,13 +4,17 @@
 
 ## 未发布
 
+### Tool Calling
+
+OpenAI `POST /v1/chat/completions` 与 Ollama `POST /api/chat` 兼容端点已接入 function 工具声明、带调用 ID 的模型 tool calls，以及客户端执行工具后按 ID 回灌结果的消息契约；兼容端点保持客户端执行边界，不在服务端执行客户端声明的任意函数。`POST /api/agents/chat` 已接入模型自主选择 Tomur 本地工具的有界服务端循环：只读工具可自动执行，有副作用的工具必须位于请求显式 allowlist，确认与预批准的完整 JSON 参数精确绑定且只能消费一次。模型调用会跨轮拒绝重复 ID，工具错误以结构化结果回灌；调用 ID、规范化参数 SHA-256 和确认状态使用独立短超时尝试写入事件审计。工具调用 streaming 当前在完整本地推理和协议解析后发送可聚合调用帧，并非逐 token 参数增量；OpenAI `strict=true` 当前返回明确 400，不会被静默忽略。M10 专项 `49/49` 自动化测试和 win-x64 Native AOT 发布已通过；真实模型 smoke、完整 Agent 工具循环、请求取消后的副作用审计和并发事件日志仍未验证。
+
 ### 开源许可
 
-Tomur 自有源代码已采用 Apache License 2.0，版权主体为 IoTSharp contributors；根目录新增 `LICENSE`、`NOTICE` 与 `THIRD_PARTY_NOTICES.md`，区分 Tomur 自有代码、第三方依赖、native runtime、可选硬件运行库和模型资产的许可边界，并明确致谢为纯 C# GLM / MoE provider 提供设计灵感与工程思路的 `JustVugg/colibri` 项目。主程序发布配置会把三份许可文件复制到可执行文件旁；本轮未执行构建或发布验证。
+Tomur 自有源代码已采用 Apache License 2.0，版权主体为 IoTSharp contributors；根目录新增 `LICENSE`、`NOTICE` 与 `THIRD_PARTY_NOTICES.md`，区分 Tomur 自有代码、第三方依赖、native runtime、可选硬件运行库和模型资产的许可边界，并明确致谢为纯 C# GLM / MoE provider 提供设计灵感与工程思路的 `JustVugg/colibri` 项目。win-x64 Native AOT 发布已确认三份许可文件复制到可执行文件旁；其他发布 profile 和跨平台包仍待验证。
 
 ### M13 发布与兼容
 
-已完成 managed provider 发布与兼容基础代码：非 AOT 发布会构建批准的 `Tomur.Providers.Glm.dll` 并复制到主程序旁的 `providers/`，生成包含契约版本、程序集版本、provider ID 和 SHA-256 的 `providers.manifest.json`。provider discovery 会校验 `Tomur` 契约程序集版本，并在发布清单存在时拒绝缺失或 checksum 不匹配的 provider；失败只影响对应 managed provider，native provider 保持可用。Native AOT 继续返回 `dynamic_managed_providers_unavailable`，未引入未经验证的动态托管程序集加载。M13 测试项目已接入 solution；本轮未执行构建、测试或发布 smoke，跨平台证据归 M14。
+已完成 managed provider 发布与兼容基础代码：`providers/Abstractions` 承载稳定契约，`Tomur.csproj` 通过项目引用静态纳入 GLM 与 OLMoE provider，`ModelProviderRegistry` 在进程启动时注册构建中批准的 provider；不再从外部 `providers/` 目录动态发现任意托管程序集。Native AOT 与非 AOT 发布使用各自构建时包含的 provider 集合，单个 managed provider 失败不影响现有 native provider。win-x64 Native AOT 发布已通过；M13 专项测试、可执行文件 smoke、非 AOT profile 和跨平台证据仍归 M14。
 
 ### M12 高级能力
 

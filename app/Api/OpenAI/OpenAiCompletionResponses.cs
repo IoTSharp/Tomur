@@ -17,7 +17,11 @@ public sealed record OpenAiChatCompletionChoice(
 
 public sealed record OpenAiChatCompletionMessage(
     [property: JsonPropertyName("role")] string Role,
-    [property: JsonPropertyName("content")] string Content);
+    [property: JsonPropertyName("content"), JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Content)
+{
+    [JsonPropertyName("tool_calls")]
+    public IReadOnlyList<OpenAiChatToolCall>? ToolCalls { get; init; }
+}
 
 public sealed record OpenAiCompletionResponse(
     [property: JsonPropertyName("id")] string Id,
@@ -52,7 +56,11 @@ public sealed record OpenAiChatCompletionChunkChoice(
 
 public sealed record OpenAiChatCompletionDelta(
     [property: JsonPropertyName("role")] string? Role,
-    [property: JsonPropertyName("content")] string? Content);
+    [property: JsonPropertyName("content")] string? Content)
+{
+    [JsonPropertyName("tool_calls")]
+    public IReadOnlyList<OpenAiChatToolCall>? ToolCalls { get; init; }
+}
 
 public sealed record OpenAiCompletionChunk(
     [property: JsonPropertyName("id")] string Id,

@@ -97,6 +97,14 @@ dotnet run --project app -- serve --open
 
 Tomur 不会在未接通本地 runtime 时伪造推理结果。模型缺失、native runtime 或托管 provider 不可用、bundle 资产损坏、上下文超限、能力不匹配或内存不足时，API、CLI 和 UI 都应返回可诊断的错误。
 
+## 🛠️ 工具调用
+
+OpenAI `POST /v1/chat/completions` 与 Ollama `POST /api/chat` 兼容端点支持 function 工具声明、模型返回的 tool calls，以及客户端执行工具后回灌结果的后续消息。兼容端点不会在服务端执行客户端声明的任意函数，工具实现与执行权限仍由客户端负责；OpenAI `strict=true` 当前明确返回 400。
+
+`POST /api/agents/chat` 面向 Tomur 本地工具提供不同的执行边界：模型可在受最大轮次限制的服务端循环中自主选择工具。只读工具可自动执行；任何有副作用的工具都必须位于请求显式允许的工具范围内，确认必须与预批准的完整 JSON 参数精确匹配并且只能消费一次。调用 ID、参数指纹和确认状态会使用独立短超时尝试写入本地事件审计。
+
+上述基础代码已通过 M10 专项 `49/49` 自动化测试和 win-x64 Native AOT 发布；工具调用 streaming 当前在完整推理和协议解析后发送可聚合帧，不是逐 token 参数增量。真实模型 smoke、完整 Agent 工具循环、请求取消后的副作用审计和并发事件日志仍未验证。
+
 ## 🔌 API 示例
 
 健康检查：
@@ -124,6 +132,37 @@ curl.exe http://127.0.0.1:5137/v1/chat/completions `
     "stream": false
   }'
 ```
+
+声明一个由客户端执行的 OpenAI 工具：
+
+```powershell
+curl.exe http://127.0.0.1:5137/v1/chat/completions `
+  -H "Content-Type: application/json" `
+  -d '{
+    "model": "qwen35-9b-q4km",
+    "messages": [
+      { "role": "user", "content": "检查当前 Tomur runtime 状态。" }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_runtime_status",
+          "description": "读取客户端可访问的 Tomur runtime 状态",
+          "parameters": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+          }
+        }
+      }
+    ],
+    "tool_choice": "auto",
+    "stream": false
+  }'
+```
+
+如果模型返回 `choices[0].message.tool_calls`，客户端执行对应函数，再把原 assistant 消息和 `{ "role": "tool", "tool_call_id": "<call-id>", "content": "<tool-result>" }` 追加到 `messages` 后重新请求。Ollama 兼容入口使用对应的 `message.tool_calls` 与 `role=tool` 消息完成同一循环。
 
 调用 Ollama 风格聊天接口：
 

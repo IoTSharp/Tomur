@@ -499,9 +499,9 @@ M14 性能验证仍待执行：
 
 已完成基础代码：
 
-1. ✅ 配置 reader 已扩展 `index_topk`、`indexer_start_layer`、`index_n_heads`、`index_head_dim` 与 `num_nextn_predict_layers`，模型 probe 会校验 DSA indexer 层覆盖、MTP tensor 集合和可用 projection head；未声明高级字段的既有模型保持基础路径。
+1. ✅ 配置 reader 已扩展 `index_topk`、`indexer_start_layer`、`index_n_heads`、`index_head_dim`、`indexer_types` 与 `num_nextn_predict_layers`；模型 probe 按 `full/shared` 声明校验 DSA indexer 归属并确认 MTP tensor 集合，shared 层不要求重复权重，未声明高级字段的既有模型保持基础路径。
 2. ✅ 已实现接收 indexer score 的稳定 DSA top-k causal key selection，并在 top-k 覆盖全部 causal key 时精确回到 dense softmax；运行时当前只启用 dense-equivalent 路径，真实 indexer projection 未经 M14 对齐时返回明确失败，不使用 attention score 冒充 indexer score。
-3. ✅ MTP projection head 已纳入可选 resident 权重、内存预预算和单步 draft 边界；缺失或 shape 不匹配时模型 probe 前置失败，不回退到伪造 draft。
+3. ✅ 可识别的 MTP projection head 会纳入可选 resident 权重、内存预预算和单步 draft 边界；GLM-5.2 资产没有独立词表 projection head 时仍可加载基础推理路径，但不启用 MTP draft，也不回退到伪造 draft。
 4. ✅ 已实现单 token speculative acceptance 与 rejection residual sampling，并独立校验 target/draft 概率分布；生产生成链路启用前仍须在 M14 验证采样分布不变。
 5. ✅ 已实现不重叠、词表有界的 grammar forced token spans；未提供约束时不修改 logits。
 6. ✅ decode 路径已使用上一 token 的 router 结果进行下一步有界 expert lookahead prefetch，prefill 继续使用批次 unique expert union，二者都受 per-layer slot capacity 与取消边界约束。

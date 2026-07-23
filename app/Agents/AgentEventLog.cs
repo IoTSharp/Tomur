@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -24,10 +26,25 @@ public sealed class AgentEventLog
         AgentToolInvokeResponse response,
         string invocationKind,
         CancellationToken cancellationToken)
+        => await WriteToolInvocationAsync(
+                response,
+                invocationKind,
+                null,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+    /// <summary>
+    /// 写入带模型调用标识和参数指纹的工具审计事件，不持久化原始参数。
+    /// </summary>
+    internal async ValueTask WriteToolInvocationAsync(
+        AgentToolInvokeResponse response,
+        string invocationKind,
+        AgentToolInvocationAuditContext? auditContext,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(response);
         await WriteAsync(
-                AgentEventLogEntry.FromToolInvocation(response, invocationKind),
+                AgentEventLogEntry.FromToolInvocation(response, invocationKind, auditContext),
                 cancellationToken)
             .ConfigureAwait(false);
     }
@@ -207,9 +224,39 @@ public sealed record AgentEventLogEntry(
     [property: JsonPropertyName("diagnostics")] IReadOnlyList<string> Diagnostics,
     [property: JsonPropertyName("actions")] IReadOnlyList<string> Actions)
 {
+    [JsonPropertyName("call_id")]
+    public string? CallId { get; init; }
+
+    [JsonPropertyName("model_selected")]
+    public bool ModelSelected { get; init; }
+
+    [JsonPropertyName("arguments_sha256")]
+    public string? ArgumentsSha256 { get; init; }
+
+    [JsonPropertyName("confirmation_requested")]
+    public bool? ConfirmationRequested { get; init; }
+
+    [JsonPropertyName("confirmation_effective")]
+    public bool? ConfirmationEffective { get; init; }
+
+    [JsonPropertyName("confirmation_consumed")]
+    public bool? ConfirmationConsumed { get; init; }
+
+    [JsonPropertyName("confirmation_reused")]
+    public bool? ConfirmationReused { get; init; }
+
     public static AgentEventLogEntry FromToolInvocation(
         AgentToolInvokeResponse response,
         string invocationKind)
+        => FromToolInvocation(response, invocationKind, null);
+
+    /// <summary>
+    /// 从工具响应和显式调用上下文构造持久化事件，确保调用 ID 在响应组装前也不会丢失。
+    /// </summary>
+    internal static AgentEventLogEntry FromToolInvocation(
+        AgentToolInvokeResponse response,
+        string invocationKind,
+        AgentToolInvocationAuditContext? auditContext)
         => new(
             AgentEventLogIds.NewId(),
             DateTimeOffset.UtcNow,
@@ -226,7 +273,16 @@ public sealed record AgentEventLogEntry(
             null,
             null,
             response.Diagnostics,
-            response.Audit.Actions);
+            response.Audit.Actions)
+        {
+            CallId = auditContext?.CallId ?? response.Audit.CallId,
+            ModelSelected = auditContext?.ModelSelected ?? response.Audit.ModelSelected,
+            ArgumentsSha256 = auditContext?.ArgumentsSha256 ?? response.Audit.ArgumentsSha256,
+            ConfirmationRequested = auditContext?.ConfirmationRequested ?? response.Audit.ConfirmationRequested,
+            ConfirmationEffective = auditContext?.ConfirmationEffective ?? response.Audit.ConfirmationEffective,
+            ConfirmationConsumed = auditContext?.ConfirmationConsumed ?? response.Audit.ConfirmationConsumed,
+            ConfirmationReused = auditContext?.ConfirmationReused ?? response.Audit.ConfirmationReused
+        };
 
     public static AgentEventLogEntry FromChat(AgentChatResponse response)
         => new(
@@ -297,4 +353,66 @@ internal static class AgentEventLogIds
 {
     public static string NewId()
         => Guid.NewGuid().ToString("n");
+}
+
+internal static class AgentToolArgumentFingerprint
+{
+    /// <summary>
+    /// 对规范化 JSON 计算 SHA-256，小写十六进制结果可稳定关联同一组参数。
+    /// </summary>
+    public static string ComputeSha256(JsonElement arguments)
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            WriteCanonicalJson(writer, arguments);
+            writer.Flush();
+        }
+
+        return Convert.ToHexString(SHA256.HashData(buffer.WrittenSpan)).ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// 递归排序对象属性并保留数组顺序，避免空白和属性顺序改变参数指纹。
+    /// </summary>
+    private static void WriteCanonicalJson(Utf8JsonWriter writer, JsonElement value)
+    {
+        switch (value.ValueKind)
+        {
+            case JsonValueKind.Object:
+                writer.WriteStartObject();
+                foreach (var property in value.EnumerateObject().OrderBy(static property => property.Name, StringComparer.Ordinal))
+                {
+                    writer.WritePropertyName(property.Name);
+                    WriteCanonicalJson(writer, property.Value);
+                }
+
+                writer.WriteEndObject();
+                break;
+            case JsonValueKind.Array:
+                writer.WriteStartArray();
+                foreach (var item in value.EnumerateArray())
+                {
+                    WriteCanonicalJson(writer, item);
+                }
+
+                writer.WriteEndArray();
+                break;
+            case JsonValueKind.String:
+                writer.WriteStringValue(value.GetString());
+                break;
+            case JsonValueKind.Number:
+                writer.WriteRawValue(value.GetRawText());
+                break;
+            case JsonValueKind.True:
+                writer.WriteBooleanValue(true);
+                break;
+            case JsonValueKind.False:
+                writer.WriteBooleanValue(false);
+                break;
+            default:
+                writer.WriteNullValue();
+                break;
+        }
+    }
 }

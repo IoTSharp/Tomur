@@ -54,9 +54,9 @@ public sealed class ToolFactory
                 tools.Add(new BlockedToolFunction(
                     descriptor,
                     "tool_not_callable",
-                    $"Tool '{descriptor.Name}' is visible in the R9 tool map but is not enabled for automatic Agent Framework execution yet.",
+                    $"Tool '{descriptor.Name}' is visible in the local tool map but is not ready or callable in the current binding.",
                     descriptor.Actions.Count == 0
-                        ? ["Inspect /api/agents/tools and use the dedicated HTTP endpoint manually when ready."]
+                        ? ["Inspect /api/agents/tools for current readiness and use the dedicated HTTP endpoint when supported."]
                         : descriptor.Actions));
                 continue;
             }
@@ -91,13 +91,13 @@ public sealed class ToolFactory
             declarationTools,
             [
                 "Read-only runtime tools are invokable without user confirmation.",
-                "Ready R8 multimodal tools are exposed as declarations and can be invoked only through Tomur's explicit controlled path.",
+                "Ready multimodal tools are exposed as declarations; model-selected side-effect execution requires model_auto_controlled, an explicit tools[] allowlist, and confirmation when required.",
                 "POST /api/agents/tools/invoke can execute runtime.diagnose and tools.inspect with audit metadata.",
                 "POST /api/agents/tools/invoke can execute files.search as a read-only SQLite/local files tool.",
                 "POST /api/agents/tools/invoke can execute runtime.repair only when mode=controlled and confirm=true.",
                 "POST /api/agents/tools/invoke can execute ready R8 tools when mode=controlled; image.generate and audio.speak require confirm=true.",
                 "POST /api/agents/chat supports tool_mode auto_read_only for bounded Tomur-planned read-only runtime, tool-map and file-search context.",
-                "POST /api/agents/chat supports tool_mode controlled with explicit tools[]; model-selected arbitrary tool execution remains disabled.",
+                "POST /api/agents/chat supports model_auto_read_only for bounded model-selected read-only calls and model_auto_controlled with an explicit tools[] allowlist; side-effect calls still require confirm=true.",
                 "POST /api/agents/workflows/read-only executes a bounded Tomur read-only tool plan and can ask an Agent Framework workflow-hosted ChatClientAgent to summarize the results.",
                 "GET /api/agents/telemetry exposes the local ActivitySource span and exporter configuration boundary for OpenTelemetry wiring.",
                 "Image generation and TTS can write local artifacts only after explicit confirmation.",

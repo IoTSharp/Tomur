@@ -54,6 +54,9 @@
   - `POST /v1/chat/completions`
   - `POST /api/chat`
 - OpenAI / Ollama 兼容 API 是核心能力。
+- OpenAI / Ollama 兼容聊天端点必须支持标准工具声明、模型返回 tool calls，以及客户端执行工具后通过后续消息回灌结果；兼容端点不得在服务端擅自执行客户端声明的任意函数。
+- `POST /api/agents/chat` 可以让模型在有界服务端循环中自主选择 Tomur 本地工具；循环必须限制最大轮次并校验工具参数。
+- 只读 Tomur 工具可以自动执行；任何有副作用的工具都必须位于请求显式 allowlist 内，并在执行前取得明确确认，不得因模型选择而绕过安全边界。
 - R13 协议能力聚合包含 Claude Code 所需的 Anthropic Messages 兼容入口：`GET /v1/models?limit=1000`、`POST /v1/messages` 与 `POST /v1/messages/count_tokens`。
 - Claude Code / Anthropic Messages 兼容入口必须映射到 Tomur 本地模型与本地 runtime；未下载模型、runtime 不可用或上下文超限时返回对应协议风格的清晰诊断，不得伪造推理结果。
 - 未接通本地 runtime 时，API 必须返回清晰的未配置或不可用诊断，不得伪造推理结果。
@@ -134,6 +137,7 @@
 - Tomur 作为独立本地程序，可以规划本机 `dotnet build`、`dotnet test`、`dotnet run`、`dotnet publish` 验证路径；但执行前必须遵守用户是否要求验证的约束。
 - 前端验证在用户明确要求时执行，优先使用项目内 package scripts。
 - 不对外部父仓库的服务器项目执行本机 `dotnet build`、`dotnet test`、`dotnet run`、`dotnet ef`。
+- Tool Calling 文档必须区分“已接入”与“已验证”；未执行构建、测试或真实模型 smoke 时，不得把协议字段、模型工具选择或完整循环写成已验证证据。
 
 ## 变更纪律
 

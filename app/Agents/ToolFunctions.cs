@@ -319,6 +319,56 @@ public sealed class ControlledToolDeclarationFunction : AIFunction
     }
 }
 
+internal sealed class ModelSelectedToolFunction : AIFunction
+{
+    private readonly AgentToolDescriptor descriptor;
+    private readonly string description;
+    private readonly JsonElement inputSchema;
+
+    /// <summary>
+    /// 创建交给模型选择、由 FunctionInvokingChatClient 自定义执行器接管的本地工具。
+    /// </summary>
+    public ModelSelectedToolFunction(
+        AgentToolDescriptor descriptor,
+        JsonElement? approvedArguments)
+    {
+        ArgumentNullException.ThrowIfNull(descriptor);
+        this.descriptor = descriptor;
+        ApprovedArguments = approvedArguments is { } value ? value.Clone() : null;
+        var hasSideEffect = !string.Equals(descriptor.SideEffect, "none", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(descriptor.SideEffect, "read", StringComparison.OrdinalIgnoreCase);
+        description = hasSideEffect
+            ? ApprovedArguments is { } approved
+                ? $"{descriptor.Message} Confirmed side-effect calls must use exactly this approved JSON object once: {approved.GetRawText()} Any parameter change or reuse is blocked."
+                : $"{descriptor.Message} This side-effect tool has no approved JSON arguments in the current request, so invocation is blocked."
+            : descriptor.Message;
+        inputSchema = ToolJsonSchema.Parse(descriptor.InputSchema);
+    }
+
+    internal JsonElement? ApprovedArguments { get; }
+
+    public override string Name => descriptor.Name;
+
+    public override string Description => description;
+
+    public override JsonElement JsonSchema => inputSchema;
+
+    /// <summary>
+    /// 防止工具脱离 Agent 自定义执行器后被直接调用，实际执行必须经过 ToolInvoker 审计。
+    /// </summary>
+    protected override ValueTask<object?> InvokeCoreAsync(
+        AIFunctionArguments arguments,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        _ = arguments;
+        return ValueTask.FromResult<object?>(new BlockedToolResult(
+            "model_tool_invoker_required",
+            $"Tool '{descriptor.Name}' must be executed through the Tomur model-selected tool invoker.",
+            ["Use POST /api/agents/chat with a model_auto_* tool mode."]));
+    }
+}
+
 public static class AgentToolResultJson
 {
     public static JsonElement ToJsonElement(object? value)

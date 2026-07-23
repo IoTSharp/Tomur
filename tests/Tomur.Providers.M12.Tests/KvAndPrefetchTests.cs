@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using Tomur.Providers;
 using Tomur.Providers.Glm;
 using Tomur.Runtime;
@@ -8,22 +9,82 @@ namespace Tomur.Providers.M12.Tests;
 
 public sealed class KvAndPrefetchTests
 {
+    /// <summary>
+    /// 验证 shared indexer 层不要求重复权重，且基础推理可忽略缺失的独立 MTP head。
+    /// </summary>
     [Fact]
-    public void AdvancedConfigurationRequiresMatchingDsaAndMtpAssets()
+    public void AdvancedProbeAcceptsSharedIndexerLayersWithoutIndependentMtpHead()
     {
-        using var dsaFixture = new FixtureDirectory();
+        using var fixture = new FixtureDirectory();
+        var configuration = GlmModelConfiguration.Read(
+            System.IO.Path.Combine(fixture.Path, "config.json"),
+            GlmModelConfiguration.DsaModelType) with
+        {
+            LayerCount = 3,
+            DsaTopK = 4,
+            DsaStartLayer = 0,
+            DsaIndexHeadCount = 1,
+            DsaIndexHeadSize = 2,
+            DsaIndexerTypes = ["full", "shared", "shared"],
+            MtpLayerCount = 1
+        };
+        var tensorPath = System.IO.Path.Combine(fixture.Path, "advanced.safetensors");
+        WriteSafeTensorHeaders(
+            tensorPath,
+            ("model.layers.0.self_attn.indexer.k_norm.weight", new long[] { 2 }),
+            ("model.layers.3.eh_proj.weight", new long[] { 4, 4 }));
+
+        var probe = AdvancedFeatureProbe.Inspect(
+            configuration,
+            SafeTensorCatalog.Read([tensorPath]));
+
+        Assert.True(probe.DsaConfigured);
+        Assert.Equal(1, probe.DsaTensorCount);
+        Assert.True(probe.MtpConfigured);
+        Assert.Equal(1, probe.MtpTensorCount);
+        Assert.Null(probe.MtpHeadTensorName);
+    }
+
+    /// <summary>
+    /// 验证无 indexer 权重的 DSA 模型仅能在 top-k 覆盖上下文时加载。
+    /// </summary>
+    [Fact]
+    public void DsaWithoutIndexerWeightsIsLimitedToDenseEquivalentContext()
+    {
+        using var fixture = new FixtureDirectory();
         UpdateConfig(
-            dsaFixture.Path,
+            fixture.Path,
             root =>
             {
                 root["index_topk"] = 4;
                 root["indexer_start_layer"] = 0;
                 root["index_n_heads"] = 1;
                 root["index_head_dim"] = 2;
+                root["indexer_types"] = new JsonArray("full");
             });
-        var dsaError = Assert.Throws<InvalidDataException>(() => dsaFixture.ReadProbe());
-        Assert.Contains("DSA", dsaError.Message, StringComparison.Ordinal);
+        var probe = fixture.ReadProbe();
 
+        Assert.True(probe.AdvancedFeatures.DsaConfigured);
+        Assert.Equal(0, probe.AdvancedFeatures.DsaTensorCount);
+        using var model = ManagedGlmModel.Load(probe, contextSize: 4, long.MaxValue);
+        var exception = Assert.Throws<ContextLengthExceededException>(() =>
+            ManagedGlmModel.Load(probe, contextSize: 5, long.MaxValue));
+        Assert.Equal(4, exception.ContextLimit);
+
+        var descriptor = fixture.CreateDescriptor();
+        var provider = new ManagedGlmProvider();
+        var readiness = provider.InspectModel(descriptor, new ModelSessionOptions(8));
+        Assert.Equal(4, readiness.ContextSize);
+        using var session = provider.CreateSession(descriptor, new ModelSessionOptions(8));
+        Assert.Equal(4, session.GetSnapshot().ContextSize);
+    }
+
+    /// <summary>
+    /// 验证声明 MTP 层时仍必须提供对应的 MTP 张量资产。
+    /// </summary>
+    [Fact]
+    public void AdvancedConfigurationRequiresMtpAssets()
+    {
         using var mtpFixture = new FixtureDirectory();
         UpdateConfig(
             mtpFixture.Path,
@@ -170,6 +231,60 @@ public sealed class KvAndPrefetchTests
             root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
     }
 
+    /// <summary>
+    /// 写入只包含测试所需 F32 张量的最小 safetensors 文件。
+    /// </summary>
+    private static void WriteSafeTensorHeaders(
+        string path,
+        params (string Name, long[] Shape)[] tensors)
+    {
+        using var headerStream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(headerStream))
+        {
+            writer.WriteStartObject();
+            long offset = 0;
+            foreach (var tensor in tensors)
+            {
+                var elements = tensor.Shape.Aggregate(1L, static (total, value) => checked(total * value));
+                var byteLength = checked(elements * sizeof(float));
+                writer.WritePropertyName(tensor.Name);
+                writer.WriteStartObject();
+                writer.WriteString("dtype", "F32");
+                writer.WriteStartArray("shape");
+                foreach (var dimension in tensor.Shape)
+                {
+                    writer.WriteNumberValue(dimension);
+                }
+
+                writer.WriteEndArray();
+                writer.WriteStartArray("data_offsets");
+                writer.WriteNumberValue(offset);
+                writer.WriteNumberValue(checked(offset + byteLength));
+                writer.WriteEndArray();
+                writer.WriteEndObject();
+                offset = checked(offset + byteLength);
+            }
+
+            writer.WriteEndObject();
+        }
+
+        var unpaddedHeader = headerStream.ToArray();
+        var paddedLength = checked((unpaddedHeader.Length + 7) & ~7);
+        var header = new byte[paddedLength];
+        unpaddedHeader.CopyTo(header, 0);
+        header.AsSpan(unpaddedHeader.Length).Fill((byte)' ');
+
+        using var stream = File.Create(path);
+        Span<byte> headerLength = stackalloc byte[sizeof(ulong)];
+        BinaryPrimitives.WriteUInt64LittleEndian(headerLength, (ulong)header.Length);
+        stream.Write(headerLength);
+        stream.Write(header);
+        stream.SetLength(checked(sizeof(ulong) + header.Length +
+            tensors.Sum(static tensor => tensor.Shape.Aggregate(
+                (long)sizeof(float),
+                static (total, value) => checked(total * value)))));
+    }
+
     private sealed class FixtureDirectory : IDisposable
     {
         public FixtureDirectory()
@@ -182,23 +297,34 @@ public sealed class KvAndPrefetchTests
 
         public string Path { get; }
 
-        public ModelProbe ReadProbe()
+        /// <summary>
+        /// 按测试目录创建托管模型描述符。
+        /// </summary>
+        public LocalModelDescriptor CreateDescriptor()
         {
             var manifestPath = System.IO.Path.Combine(Path, ModelProviderManifest.FileName);
             var info = new FileInfo(manifestPath);
+            return new LocalModelDescriptor(
+                "m12-fixture",
+                "Managed GLM M12 fixture",
+                ModelProviderManifest.FileName,
+                ModelProviderManifest.FileName,
+                manifestPath,
+                info.Length,
+                info.LastWriteTimeUtc,
+                "managed-model",
+                GlmModelConfiguration.DsaModelType,
+                "f32",
+                ["completion", "chat"]);
+        }
+
+        /// <summary>
+        /// 读取测试目录并完成模型探测。
+        /// </summary>
+        public ModelProbe ReadProbe()
+        {
             return ModelDirectoryProbe.Read(
-                new LocalModelDescriptor(
-                    "m12-fixture",
-                    "Managed GLM M12 fixture",
-                    ModelProviderManifest.FileName,
-                    ModelProviderManifest.FileName,
-                    manifestPath,
-                    info.Length,
-                    info.LastWriteTimeUtc,
-                    "managed-model",
-                    GlmModelConfiguration.DsaModelType,
-                    "f32",
-                    ["completion", "chat"]),
+                CreateDescriptor(),
                 ManagedGlmProvider.ProviderId);
         }
 

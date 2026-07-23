@@ -8,6 +8,9 @@ internal sealed record AdvancedFeatureProbe(
     int MtpTensorCount,
     string? MtpHeadTensorName)
 {
+    /// <summary>
+    /// 检查 DSA 与 MTP 配置对应的张量集合，并拒绝不符合 full/shared 声明的 indexer。
+    /// </summary>
     public static AdvancedFeatureProbe Inspect(
         GlmModelConfiguration configuration,
         SafeTensorCatalog tensors)
@@ -24,18 +27,22 @@ internal sealed record AdvancedFeatureProbe(
 
         if (configuration.HasDsaConfiguration)
         {
-            var expectedLayerCount = configuration.LayerCount - configuration.DsaStartLayer;
             var indexedLayers = dsaTensors
                 .Select(static tensor => TryReadLayer(tensor.Name))
                 .Where(static layer => layer.HasValue)
                 .Select(static layer => layer!.Value)
                 .Where(layer => layer >= configuration.DsaStartLayer && layer < configuration.LayerCount)
-                .Distinct()
-                .Count();
-            if (indexedLayers < expectedLayerCount)
+                .ToHashSet();
+            var unexpectedLayers = indexedLayers
+                .Where(layer => configuration.DsaIndexerTypes is not null &&
+                    !configuration.DsaIndexerTypes[layer].Equals("full", StringComparison.OrdinalIgnoreCase))
+                .Order()
+                .ToArray();
+            if (unexpectedLayers.Length > 0)
             {
                 throw new InvalidDataException(
-                    $"DSA is configured for {expectedLayerCount} layer(s), but indexer tensors were found for only {indexedLayers} layer(s).");
+                    $"DSA indexer tensors were found on shared layer(s) " +
+                    $"{string.Join(", ", unexpectedLayers)}.");
             }
 
             foreach (var tensor in dsaTensors)
@@ -56,11 +63,6 @@ internal sealed record AdvancedFeatureProbe(
 
         var mtpHead = mtpTensors.FirstOrDefault(tensor =>
             IsMtpHead(tensor, configuration));
-        if (configuration.HasMtpConfiguration && mtpHead is null)
-        {
-            throw new InvalidDataException(
-                "MTP is configured, but no vocabulary projection head with the expected shape was found.");
-        }
 
         return new AdvancedFeatureProbe(
             configuration.HasDsaConfiguration,

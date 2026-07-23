@@ -6,6 +6,9 @@ internal sealed class LlamaPromptBuilder
 {
     private const string DefaultSystemPrompt = "You are a helpful local assistant.";
 
+    /// <summary>
+    /// 按模型家族生成聊天提示；Qwen3.5 默认预填充空思考段，确保业务接口直接返回正文。
+    /// </summary>
     public string BuildChatPrompt(IReadOnlyList<ChatTurn> messages, string modelName)
     {
         var normalized = messages
@@ -18,8 +21,11 @@ internal sealed class LlamaPromptBuilder
             return string.Empty;
         }
 
+        var useQwen35NonThinkingPrefill =
+            modelName.Contains("qwen3.5", StringComparison.OrdinalIgnoreCase) ||
+            modelName.Contains("qwen35", StringComparison.OrdinalIgnoreCase);
         return LooksLikeQwen(modelName)
-            ? BuildChatMlPrompt(normalized)
+            ? BuildChatMlPrompt(normalized, useQwen35NonThinkingPrefill)
             : BuildTaggedPrompt(normalized);
     }
 
@@ -59,7 +65,12 @@ internal sealed class LlamaPromptBuilder
             : normalized[^approximateMaxChars..];
     }
 
-    private static string BuildChatMlPrompt(IReadOnlyList<ChatTurn> messages)
+    /// <summary>
+    /// 生成 ChatML，并在 Qwen3.5 non-thinking 模式下把空思考段作为 assistant 前缀交给模型。
+    /// </summary>
+    private static string BuildChatMlPrompt(
+        IReadOnlyList<ChatTurn> messages,
+        bool useQwen35NonThinkingPrefill)
     {
         var builder = new StringBuilder();
         if (!messages.Any(static message => string.Equals(message.Role, "system", StringComparison.Ordinal)))
@@ -73,6 +84,11 @@ internal sealed class LlamaPromptBuilder
         }
 
         builder.Append("<|im_start|>assistant\n");
+        if (useQwen35NonThinkingPrefill)
+        {
+            builder.Append("<think>\n\n</think>\n\n");
+        }
+
         return builder.ToString();
     }
 
