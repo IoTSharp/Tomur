@@ -2,7 +2,7 @@
 
 本目录提供 Tomur 的车牌识别稳定 C ABI。识别引擎采用 [HyperLPR3](https://github.com/szad670401/HyperLPR) C++/MNN 路线，桥接层负责图片解码、上下文复用、参数校验和 JSON 序列化。
 
-HyperLPR3 源码以 `native/hyperlpr3` Git 子模块固定到上游提交 `9307450f7b7915be18f23a539ec05b41fe6629f4`，当前接口按该提交的公开 C API 编写。Tomur 不包含预编译 HyperLPR3、MNN 或 OpenCV 库；发布构建必须锁定并审计实际使用的版本。上游子模块自带 `r2_mobile` 模型文件，Tomur 不会自动将它们安装到模型目录或复制进 native bundle，使用和分发前仍需单独审计许可。
+HyperLPR3 源码以 `native/hyperlpr3` Git 子模块固定到上游提交 `9307450f7b7915be18f23a539ec05b41fe6629f4`，当前接口按该提交的公开 C API 编写。MNN 2.2.0 固定在 `native/mnn` 的 `4634ed830248844034cc926646834dabfb6d9adc`，OpenCV 4.12.0 固定在 `native/opencv` 的 `49486f61fb25722cbcf586b7f4320921d46fb38e`。Tomur 不提交预编译库；发布构建必须从这些固定源码生成目标架构产物并审计最终 bundle。HyperLPR3 子模块自带 `r2_mobile` 模型文件，Tomur 不会自动将它们安装到模型目录或复制进 native bundle，使用和分发前仍需单独审计许可。
 
 ## 模型目录
 
@@ -71,13 +71,15 @@ HyperLPR3 公开 C API 不提供检测置信度，因此 `detection_confidence` 
 
 ## 构建依赖
 
-先从 `native/hyperlpr3` 子模块为目标 RID 构建 HyperLPR3，并准备同架构的 MNN 和 OpenCV 4，再设置：
+先从 `native/mnn` 和 `native/opencv` 为目标 RID 构建依赖，再从 `native/hyperlpr3` 构建 HyperLPR3，并设置：
 
 - `TOMUR_HYPERLPR3_ROOT`：包含 `include/hyper_lpr_sdk.h` 与共享库 `lib`/`bin` 的安装根目录；当前 bundle 会探测 HyperLPR3 动态库，不接受仅有静态 `.a` 的安装。
 - `OpenCV_DIR`：目标架构 OpenCV 的 CMake package 目录。
 - `TOMUR_HYPERLPR3_RUNTIME_LIBRARY`：Windows 下必须显式指向 `hyperlpr3.dll`。
 - `TOMUR_MNN_RUNTIME_LIBRARY`：HyperLPR3 动态链接 MNN 时指向对应运行库；静态链接时留空。
 - `TOMUR_PLATE_RUNTIME_DEPENDENCIES`：需要随包分发的 OpenCV/MNN 动态库绝对路径列表。
+
+HyperLPR3 的 `LINUX_FETCH_MNN` 仅用于声明 CMake `FetchContent` 关系；可复现发布必须同时设置 `FETCHCONTENT_SOURCE_DIR_MNN=<tomur>/native/mnn`，使它使用固定子模块而不是访问网络。OpenCV 必须从 `native/opencv` 构建，并把 `core`、`imgproc`、`imgcodecs` 及其实际动态依赖放入同一 `plate/cpu` runtime 目录。
 
 随后使用 Tomur 统一入口：
 

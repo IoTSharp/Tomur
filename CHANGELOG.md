@@ -4,6 +4,10 @@
 
 ## 未发布
 
+### 车牌识别 ARM64 发布
+
+新增仓库级多阶段 Dockerfile，由 BuildKit/Compose 的目标 CPU 架构选择 `linux-x64` 或 `linux-arm64` RID，并从固定子模块构建 llama.cpp、HyperLPR3、MNN 2.2.0 与 OpenCV 4.12.0。MNN 2.2.0 的 GCC 13 头文件和 GNU AArch64 汇编兼容修复以版本化补丁在构建副本中校验后应用，不修改子模块；Linux ARM64 车牌原生阶段已通过 ELF 架构、公开 C ABI、MNN 静态链接和非系统动态依赖闭包检查。真实图片识别和目标机 smoke 仍待执行。
+
 ### Runtime 会话控制
 
 新增 `POST /api/runtime/session/load`，只允许从本地可见模型目录解析文本模型 ID，并使用既有 `SessionManager` 显式加载唯一文本 session；请求可指定有界 context size，加载其他模型时沿用现有释放逻辑。接口与 `GET /api/runtime/status`、`POST /api/runtime/session/unload` 返回同一 session 状态，并为无效 JSON、模型不存在、能力不匹配和加载失败提供结构化错误。本机 `dotnet build app/Tomur.csproj` 已通过；真实 CUDA 模型加载、并发请求取消和显存释放尚未执行。

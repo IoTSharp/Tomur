@@ -12,9 +12,9 @@ Tomur source code owned by IoTSharp contributors is licensed under the Apache Li
 | PaddleOCR | <https://github.com/PaddlePaddle/PaddleOCR> | Apache-2.0 |
 | HyperLPR3 | <https://github.com/szad670401/HyperLPR> | Apache-2.0 |
 | MNN | <https://github.com/alibaba/MNN> | Apache-2.0 |
-| OpenCV | <https://github.com/opencv/opencv> | Apache-2.0 or BSD-3-Clause, depending on version |
+| OpenCV | <https://github.com/opencv/opencv> | Apache-2.0 |
 
-The corresponding Git submodules, including HyperLPR3, retain their upstream copyright and license files. MNN and OpenCV remain caller-supplied build dependencies and are not vendored in this repository. The HyperLPR3 submodule contains upstream `.mnn` model files; Tomur does not automatically install or include those files in its executable or native bundle, and their use or redistribution requires a separate license review. Tomur-specific bridge code outside third-party source trees is covered by the Tomur Apache-2.0 license unless a file states otherwise.
+The corresponding Git submodules retain their upstream copyright and license files. HyperLPR3, MNN 2.2.0, and OpenCV 4.12.0 are pinned source dependencies under `native/`; release builds may compile their target-architecture libraries into the plate-recognition runtime bundle. The HyperLPR3 submodule contains upstream `.mnn` model files; Tomur does not automatically install or include those files in its executable or native bundle, and their use or redistribution requires a separate license review. Tomur-specific bridge code outside third-party source trees is covered by the Tomur Apache-2.0 license unless a file states otherwise.
 
 ## Managed And Web Dependencies
 

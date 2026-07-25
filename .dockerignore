@@ -1,0 +1,12 @@
+.git
+**/.git
+**/bin
+**/obj
+**/node_modules
+**/*.log
+artifacts
+output
+TestResults
+native/paddleocr
+native/stable-diffusion.cpp
+native/whisper.cpp

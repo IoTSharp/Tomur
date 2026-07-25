@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "bundle_id": "tomur.native.cpu.llama.plate",
+  "version": "0.8.3-llama-plate-cpu",
+  "runtime_root": "runtimes/{rid}/native",
+  "components": [
+    {
+      "id": "llama",
+      "display_name": "llama.cpp CPU",
+      "capabilities": [ "chat", "embeddings", "vlm", "gguf" ],
+      "source": {
+        "type": "git-submodule",
+        "path": "native/llama.cpp",
+        "url": "https://github.com/ggml-org/llama.cpp.git",
+        "license": "MIT"
+      },
+      "wrapper_path": "native/llama.native",
+      "backend": "cpu",
+      "runtime_path": ".",
+      "variants": [
+        {
+          "id": "cpu",
+          "display_name": "llama.cpp CPU",
+          "backend": "cpu",
+          "runtime_path": ".",
+          "priority": 10,
+          "required_backends": [],
+          "diagnostic": "CPU bundle does not load a GPU or NPU backend.",
+          "actions": [
+            "Run tomur native prepare to repair the managed CPU runtime bundle if required."
+          ]
+        }
+      ],
+      "publisher": true,
+      "libraries": [
+        { "name": "llama", "required": true },
+        { "name": "ggml", "required": true },
+        { "name": "ggml-base", "required": true },
+        { "name": "ggml-cpu", "required": true },
+        { "name": "tomur-llama-mtmd", "required": true },
+        { "name": "tomur-llama-vlm", "required": true }
+      ],
+      "shared_dependencies": []
+    },
+    {
+      "id": "plate",
+      "display_name": "HyperLPR3 CPU",
+      "capabilities": [ "plate_recognition", "vehicle_id" ],
+      "source": {
+        "type": "git-submodule",
+        "path": "native/hyperlpr3",
+        "url": "https://github.com/szad670401/HyperLPR.git",
+        "license": "Apache-2.0"
+      },
+      "wrapper_path": "native/plate.native",
+      "backend": "cpu",
+      "runtime_path": "plate/cpu",
+      "variants": [
+        {
+          "id": "cpu",
+          "display_name": "HyperLPR3 CPU",
+          "backend": "cpu",
+          "runtime_path": "plate/cpu",
+          "priority": 10,
+          "required_backends": [],
+          "diagnostic": "HyperLPR3 uses statically linked MNN and bundled OpenCV 4 runtime libraries.",
+          "actions": [
+            "Run tomur native prepare to repair the managed plate runtime bundle if required.",
+            "Install the six audited r2_mobile model files before invoking plate.recognize."
+          ]
+        }
+      ],
+      "publisher": false,
+      "libraries": [
+        { "name": "tomur-plate", "required": true },
+        { "name": "hyperlpr3", "required": true },
+        { "name": "opencv_core", "required": true },
+        { "name": "opencv_imgproc", "required": true },
+        { "name": "opencv_imgcodecs", "required": true }
+      ],
+      "shared_dependencies": []
+    }
+  ]
+}

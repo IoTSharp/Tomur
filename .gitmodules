@@ -13,3 +13,9 @@
 [submodule "native/hyperlpr3"]
 	path = native/hyperlpr3
 	url = https://github.com/szad670401/HyperLPR.git
+[submodule "native/mnn"]
+	path = native/mnn
+	url = https://github.com/alibaba/MNN.git
+[submodule "native/opencv"]
+	path = native/opencv
+	url = https://github.com/opencv/opencv.git
