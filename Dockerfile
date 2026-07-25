@@ -259,6 +259,7 @@ COPY native/opencv/LICENSE ./licenses/opencv/LICENSE
 COPY --from=llama-build /out/native/runtimes/ ./native/runtimes/
 COPY --from=plate-build /out/native/runtimes/ ./native/runtimes/
 COPY --from=web-build /src/app/wwwroot/ ./app/wwwroot/
+# 原生依赖许可不由 MSBuild 自动收集，发布前显式并入最终镜像目录。
 RUN --mount=type=cache,target=/root/.nuget/packages \
     case "$TARGETARCH" in arm64) rid=linux-arm64 ;; amd64) rid=linux-x64 ;; \
       *) echo "Unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; esac && \
@@ -270,6 +271,10 @@ RUN --mount=type=cache,target=/root/.nuget/packages \
       -p:PublishSingleFile=false \
       -p:DebugType=None \
       -p:DebugSymbols=false && \
+    cp -a /src/licenses /out/tomur/licenses && \
+    test -s /out/tomur/licenses/hyperlpr3/LICENSE && \
+    test -s /out/tomur/licenses/mnn/MNN.podspec && \
+    test -s /out/tomur/licenses/opencv/LICENSE && \
     test -s /out/tomur/native/bundle.manifest.json && \
     grep -q 'tomur.native.cpu.llama.plate' /out/tomur/native/bundle.manifest.json && \
     for library in llama ggml ggml-base ggml-cpu tomur-llama-mtmd tomur-llama-vlm; do \

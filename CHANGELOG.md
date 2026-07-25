@@ -8,7 +8,7 @@
 
 新增仓库级多阶段 Dockerfile，由 BuildKit/Compose 的目标 CPU 架构选择 `linux-x64` 或 `linux-arm64` RID，并从固定子模块构建 llama.cpp、HyperLPR3、MNN 2.2.0 与 OpenCV 4.12.0。MNN 2.2.0 的 GCC 13 头文件和 GNU AArch64 汇编兼容修复以版本化补丁在构建副本中校验后应用，不修改子模块；Linux ARM64 车牌原生阶段已通过 ELF 架构、公开 C ABI、MNN 静态链接和非系统动态依赖闭包检查。真实图片识别和目标机 smoke 仍待执行。
 
-修复完整镜像复制不存在的 MNN 根 `LICENSE` 文件而中断的问题；MNN 2.2.0 固定提交改为随镜像保留内嵌完整 Apache-2.0 许可文本的 `MNN.podspec`。
+修复完整镜像复制不存在的 MNN 根 `LICENSE` 文件而中断、原生依赖许可未进入最终发布目录的问题；MNN 2.2.0 固定提交改为随镜像保留内嵌完整 Apache-2.0 许可文本的 `MNN.podspec`，并对 HyperLPR3、MNN、OpenCV 三份许可文件增加发布断言。
 
 ### Runtime 会话控制
 
