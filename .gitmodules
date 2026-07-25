@@ -10,3 +10,6 @@
 [submodule "native/paddleocr"]
 	path = native/paddleocr
 	url = https://github.com/PaddlePaddle/PaddleOCR.git
+[submodule "native/hyperlpr3"]
+	path = native/hyperlpr3
+	url = https://github.com/szad670401/HyperLPR.git

@@ -14,6 +14,8 @@ loads only from that managed version directory.
 
 R3 establishes `INativeBundleProbe`, `INativeLibraryResolver`, and
 `INativeLibraryLoader` as the shared entry points for R4 runtime/API work. New
-llama, Whisper, OCR, stable-diffusion, and GGUF TTS bindings should resolve
-runtime paths through this boundary instead of rebuilding dynamic-library paths
-inside each feature.
+llama, Whisper, OCR, HyperLPR3 plate recognition, stable-diffusion, and GGUF TTS
+bindings should resolve runtime paths through this boundary instead of rebuilding
+dynamic-library paths inside each feature. The `plate` component resolves
+`tomur-plate` from `plate/cpu`; its audited `r2_mobile` model files remain under
+the Tomur models directory and are never copied into the native bundle.

@@ -5,6 +5,7 @@ using Tomur.Config;
 using Tomur.Inference;
 using Tomur.Multimodal;
 using Tomur.Native;
+using Tomur.PlateRecognition;
 using Tomur.Runtime;
 using Tomur.Serialization;
 
@@ -20,7 +21,9 @@ public sealed class ToolExecutionService
     private readonly FileIndexStore fileIndex;
     private readonly INativeBundlePreparer nativeBundlePreparer;
     private readonly LocalInferenceService inferenceService;
+    private readonly PlateRecognitionService plateRecognition;
 
+    /// <summary>创建连接多模态、车牌识别、文件检索和运行时修复适配器的执行服务。</summary>
     public ToolExecutionService(
         LocalModelCatalog modelCatalog,
         MultimodalExecutionService multimodalExecution,
@@ -29,7 +32,8 @@ public sealed class ToolExecutionService
         DataPaths paths,
         FileIndexStore fileIndex,
         INativeBundlePreparer nativeBundlePreparer,
-        LocalInferenceService inferenceService)
+        LocalInferenceService inferenceService,
+        PlateRecognitionService plateRecognition)
     {
         this.modelCatalog = modelCatalog;
         this.multimodalExecution = multimodalExecution;
@@ -39,8 +43,10 @@ public sealed class ToolExecutionService
         this.fileIndex = fileIndex;
         this.nativeBundlePreparer = nativeBundlePreparer;
         this.inferenceService = inferenceService;
+        this.plateRecognition = plateRecognition;
     }
 
+    /// <summary>按描述器名称把已授权调用分派到对应的本地适配器。</summary>
     public async Task<AgentToolExecutionResult> ExecuteAsync(
         AgentToolDescriptor descriptor,
         JsonElement? arguments,
@@ -53,6 +59,7 @@ public sealed class ToolExecutionService
             "image.generate" => await ExecuteImageGenerationAsync(descriptor, arguments, cancellationToken).ConfigureAwait(false),
             "vision.analyze" => ExecuteVisionAnalysis(descriptor, arguments, cancellationToken),
             "ocr.recognize" => ExecuteOcr(descriptor, arguments, cancellationToken),
+            "plate.recognize" => ExecutePlateRecognition(descriptor, arguments, cancellationToken),
             "audio.transcribe" => ExecuteAudioTranscription(descriptor, arguments, cancellationToken),
             "audio.speak" => ExecuteSpeechSynthesis(descriptor, arguments, cancellationToken),
             "files.search" => ExecuteFileSearch(descriptor, arguments, cancellationToken),
@@ -170,6 +177,50 @@ public sealed class ToolExecutionService
         catch (InferenceException exception)
         {
             return CreateFailureResult(descriptor, model.Id, diagnosticsProvider.GetRuntimeFailure(model.Id, exception));
+        }
+    }
+
+    /// <summary>执行只读车牌识别，并把结构化候选放入工具结果 data 字段。</summary>
+    private AgentToolExecutionResult ExecutePlateRecognition(
+        AgentToolDescriptor descriptor,
+        JsonElement? arguments,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var image = RequireImage(arguments);
+        var maximumResults = ReadBoundedInt(arguments, "max_results", 1, 1, 10);
+        var minimumConfidence = ReadBoundedDouble(arguments, "min_confidence", 0.75d, 0d, 1d);
+
+        try
+        {
+            var result = plateRecognition.Recognize(
+                image.Bytes,
+                maximumResults,
+                minimumConfidence,
+                cancellationToken);
+            return new AgentToolExecutionResult(
+                "ok",
+                descriptor.Name,
+                descriptor.Backend,
+                PlateRecognitionService.ModelId,
+                descriptor.Route,
+                null,
+                null,
+                (long)Math.Round(result.Elapsed.TotalMilliseconds),
+                result.Diagnostics,
+                null)
+            {
+                Data = JsonSerializer.SerializeToElement(
+                    result.Data,
+                    AppJsonSerializerContext.Default.PlateRecognitionData)
+            };
+        }
+        catch (InferenceException exception)
+        {
+            return CreateFailureResult(
+                descriptor,
+                PlateRecognitionService.ModelId,
+                diagnosticsProvider.GetRuntimeFailure(PlateRecognitionService.ModelId, exception));
         }
     }
 
@@ -735,6 +786,50 @@ public sealed class ToolExecutionService
             JsonValueKind.String when double.TryParse(property.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var value) => value,
             _ => null
         };
+    }
+
+    /// <summary>读取有界整数参数；字段存在但类型或范围不合法时直接拒绝。</summary>
+    private static int ReadBoundedInt(
+        JsonElement? arguments,
+        string propertyName,
+        int fallback,
+        int minimum,
+        int maximum)
+    {
+        if (arguments is null || !TryGetProperty(arguments.Value, propertyName, out _))
+        {
+            return fallback;
+        }
+
+        var value = TryReadInt(arguments, propertyName);
+        if (value is null || value < minimum || value > maximum)
+        {
+            throw InvalidRequest($"The {propertyName} field must be an integer between {minimum} and {maximum}.");
+        }
+
+        return value.Value;
+    }
+
+    /// <summary>读取有界浮点参数；NaN、无穷值和越界值都不能进入原生层。</summary>
+    private static double ReadBoundedDouble(
+        JsonElement? arguments,
+        string propertyName,
+        double fallback,
+        double minimum,
+        double maximum)
+    {
+        if (arguments is null || !TryGetProperty(arguments.Value, propertyName, out _))
+        {
+            return fallback;
+        }
+
+        var value = TryReadDouble(arguments, propertyName);
+        if (value is null || !double.IsFinite(value.Value) || value < minimum || value > maximum)
+        {
+            throw InvalidRequest($"The {propertyName} field must be a finite number between {minimum} and {maximum}.");
+        }
+
+        return value.Value;
     }
 
     private static bool TryGetProperty(JsonElement element, string propertyName, out JsonElement property)

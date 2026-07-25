@@ -91,7 +91,7 @@ dotnet run --project app -- serve --open
 7. 🧩 Claude Code 所需的 Anthropic Messages 兼容入口。
 8. 📦 模型目录、下载、校验与本地资产管理。
 9. 🩺 CPU、内存、磁盘、代理、端口、模型、托管 provider 与 native libraries 运行时诊断。
-10. 🎛️ Whisper、OCR native、stable-diffusion.cpp 与 llama.cpp TTS / GGUF TTS 多模态 native runtime。
+10. 🎛️ Whisper、OCR native、HyperLPR3 / MNN 车牌识别、stable-diffusion.cpp 与 llama.cpp TTS / GGUF TTS 多模态 native runtime。
 11. 🖥️ 系统服务运行模式。
 12. 🧑‍💻 React + Ant Design X Web 工作台。
 
@@ -103,7 +103,9 @@ OpenAI `POST /v1/chat/completions` 与 Ollama `POST /api/chat` 兼容端点支�
 
 `POST /api/agents/chat` 面向 Tomur 本地工具提供不同的执行边界：模型可在受最大轮次限制的服务端循环中自主选择工具。只读工具可自动执行；任何有副作用的工具都必须位于请求显式允许的工具范围内，确认必须与预批准的完整 JSON 参数精确匹配并且只能消费一次。调用 ID、参数指纹和确认状态会使用独立短超时尝试写入本地事件审计。
 
-上述基础代码已通过 M10 专项 `49/49` 自动化测试和 win-x64 Native AOT 发布；工具调用 streaming 当前在完整推理和协议解析后发送可聚合帧，不是逐 token 参数增量。真实模型 smoke、完整 Agent 工具循环、请求取消后的副作用审计和并发事件日志仍未验证。
+`plate.recognize` 已作为 controlled 模式下的只读本地工具接入，使用 `tomur-plate` 稳定 C ABI 调用 HyperLPR3 C++/MNN，并返回车牌文本、业务色码、`VehicleId`、识别置信度和候选框。HyperLPR3 模型权重不进入程序或 native bundle，必须独立放置于 `<data>/models/plate/hyperlpr3/r2_mobile`；当前代码、清单和构建入口已接入，但尚未执行 Tomur 构建、自动化测试、原生库构建或真实图片 smoke，Linux ARM64 也仍需目标机验证。
+
+车牌能力之外的既有工具调用基础代码已通过 M10 专项 `49/49` 自动化测试和 win-x64 Native AOT 发布；工具调用 streaming 当前在完整推理和协议解析后发送可聚合帧，不是逐 token 参数增量。真实模型 smoke、完整 Agent 工具循环、请求取消后的副作用审计和并发事件日志仍未验证。
 
 ## 🔌 API 示例
 
@@ -231,6 +233,7 @@ Tomur/
     Models/
     Multimodal/
     Native/
+    PlateRecognition/
     Providers/
     Runtime/
     Serialization/
@@ -257,6 +260,7 @@ Tomur/
     ocr.native/
     stable-diffusion.cpp/
     stable-diffusion.native/
+    plate.native/
     tts.native/
   web/
     package.json
@@ -274,7 +278,7 @@ Tomur/
 
 `providers/Abstractions` 保存主程序与托管 provider 共用的模型描述、manifest、推理和 session 契约。`providers/Glm` 与 `providers/Olmoe` 实现纯 C# 模型加载和生成；OLMoE 当前同时复用 GLM 项目的托管 tensor、kernel 与存储基础。主程序直接引用并注册这两个 provider，再根据本地模型格式、架构和 manifest 显式选择；未匹配的 GGUF 文本与 embedding 模型继续使用 llama.cpp 路径。provider 类库不提供独立进程或另一套 HTTP API。
 
-`native/` 保存上游源码、Tomur CMake 适配工程和 `bundle.manifest.json` 发布清单。`app/Native/` 负责 bundle 准备、动态库解析和加载，`app/Inference/` 承载 llama.cpp 文本 session，`app/Multimodal/` 连接 Whisper、OCR、stable-diffusion.cpp 与 GGUF TTS。纯托管 provider 与这些 native runtime 并行存在，不替换现有 native 能力。
+`native/` 保存上游源码、Tomur CMake 适配工程和 `bundle.manifest.json` 发布清单。`app/Native/` 负责 bundle 准备、动态库解析和加载，`app/Inference/` 承载 llama.cpp 文本 session，`app/Multimodal/` 连接 Whisper、OCR、stable-diffusion.cpp 与 GGUF TTS，`app/PlateRecognition/` 通过独立的 HyperLPR3/MNN C ABI 提供车牌识别。纯托管 provider 与这些 native runtime 并行存在，不替换现有 native 能力。
 
 `web/` 使用 React、TypeScript、Vite 与 Ant Design X；构建产物写入 `app/wwwroot` 并作为嵌入资源由 Tomur 本地 HTTP 服务托管。`tests/` 中的 M1-M13 项目覆盖 GLM provider 的分阶段契约与回归，OLMoE 使用独立测试项目；它们只属于验证面，不形成产品服务。
 

@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using System.Text.Json;
 using Tomur.Inference;
 using Tomur.Multimodal;
+using Tomur.PlateRecognition;
 using Tomur.Runtime;
 using Tomur.Serialization;
 
@@ -15,7 +16,7 @@ public sealed class AgentRuntimeService
     private const string AgentName = "tomur-local-agent";
     private const string AgentRuntime = "Microsoft.Agents.AI.ChatClientAgent";
     private const string WorkflowRuntime = "Tomur read-only tool plan with optional Microsoft.Agents.AI.Workflows summary";
-    private const string ChatRespondInputSchema = """{"type":"object","properties":{"message":{"type":"string"},"messages":{"type":"array","items":{"type":"object","properties":{"role":{"type":"string"},"content":{"type":"string"}}}},"tool_results":{"type":"array","items":{"type":"object","properties":{"tool":{"type":"string"},"content":{"type":"string"},"result":{"type":"object"}}}},"tool_mode":{"type":"string","enum":["none","read_only","auto_read_only","controlled","auto_controlled","model_auto_read_only","model_auto_controlled"]},"tools":{"type":"array","items":{"type":"object","required":["tool"],"properties":{"tool":{"type":"string","enum":["runtime.diagnose","tools.inspect","files.search","runtime.repair","vision.analyze","ocr.recognize","audio.transcribe","image.generate","audio.speak"]},"arguments":{"type":"object"},"confirm":{"type":"boolean"}}}},"max_tool_rounds":{"type":"integer"},"model":{"type":"string"},"instructions":{"type":"string"},"max_tokens":{"type":"integer"}}}""";
+    private const string ChatRespondInputSchema = """{"type":"object","properties":{"message":{"type":"string"},"messages":{"type":"array","items":{"type":"object","properties":{"role":{"type":"string"},"content":{"type":"string"}}}},"tool_results":{"type":"array","items":{"type":"object","properties":{"tool":{"type":"string"},"content":{"type":"string"},"result":{"type":"object"}}}},"tool_mode":{"type":"string","enum":["none","read_only","auto_read_only","controlled","auto_controlled","model_auto_read_only","model_auto_controlled"]},"tools":{"type":"array","items":{"type":"object","required":["tool"],"properties":{"tool":{"type":"string","enum":["runtime.diagnose","tools.inspect","files.search","runtime.repair","vision.analyze","ocr.recognize","plate.recognize","audio.transcribe","image.generate","audio.speak"]},"arguments":{"type":"object"},"confirm":{"type":"boolean"}}}},"max_tool_rounds":{"type":"integer"},"model":{"type":"string"},"instructions":{"type":"string"},"max_tokens":{"type":"integer"}}}""";
 
     private sealed record ModelToolSelection(
         AgentToolDescriptor Descriptor,
@@ -26,15 +27,18 @@ public sealed class AgentRuntimeService
     private readonly LocalChatClient chatClient;
     private readonly AgentEventLog eventLog;
     private readonly AgentTelemetry telemetry;
+    private readonly PlateRecognitionService plateRecognition;
     private readonly IServiceProvider services;
     private readonly ILoggerFactory loggerFactory;
 
+    /// <summary>创建本地 Agent 运行时，并接入模型、工具状态和有界执行依赖。</summary>
     public AgentRuntimeService(
         LocalModelCatalog modelCatalog,
         MultimodalRuntimeService multimodalRuntime,
         LocalChatClient chatClient,
         AgentEventLog eventLog,
         AgentTelemetry telemetry,
+        PlateRecognitionService plateRecognition,
         IServiceProvider services,
         ILoggerFactory loggerFactory)
     {
@@ -43,6 +47,7 @@ public sealed class AgentRuntimeService
         this.chatClient = chatClient;
         this.eventLog = eventLog;
         this.telemetry = telemetry;
+        this.plateRecognition = plateRecognition;
         this.services = services;
         this.loggerFactory = loggerFactory;
     }
@@ -929,9 +934,7 @@ public sealed class AgentRuntimeService
         if (requestedTools is null || requestedTools.Count == 0)
         {
             var defaults = descriptors.Values
-                .Where(static descriptor =>
-                    descriptor.Callable &&
-                    string.Equals(descriptor.SideEffect, "read", StringComparison.OrdinalIgnoreCase))
+                .Where(static descriptor => IsDefaultModelReadOnlyTool(descriptor))
                 .Select(static descriptor => new ModelToolSelection(descriptor, null))
                 .ToArray();
             if (defaults.Length > 0 && !controlled)
@@ -974,6 +977,19 @@ public sealed class AgentRuntimeService
                     "tool_not_callable",
                     $"Tool '{name}' is not ready and callable for model-selected execution.",
                     ["Inspect GET /api/agents/tools for current readiness and supported actions."]);
+            }
+
+            var requiredInvocationMode = controlled
+                ? "model-auto-controlled"
+                : "model-auto-read-only";
+            if (!SupportsInvocationMode(descriptor, requiredInvocationMode))
+            {
+                throw new InferenceException(
+                    controlled ? "tool_not_callable" : "tool_requires_controlled_mode",
+                    $"Tool '{name}' does not support {requiredInvocationMode} execution.",
+                    controlled
+                        ? ["Inspect GET /api/agents/tools and select a tool that supports model-auto-controlled."]
+                        : ["Use model_auto_controlled with an explicit tools[] allowlist for this tool."]);
             }
 
             if (!controlled && !string.Equals(descriptor.SideEffect, "read", StringComparison.OrdinalIgnoreCase))
@@ -1263,6 +1279,7 @@ public sealed class AgentRuntimeService
         yield return CreateMultimodalTool("image.generate", "Image Generation", "image-generation", "stable-diffusion.cpp");
         yield return CreateMultimodalTool("vision.analyze", "Vision Analysis", "vlm", "llama.cpp mtmd VLM");
         yield return CreateMultimodalTool("ocr.recognize", "OCR", "ocr", "Tomur OCR native bridge");
+        yield return CreatePlateRecognitionTool();
         yield return CreateMultimodalTool("audio.transcribe", "Speech To Text", "asr", "whisper.cpp");
         yield return CreateMultimodalTool("audio.speak", "Text To Speech", "tts", "llama.cpp GGUF TTS");
 
@@ -1353,6 +1370,49 @@ public sealed class AgentRuntimeService
             ResolveInvocationModes(backendId),
             backend.Message,
             backend.Actions);
+    }
+
+    /// <summary>根据 tomur-plate 和 r2_mobile 模型资产状态创建只读车牌工具描述器。</summary>
+    private AgentToolDescriptor CreatePlateRecognitionTool()
+    {
+        var status = plateRecognition.GetStatus();
+        return new AgentToolDescriptor(
+            "plate.recognize",
+            "License Plate Recognition",
+            status.Status,
+            "HyperLPR3/MNN via tomur-plate",
+            status.Model,
+            "/api/agents/tools/invoke",
+            """{"type":"object","additionalProperties":false,"required":["image"],"properties":{"image":{"type":"object"},"max_results":{"type":"integer","minimum":1,"maximum":10},"min_confidence":{"type":"number","minimum":0,"maximum":1}}}""",
+            "read",
+            status.Callable,
+            false,
+            ResolvePlateRecognitionInvocationModes(),
+            status.Message,
+            status.Actions);
+    }
+
+    /// <summary>车牌大图只允许显式 controlled 调用或模型受 allowlist 约束的 controlled 调用。</summary>
+    internal static IReadOnlyList<string> ResolvePlateRecognitionInvocationModes()
+        => ["manual-controlled", "chat-controlled", "model-auto-controlled", "planned-agent-tool"];
+
+    /// <summary>按规范化名称检查工具是否声明支持指定调用模式。</summary>
+    internal static bool SupportsInvocationMode(AgentToolDescriptor descriptor, string invocationMode)
+    {
+        ArgumentNullException.ThrowIfNull(descriptor);
+        ArgumentException.ThrowIfNullOrWhiteSpace(invocationMode);
+        var expected = invocationMode.Trim().Replace('_', '-');
+        return descriptor.InvocationModes.Any(mode =>
+            string.Equals(mode.Trim().Replace('_', '-'), expected, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>判断工具是否能够进入未提供 allowlist 时的模型自主只读默认集合。</summary>
+    internal static bool IsDefaultModelReadOnlyTool(AgentToolDescriptor descriptor)
+    {
+        ArgumentNullException.ThrowIfNull(descriptor);
+        return descriptor.Callable &&
+            string.Equals(descriptor.SideEffect, "read", StringComparison.OrdinalIgnoreCase) &&
+            SupportsInvocationMode(descriptor, "model-auto-read-only");
     }
 
     private static bool RequiresConfirmation(string backendId)

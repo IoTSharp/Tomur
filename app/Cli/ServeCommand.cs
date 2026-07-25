@@ -22,6 +22,7 @@ using Tomur.Hardware;
 using Tomur.Inference;
 using Tomur.Multimodal;
 using Tomur.Native;
+using Tomur.PlateRecognition;
 using Tomur.Providers;
 using Tomur.Runtime;
 using Tomur.Serialization;
@@ -185,6 +186,7 @@ internal static class ServeCommand
         builder.Services.AddSingleton<MultimodalRuntimeService>();
         builder.Services.AddSingleton<MultimodalExecutionService>();
         builder.Services.AddSingleton<IsolatedImageGenerationService>();
+        builder.Services.AddSingleton<PlateRecognitionService>();
         builder.Services.AddSingleton<AgentEventLog>();
         builder.Services.AddSingleton<FileIndexStore>();
         builder.Services.AddSingleton<AgentTelemetryExporterOptions>();

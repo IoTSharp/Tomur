@@ -153,6 +153,31 @@ public sealed class AgentAutonomousToolSafetyTests
         }
     }
 
+    /// <summary>验证车牌大图不会进入默认模型自主只读工具集合，只允许显式受控路径。</summary>
+    [Fact]
+    public void PlateRecognitionRequiresControlledModelInvocation()
+    {
+        var descriptor = new AgentToolDescriptor(
+            "plate.recognize",
+            "License Plate Recognition",
+            "ready",
+            "test-backend",
+            null,
+            "/api/agents/tools/invoke",
+            """{"type":"object"}""",
+            "read",
+            true,
+            false,
+            AgentRuntimeService.ResolvePlateRecognitionInvocationModes(),
+            "Recognize one approved image.",
+            []);
+
+        Assert.False(AgentRuntimeService.SupportsInvocationMode(descriptor, "model_auto_read_only"));
+        Assert.False(AgentRuntimeService.IsDefaultModelReadOnlyTool(descriptor));
+        Assert.True(AgentRuntimeService.SupportsInvocationMode(descriptor, "model_auto_controlled"));
+        Assert.True(AgentRuntimeService.SupportsInvocationMode(descriptor, "manual-controlled"));
+    }
+
     /// <summary>
     /// 创建确认边界测试使用的副作用工具描述器。
     /// </summary>

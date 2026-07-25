@@ -12,10 +12,16 @@
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/${presetName}",
       "installDir": "${sourceDir}/..",
-      "description": "Install output resolves to Tomur/native; wrapper install() appends runtimes/<rid>/native/ocr/<backend>.",
+      "description": "Install the Tomur plate bridge and caller-supplied runtime dependencies without bundling model weights.",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "OCR_NATIVE_BACKEND": "cpu"
+        "TOMUR_HYPERLPR3_ROOT": "$env{TOMUR_HYPERLPR3_ROOT}",
+        "TOMUR_HYPERLPR3_INCLUDE_DIR": "$env{TOMUR_HYPERLPR3_INCLUDE_DIR}",
+        "TOMUR_HYPERLPR3_LIBRARY": "$env{TOMUR_HYPERLPR3_LIBRARY}",
+        "TOMUR_HYPERLPR3_RUNTIME_LIBRARY": "$env{TOMUR_HYPERLPR3_RUNTIME_LIBRARY}",
+        "TOMUR_MNN_RUNTIME_LIBRARY": "$env{TOMUR_MNN_RUNTIME_LIBRARY}",
+        "TOMUR_PLATE_RUNTIME_DEPENDENCIES": "$env{TOMUR_PLATE_RUNTIME_DEPENDENCIES}",
+        "OpenCV_DIR": "$env{OpenCV_DIR}"
       }
     },
     {
@@ -49,41 +55,6 @@
         "CMAKE_C_COMPILER": "aarch64-linux-gnu-gcc",
         "CMAKE_CXX_COMPILER": "aarch64-linux-gnu-g++"
       }
-    },
-    {
-      "name": "debug",
-      "displayName": "Debug (current platform)",
-      "inherits": "base",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug"
-      }
-    },
-    {
-      "name": "windows-x64-cuda129",
-      "displayName": "Windows x64 (CUDA 12.9 Release)",
-      "inherits": "windows-x64",
-      "cacheVariables": {
-        "OCR_NATIVE_BACKEND": "cuda129",
-        "CMAKE_CUDA_ARCHITECTURES": "89"
-      }
-    },
-    {
-      "name": "windows-x64-cuda13",
-      "displayName": "Windows x64 (CUDA 13 Release)",
-      "inherits": "windows-x64",
-      "cacheVariables": {
-        "OCR_NATIVE_BACKEND": "cuda13",
-        "CMAKE_CUDA_ARCHITECTURES": "89"
-      }
-    },
-    {
-      "name": "linux-x64-cuda129",
-      "displayName": "Linux x64 (CUDA 12.9 Release)",
-      "inherits": "linux-x64",
-      "cacheVariables": {
-        "OCR_NATIVE_BACKEND": "cuda129",
-        "CMAKE_CUDA_ARCHITECTURES": "89"
-      }
     }
   ],
   "buildPresets": [
@@ -99,24 +70,6 @@
     {
       "name": "linux-arm64",
       "configurePreset": "linux-arm64"
-    },
-    {
-      "name": "debug",
-      "configurePreset": "debug"
-    },
-    {
-      "name": "windows-x64-cuda129",
-      "configurePreset": "windows-x64-cuda129",
-      "configuration": "Release"
-    },
-    {
-      "name": "windows-x64-cuda13",
-      "configurePreset": "windows-x64-cuda13",
-      "configuration": "Release"
-    },
-    {
-      "name": "linux-x64-cuda129",
-      "configurePreset": "linux-x64-cuda129"
     }
   ]
 }

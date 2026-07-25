@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "bundle_id": "tomur.native.r8.cuda129",
-  "version": "0.8.1-cuda129",
+  "version": "0.8.2-cuda129-plate",
   "runtime_root": "runtimes/{rid}/native",
   "components": [
     {
@@ -289,6 +289,54 @@
         { "name": "tomur-mtmd", "required": true }
       ],
       "shared_dependencies": [ "llama", "ggml", "ggml-base", "ggml-cpu" ]
+    },
+    {
+      "id": "plate",
+      "display_name": "HyperLPR3",
+      "capabilities": [ "plate_recognition", "vehicle_id" ],
+      "source": {
+        "type": "git-submodule",
+        "path": "native/hyperlpr3",
+        "url": "https://github.com/szad670401/HyperLPR.git",
+        "license": "Apache-2.0"
+      },
+      "wrapper_path": "native/plate.native",
+      "backend": "cpu",
+      "runtime_path": "plate/cpu",
+      "variants": [
+        {
+          "id": "cpu",
+          "display_name": "HyperLPR3 CPU",
+          "backend": "cpu",
+          "runtime_path": "plate/cpu",
+          "priority": 10,
+          "required_backends": [],
+          "libraries": [
+            { "name": "tomur-plate", "required": true },
+            { "name": "hyperlpr3", "required": true },
+            { "name": "MNN", "required": false },
+            { "name": "opencv_core", "required": false },
+            { "name": "opencv_imgcodecs", "required": false }
+          ],
+          "diagnostic": "The bridge requires a target-architecture HyperLPR3/OpenCV/MNN build and model files outside the native bundle.",
+          "actions": [
+            "For Windows x64, run tomur native build --rid win-x64 --backend cpu.",
+            "For Linux x64, run tomur native build --rid linux-x64 --backend cpu.",
+            "For Linux ARM64, run tomur native build --rid linux-arm64 --backend cpu.",
+            "After the target RID build completes, run tomur native prepare.",
+            "Provision the audited HyperLPR3 r2_mobile models under <data>/models/plate/hyperlpr3/r2_mobile."
+          ]
+        }
+      ],
+      "publisher": false,
+      "libraries": [
+        { "name": "tomur-plate", "required": true },
+        { "name": "hyperlpr3", "required": true },
+        { "name": "MNN", "required": false },
+        { "name": "opencv_core", "required": false },
+        { "name": "opencv_imgcodecs", "required": false }
+      ],
+      "shared_dependencies": []
     },
     {
       "id": "tts",

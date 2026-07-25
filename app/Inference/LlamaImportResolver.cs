@@ -94,6 +94,7 @@ public sealed class LlamaImportResolver
             "ggml-vulkan" or "ggml-sycl" or "ggml-openvino" or "ggml-opencl" or "tomur-llama-mtmd" or "tomur-llama-vlm" => "llama",
             "whisper" or "parakeet" => "whisper",
             "tomur-ocr" or "tomur-mtmd" => "ocr",
+            "tomur-plate" => "plate",
             "tomur-tts" => "tts",
             "stable-diffusion" => "stable-diffusion",
             _ => null

@@ -384,6 +384,7 @@ public sealed class ToolInvoker
             "image.generate" => "Set mode to controlled and confirm to true before invoking this local artifact-generating tool, or use POST /v1/images/generations manually.",
             "vision.analyze" => "Set mode to controlled and send data URI images, or use POST /api/vision/analyze manually.",
             "ocr.recognize" => "Set mode to controlled and send a data URI image, or use POST /api/ocr/analyze manually.",
+            "plate.recognize" => "Set mode to controlled and send one data URI image to the read-only plate recognition adapter.",
             "audio.transcribe" => "Set mode to controlled and send audio_data_uri or audio_base64, or use POST /v1/audio/transcriptions manually.",
             "audio.speak" => "Set mode to controlled and confirm to true before invoking this local artifact-generating tool, or use POST /v1/audio/speech manually.",
             "files.search" => "Invoke files.search as a read-only tool with a query and files under the Tomur managed files directory.",
@@ -417,6 +418,7 @@ public sealed class ToolInvoker
             "image.generate" or
             "vision.analyze" or
             "ocr.recognize" or
+            "plate.recognize" or
             "audio.transcribe" or
             "audio.speak" or
             "runtime.repair";
@@ -434,6 +436,7 @@ public sealed class ToolInvoker
         var normalizedInvocationKind = invocationKind.Trim().ToLowerInvariant().Replace('-', '_');
         return descriptor.Callable &&
             string.Equals(descriptor.SideEffect, "read", StringComparison.OrdinalIgnoreCase) &&
+            AgentRuntimeService.SupportsInvocationMode(descriptor, "model-auto-read-only") &&
             (normalizedAuditMode == "model_auto_read_only" || normalizedInvocationKind == "model_auto");
     }
 
@@ -702,7 +705,7 @@ public sealed class ToolInvoker
         AgentToolInvocationAuditContext? auditContext)
     {
         if (!IsControlledMode(request, auditMode, invocationKind) &&
-            descriptor.Name is "image.generate" or "vision.analyze" or "ocr.recognize" or "audio.transcribe" or "audio.speak" or "runtime.repair")
+            descriptor.Name is "image.generate" or "vision.analyze" or "ocr.recognize" or "plate.recognize" or "audio.transcribe" or "audio.speak" or "runtime.repair")
         {
             return "tool_requires_controlled_mode";
         }
@@ -728,7 +731,7 @@ public sealed class ToolInvoker
         AgentToolInvocationAuditContext? auditContext)
     {
         if (!IsControlledMode(request, auditMode, invocationKind) &&
-            descriptor.Name is "image.generate" or "vision.analyze" or "ocr.recognize" or "audio.transcribe" or "audio.speak" or "runtime.repair")
+            descriptor.Name is "image.generate" or "vision.analyze" or "ocr.recognize" or "plate.recognize" or "audio.transcribe" or "audio.speak" or "runtime.repair")
         {
                 return $"Tool '{descriptor.Name}' is visible and callable only through the controlled R9 path, not the default read-only invocation.";
         }
@@ -758,7 +761,7 @@ public sealed class ToolInvoker
             : descriptor.Actions.ToArray();
 
         if (!IsControlledMode(request, auditMode, invocationKind) &&
-            descriptor.Name is "image.generate" or "vision.analyze" or "ocr.recognize" or "audio.transcribe" or "audio.speak" or "runtime.repair")
+            descriptor.Name is "image.generate" or "vision.analyze" or "ocr.recognize" or "plate.recognize" or "audio.transcribe" or "audio.speak" or "runtime.repair")
         {
             return actions
                 .Prepend("Set mode to controlled on POST /api/agents/tools/invoke, or use tool_mode controlled with explicit tools[] in /api/agents/chat.")

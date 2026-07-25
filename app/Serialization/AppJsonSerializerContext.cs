@@ -12,6 +12,7 @@ using Tomur.Hardware;
 using Tomur.Inference;
 using Tomur.Multimodal;
 using Tomur.Native;
+using Tomur.PlateRecognition;
 using Tomur.Providers;
 using Tomur.Runtime;
 using Tomur.Models;
@@ -96,6 +97,8 @@ namespace Tomur.Serialization;
 [JsonSerializable(typeof(MultimodalInputSummary))]
 [JsonSerializable(typeof(MultimodalOperationResponse))]
 [JsonSerializable(typeof(MultimodalTextResponse))]
+[JsonSerializable(typeof(PlateRecognitionData))]
+[JsonSerializable(typeof(PlateRecognitionCandidate))]
 [JsonSerializable(typeof(ImageGenerationOptions))]
 [JsonSerializable(typeof(ImageGenerationWorkerRequest))]
 [JsonSerializable(typeof(ImageGenerationWorkerResponse))]

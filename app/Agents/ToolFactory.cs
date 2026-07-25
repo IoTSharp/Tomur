@@ -130,6 +130,7 @@ public sealed class ToolFactory
                 "image.generate" or
                 "vision.analyze" or
                 "ocr.recognize" or
+                "plate.recognize" or
                 "audio.transcribe" or
                 "audio.speak";
 

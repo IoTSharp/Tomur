@@ -56,6 +56,7 @@ Tomur/
     ocr.native/
     stable-diffusion.cpp/
     stable-diffusion.native/
+    plate.native/
     tts.native/
   web/
     package.json
@@ -92,7 +93,7 @@ Tomur Web UI 采用 Ant Design X 的 AI 应用技术架构，不自研基础对�
 Tomur 的自包含目标是降低本地部署前置条件，避免要求用户单独安装 .NET runtime 或手工准备 C++ dynamic libraries。
 
 1. `tomur.exe` / `tomur` 自包含 .NET runtime。
-2. llama.cpp、Whisper、PaddleOCR、stable-diffusion.cpp、llama.cpp TTS / GGUF TTS 等 C++ dynamic libraries 由 Tomur 发布产物携带。
+2. llama.cpp、Whisper、PaddleOCR、HyperLPR3/MNN 车牌识别桥接、stable-diffusion.cpp、llama.cpp TTS / GGUF TTS 等 C++ dynamic libraries 由 Tomur 发布产物携带；车牌模型权重仍作为独立本地资产管理。
 3. RID 发布默认使用 `PublishSingleFile=true`、`SelfContained=true` 和 `IncludeNativeLibrariesForSelfExtract=true`。
 4. `IncludeAllContentForSelfExtract` 默认保持 `false`，模型权重、SQLite 数据库、日志、用户文件和大体积 backend 资产不作为普通内容整体塞进可执行文件。
 5. native backend 动态库由 Tomur 的 native bundle manifest 管理，并在首次运行或版本变化时准备到 Tomur 管理的版本化 runtime 目录。
@@ -301,6 +302,7 @@ GLM 基础代码顺序、性能计划、集中验证门槛与发布标准见 [pr
 3. ✅ OpenAI / Ollama 非流式、缓冲式 streaming、调用 ID 和历史回灌 wire contract 基础代码已完成；当前 streaming 在完整推理和协议解析后发送可聚合帧，不是逐 token 参数增量。
 4. ✅ M10 专项 `49/49` 自动化测试与 win-x64 `native-aot-audit` 发布已通过；source-generated JSON 工具契约已进入该构建面。
 5. ⏳ 真实 GGUF、managed GLM 与 OLMoE 的单调用、并行调用、多轮结果回灌、取消和轮次上限 smoke，以及完整 Agent 工具循环、请求取消后的副作用审计和并发事件日志验证尚待执行。
+6. 🚧 `plate.recognize` 只读工具基础代码已接入 controlled 调用边界、source-generated JSON、`tomur-plate` C ABI、native bundle manifest 与 win-x64/linux-x64/linux-arm64 CPU 构建规划；HyperLPR3/MNN/OpenCV 原生构建、六个 `r2_mobile` 模型资产、真实图片识别和 Linux ARM64 目标机 smoke 尚未验证。
 
 验收：
 
@@ -343,6 +345,7 @@ GLM 基础代码顺序、性能计划、集中验证门槛与发布标准见 [pr
 5. 补齐 macOS `osx-x64` / `osx-arm64` native runtime bundle 资产。
 6. 为 R10/R11 补构建/启动 smoke，并按 `docs/r10-r11-smoke-maintenance.md` 维护 Web 录音入口、播放控制、失败诊断展示和会话历史同步的回归清单。
 7. 按 `docs/r12-aot-release-audit.md` 补齐 R12 Linux/macOS 发布执行记录、服务形态实机 smoke 和发布包最小回归证据。
+8. 为 `plate.recognize` 补齐 win-x64、linux-x64 与 linux-arm64 原生构建，使用真实车头、车侧和车尾大图验证候选、业务色码、置信度、空结果和损坏图片诊断。
 
 验收：
 

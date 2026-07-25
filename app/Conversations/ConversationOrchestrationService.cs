@@ -1849,8 +1849,9 @@ public sealed class ConversationOrchestrationService
             : null;
     }
 
+    /// <summary>识别必须经过 Agent controlled 边界执行的本地工具。</summary>
     private static bool IsControlledTool(AgentChatToolRequest tool)
-        => tool.Tool is "image.generate" or "vision.analyze" or "ocr.recognize" or "audio.transcribe" or "audio.speak" or "runtime.repair";
+        => tool.Tool is "image.generate" or "vision.analyze" or "ocr.recognize" or "plate.recognize" or "audio.transcribe" or "audio.speak" or "runtime.repair";
 
     private static bool IsNonOkStatus(string status)
         => !string.Equals(status, "ok", StringComparison.OrdinalIgnoreCase);

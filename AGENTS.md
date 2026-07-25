@@ -90,6 +90,7 @@
   - llama.cpp
   - Whisper
   - OCR native
+  - HyperLPR3 / MNN 车牌识别
   - stable-diffusion.cpp
   - llama.cpp TTS / GGUF TTS
 - 必须保持 ggml 相关 native 资产的隔离与可诊断加载。

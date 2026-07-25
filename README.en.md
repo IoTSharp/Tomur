@@ -91,7 +91,7 @@ The default local service URL is `http://127.0.0.1:5137`.
 7. 🧩 Anthropic Messages-compatible endpoints required by Claude Code.
 8. 📦 Model catalog, download, verification, and local asset management.
 9. 🩺 Runtime diagnostics for CPU, memory, disk, proxy, ports, models, managed providers, and native libraries.
-10. 🎛️ Multimodal native runtimes for Whisper, OCR native, stable-diffusion.cpp, and llama.cpp TTS / GGUF TTS.
+10. 🎛️ Multimodal native runtimes for Whisper, OCR native, HyperLPR3/MNN plate recognition, stable-diffusion.cpp, and llama.cpp TTS / GGUF TTS.
 11. 🖥️ System service mode.
 12. 🧑‍💻 React + Ant Design X web workspace.
 
@@ -103,7 +103,9 @@ The OpenAI-compatible `POST /v1/chat/completions` and Ollama-compatible `POST /a
 
 `POST /api/agents/chat` uses a different boundary for Tomur-local tools: the model can autonomously select tools within a server-side loop capped by a maximum round count. Read-only tools may run automatically. Any side-effecting tool must be in the request's explicit tool allowlist; confirmation must exactly match the complete pre-approved JSON arguments and is consumed once. Call IDs, argument fingerprints, and confirmation state are written to the local event audit on a best-effort basis with an independent timeout.
 
-The base implementation has passed the focused M10 test suite (`49/49`) and a win-x64 Native AOT publish. Tool-call streaming emits aggregatable frames only after complete inference and protocol parsing; it is not incremental token-by-token argument streaming. Real-model smoke, the complete Agent tool loop, side-effect auditing after request cancellation, and concurrent event-log behavior remain unverified.
+`plate.recognize` is wired as a read-only local tool behind the controlled execution boundary. It calls HyperLPR3 C++/MNN through the stable `tomur-plate` C ABI and returns plate text, the business color code, `VehicleId`, recognition confidence, and the bounding box. HyperLPR3 model weights are not embedded in the application or native bundle and must be provisioned separately under `<data>/models/plate/hyperlpr3/r2_mobile`. The code, manifest, and build entry points are connected, but the Tomur build, automated tests, native build, real-image smoke, and Linux ARM64 target verification have not been run for this capability.
+
+The existing tool-calling foundation, excluding plate recognition, has passed the focused M10 test suite (`49/49`) and a win-x64 Native AOT publish. Tool-call streaming emits aggregatable frames only after complete inference and protocol parsing; it is not incremental token-by-token argument streaming. Real-model smoke, the complete Agent tool loop, side-effect auditing after request cancellation, and concurrent event-log behavior remain unverified.
 
 ## 🔌 API Examples
 
@@ -211,6 +213,7 @@ Tomur/
     Models/
     Multimodal/
     Native/
+    PlateRecognition/
     Providers/
     Runtime/
     Serialization/
@@ -237,6 +240,7 @@ Tomur/
     ocr.native/
     stable-diffusion.cpp/
     stable-diffusion.native/
+    plate.native/
     tts.native/
   web/
     package.json
@@ -254,7 +258,7 @@ Tomur/
 
 `providers/Abstractions` contains the model descriptors, manifests, inference contracts, and session contracts shared by the host and managed providers. `providers/Glm` and `providers/Olmoe` implement pure C# model loading and generation; OLMoE currently also reuses the managed tensor, kernel, and storage foundations from the GLM project. The host directly references and registers both providers, then selects one explicitly from the local model format, architecture, and manifest. Unmatched GGUF text and embedding models continue through llama.cpp. Provider class libraries do not expose a separate process or HTTP API.
 
-`native/` contains upstream source trees, Tomur CMake adapter projects, and the release `bundle.manifest.json`. `app/Native/` prepares the bundle and resolves and loads dynamic libraries, `app/Inference/` owns llama.cpp text sessions, and `app/Multimodal/` connects Whisper, OCR, stable-diffusion.cpp, and GGUF TTS. Pure managed providers coexist with these runtimes and do not replace the existing native paths.
+`native/` contains upstream source trees, Tomur CMake adapter projects, and the release `bundle.manifest.json`. `app/Native/` prepares the bundle and resolves and loads dynamic libraries, `app/Inference/` owns llama.cpp text sessions, `app/Multimodal/` connects Whisper, OCR, stable-diffusion.cpp, and GGUF TTS, and `app/PlateRecognition/` exposes plate recognition through an isolated HyperLPR3/MNN C ABI. Pure managed providers coexist with these runtimes and do not replace the existing native paths.
 
 `web/` uses React, TypeScript, Vite, and Ant Design X. Its build output is written to `app/wwwroot`, embedded, and served by the Tomur local HTTP service. The M1-M13 projects under `tests/` cover staged GLM provider contracts and regressions, while OLMoE has a dedicated test project; these projects belong only to the validation surface and do not create product services.
 
