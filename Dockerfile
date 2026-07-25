@@ -253,7 +253,8 @@ COPY LICENSE ./LICENSE
 COPY NOTICE ./NOTICE
 COPY THIRD_PARTY_NOTICES.md ./THIRD_PARTY_NOTICES.md
 COPY native/hyperlpr3/LICENSE ./licenses/hyperlpr3/LICENSE
-COPY native/mnn/LICENSE ./licenses/mnn/LICENSE
+# MNN 2.2.0 固定提交未提供根 LICENSE，MNN.podspec 内嵌完整 Apache-2.0 许可文本。
+COPY native/mnn/MNN.podspec ./licenses/mnn/MNN.podspec
 COPY native/opencv/LICENSE ./licenses/opencv/LICENSE
 COPY --from=llama-build /out/native/runtimes/ ./native/runtimes/
 COPY --from=plate-build /out/native/runtimes/ ./native/runtimes/
