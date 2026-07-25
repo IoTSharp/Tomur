@@ -334,6 +334,124 @@ public sealed class ToolCallingProtocolTests
     }
 
     /// <summary>
+    /// 验证普通文本跨多个 token 分片立即输出，同时保持最终 Trim 后的文本完全一致。
+    /// </summary>
+    [Fact]
+    public void ToolStreamingFilterEmitsOrdinaryTextAcrossChunks()
+    {
+        var chunks = new List<string>();
+        var filter = ModelToolProtocol.CreateStreamingTextFilter(ChatToolMode.Auto, chunks.Add);
+
+        filter.Append("  first");
+        Assert.Equal("first", string.Concat(chunks));
+        filter.Append(" second ");
+        Assert.Equal("first second", string.Concat(chunks));
+
+        filter.Complete("first second");
+        Assert.Equal("first second", string.Concat(chunks));
+    }
+
+    /// <summary>
+    /// 验证跨分片出现的工具标签及其 JSON 正文不会作为普通 content 外泄。
+    /// </summary>
+    [Fact]
+    public void ToolStreamingFilterBuffersSplitTaggedEnvelope()
+    {
+        var tools = CreateToolDeclarations();
+        var chunks = new List<string>();
+        var filter = ModelToolProtocol.CreateStreamingTextFilter(ChatToolMode.Auto, chunks.Add);
+        const string first = "Answer <tool_";
+        const string second = "calls>{\"calls\":[{\"id\":\"call_one\",\"name\":\"weather.get\",\"arguments\":{}}]}";
+        const string third = "</tool_calls>";
+
+        filter.Append(first);
+        Assert.Equal("Answer", string.Concat(chunks));
+        filter.Append(second);
+        filter.Append(third);
+
+        var parsed = ModelToolProtocol.ParseResponse(
+            first + second + third,
+            tools,
+            ChatToolMode.Auto,
+            allowMultipleToolCalls: true);
+        filter.Complete(parsed.Text);
+
+        Assert.Single(parsed.ToolCalls);
+        Assert.Equal("Answer", string.Concat(chunks));
+        Assert.DoesNotContain("tool_call", string.Concat(chunks), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("call_one", string.Concat(chunks), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// 验证首个 JSON 对象在确认是否为无标签工具 envelope 前不会提前写入客户端。
+    /// </summary>
+    [Fact]
+    public void ToolStreamingFilterBuffersRawJsonEnvelope()
+    {
+        var tools = CreateToolDeclarations();
+        var chunks = new List<string>();
+        var filter = ModelToolProtocol.CreateStreamingTextFilter(ChatToolMode.Auto, chunks.Add);
+        const string first = "  {\"tool_";
+        const string second = "calls\":[{\"id\":\"call_raw\",\"name\":\"weather.get\",\"arguments\":{}}]}";
+
+        filter.Append(first);
+        filter.Append(second);
+        Assert.Empty(chunks);
+
+        var parsed = ModelToolProtocol.ParseResponse(
+            first + second,
+            tools,
+            ChatToolMode.Auto,
+            allowMultipleToolCalls: true);
+        filter.Complete(parsed.Text);
+
+        Assert.Single(parsed.ToolCalls);
+        Assert.Empty(chunks);
+    }
+
+    /// <summary>
+    /// 验证 required 模式在最终工具校验完成前不发送任何普通文本。
+    /// </summary>
+    [Fact]
+    public void ToolStreamingFilterBuffersRequiredModeUntilValidationCompletes()
+    {
+        var tools = CreateToolDeclarations();
+        var chunks = new List<string>();
+        var filter = ModelToolProtocol.CreateStreamingTextFilter(ChatToolMode.RequireAny, chunks.Add);
+        const string output = "Checking <tool_call>{\"id\":\"call_required\",\"name\":\"weather.get\",\"arguments\":{}}</tool_call>";
+
+        filter.Append("Checking ");
+        filter.Append("<tool_call>{\"id\":\"call_required\",\"name\":\"weather.get\",\"arguments\":{}}</tool_call>");
+        Assert.Empty(chunks);
+
+        var parsed = ModelToolProtocol.ParseResponse(
+            output,
+            tools,
+            ChatToolMode.RequireAny,
+            allowMultipleToolCalls: true);
+        filter.Complete(parsed.Text);
+
+        Assert.Single(parsed.ToolCalls);
+        Assert.Equal("Checking", string.Concat(chunks));
+    }
+
+    /// <summary>
+    /// 验证最终解析文本不能改写已经发送的安全前缀，防止流式与非流式结果静默分叉。
+    /// </summary>
+    [Fact]
+    public void ToolStreamingFilterRejectsFinalTextMismatch()
+    {
+        var chunks = new List<string>();
+        var filter = ModelToolProtocol.CreateStreamingTextFilter(ChatToolMode.Auto, chunks.Add);
+
+        filter.Append("already sent");
+
+        var exception = Assert.Throws<InferenceException>(() => filter.Complete("different result"));
+        Assert.Equal("tool_stream_mismatch", exception.Code);
+        Assert.Equal("already sent", string.Concat(chunks));
+    }
+
+    /// <summary>
     /// 验证空参数历史写成对象，并把带 ID 的结构化工具结果完整回灌到模型协议。
     /// </summary>
     [Fact]
@@ -620,6 +738,148 @@ public sealed class ToolCallingProtocolTests
             Assert.Equal(0, calls[0].GetProperty("index").GetInt32());
             Assert.Equal(1, calls[1].GetProperty("index").GetInt32());
             Assert.Equal("tool_calls", terminal.RootElement.GetProperty("choices")[0].GetProperty("finish_reason").GetString());
+        }
+    }
+
+    /// <summary>
+    /// 验证纯工具响应在生成回调开始前已刷新角色帧；required 和原始 JSON 缓冲路径同样不会静默等待。
+    /// </summary>
+    [Fact]
+    public async Task OpenAiToolStreamingWriterFlushesRoleBeforeGenerationStarts()
+    {
+        var completion = CreateToolCompletion(
+            new ModelToolCall("call_one", "weather.get", ParseJson("{\"city\":\"Mulei\"}")));
+        var context = CreateContext(out var body);
+        var roleFlushedBeforeGeneration = false;
+        await using (body)
+        {
+            await ApiRouteExtensions.WriteOpenAiToolChatCompletionStreamAsync(
+                context,
+                "ready",
+                _ =>
+                {
+                    roleFlushedBeforeGeneration = body.Length > 0;
+                    return Task.FromResult(completion);
+                },
+                exception => new Tomur.Runtime.RuntimeDiagnostic(
+                    "error",
+                    exception.Code,
+                    exception.Message,
+                    "ready",
+                    exception.Actions));
+
+            Assert.True(roleFlushedBeforeGeneration);
+            var events = ReadSseData(body);
+            Assert.Equal(4, events.Count);
+            Assert.Equal("[DONE]", events[^1]);
+
+            using var roleChunk = JsonDocument.Parse(events[0]);
+            using var callChunk = JsonDocument.Parse(events[1]);
+            using var terminal = JsonDocument.Parse(events[2]);
+            var roleDelta = roleChunk.RootElement.GetProperty("choices")[0].GetProperty("delta");
+            Assert.Equal("assistant", roleDelta.GetProperty("role").GetString());
+            Assert.False(roleDelta.TryGetProperty("content", out _));
+            Assert.Equal(
+                "weather.get",
+                callChunk.RootElement.GetProperty("choices")[0].GetProperty("delta")
+                    .GetProperty("tool_calls")[0].GetProperty("function").GetProperty("name").GetString());
+            Assert.Equal(
+                "tool_calls",
+                terminal.RootElement.GetProperty("choices")[0].GetProperty("finish_reason").GetString());
+        }
+    }
+
+    /// <summary>
+    /// 验证工具感知 writer 先刷新角色帧，再在生成任务返回前刷新安全文本和最终结构化调用。
+    /// </summary>
+    [Fact]
+    public async Task OpenAiToolStreamingWriterFlushesTextBeforeGenerationCompletes()
+    {
+        var completion = new ToolAwareCompletion(
+            new CompletionResult(
+                "first",
+                new TokenUsage(3, 2, 5),
+                TimeSpan.FromMilliseconds(25),
+                []),
+            "first",
+            [new ModelToolCall("call_one", "weather.get", ParseJson("{\"city\":\"Mulei\"}"))]);
+        var context = CreateContext(out var body);
+        var flushedBeforeCompletion = false;
+        await using (body)
+        {
+            await ApiRouteExtensions.WriteOpenAiToolChatCompletionStreamAsync(
+                context,
+                "ready",
+                emit =>
+                {
+                    var roleFrameLength = body.Length;
+                    emit("first");
+                    flushedBeforeCompletion = body.Length > roleFrameLength;
+                    return Task.FromResult(completion);
+                },
+                exception => new Tomur.Runtime.RuntimeDiagnostic(
+                    "error",
+                    exception.Code,
+                    exception.Message,
+                    "ready",
+                    exception.Actions));
+
+            Assert.True(flushedBeforeCompletion);
+            var events = ReadSseData(body);
+            Assert.Equal(5, events.Count);
+            Assert.Equal("[DONE]", events[^1]);
+
+            using var roleChunk = JsonDocument.Parse(events[0]);
+            using var textChunk = JsonDocument.Parse(events[1]);
+            using var callChunk = JsonDocument.Parse(events[2]);
+            using var terminal = JsonDocument.Parse(events[3]);
+            Assert.Equal(
+                "assistant",
+                roleChunk.RootElement.GetProperty("choices")[0].GetProperty("delta").GetProperty("role").GetString());
+            Assert.Equal(
+                "first",
+                textChunk.RootElement.GetProperty("choices")[0].GetProperty("delta").GetProperty("content").GetString());
+            Assert.Equal(
+                "weather.get",
+                callChunk.RootElement.GetProperty("choices")[0].GetProperty("delta")
+                    .GetProperty("tool_calls")[0].GetProperty("function").GetProperty("name").GetString());
+            Assert.Equal(
+                "tool_calls",
+                terminal.RootElement.GetProperty("choices")[0].GetProperty("finish_reason").GetString());
+        }
+    }
+
+    /// <summary>
+    /// 验证工具流在部分普通文本后失败时继续使用 OpenAI SSE error 事件并以 DONE 收尾。
+    /// </summary>
+    [Fact]
+    public async Task OpenAiToolStreamingWriterPreservesErrorAfterPartialText()
+    {
+        var context = CreateContext(out var body);
+        await using (body)
+        {
+            await ApiRouteExtensions.WriteOpenAiToolChatCompletionStreamAsync(
+                context,
+                "ready",
+                emit =>
+                {
+                    emit("partial");
+                    throw new InferenceException(
+                        "invalid_tool_call",
+                        "The model returned an invalid tool call.",
+                        ["Retry the request."]);
+                },
+                exception => new Tomur.Runtime.RuntimeDiagnostic(
+                    "error",
+                    exception.Code,
+                    exception.Message,
+                    "ready",
+                    exception.Actions));
+
+            var payload = Encoding.UTF8.GetString(body.ToArray());
+            Assert.Contains("event: error", payload, StringComparison.Ordinal);
+            Assert.Contains("\"code\":\"invalid_tool_call\"", payload, StringComparison.Ordinal);
+            Assert.EndsWith("data: [DONE]\n\n", payload, StringComparison.Ordinal);
         }
     }
 

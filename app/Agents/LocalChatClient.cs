@@ -26,6 +26,16 @@ public sealed class LocalChatClient : IChatClient
         IEnumerable<ChatMessage> messages,
         ChatOptions? options = null,
         CancellationToken cancellationToken = default)
+        => GetResponseAsync(messages, options, onText: null, cancellationToken: cancellationToken);
+
+    /// <summary>
+    /// 执行一次本地聊天，并把已确认安全的普通文本增量交给兼容协议 writer。
+    /// </summary>
+    internal Task<ChatResponse> GetResponseAsync(
+        IEnumerable<ChatMessage> messages,
+        ChatOptions? options,
+        Action<string>? onText,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(messages);
         cancellationToken.ThrowIfCancellationRequested();
@@ -34,20 +44,27 @@ public sealed class LocalChatClient : IChatClient
         var rawCompletionOptions = options?.RawRepresentationFactory?.Invoke(this) as CompletionOptions;
         var completionOptions = ResolveCompletionOptions(options, rawCompletionOptions);
         var toolDeclarations = ResolveToolDeclarations(options);
+        var usesToolProtocol = toolDeclarations.Count > 0 && options?.ToolMode != ChatToolMode.None;
+        var streamingFilter = onText is not null && usesToolProtocol
+            ? ModelToolProtocol.CreateStreamingTextFilter(options?.ToolMode, onText)
+            : null;
+        Action<string>? onToken = streamingFilter is null ? onText : streamingFilter.Append;
         var result = inferenceService.Chat(
             model,
             BuildChatTurns(messageList, options, toolDeclarations),
             completionOptions,
-            cancellationToken);
+            cancellationToken,
+            onToken);
 
         var allowMultipleToolCalls = options?.AllowMultipleToolCalls != false;
-        var modelResponse = toolDeclarations.Count == 0 || options?.ToolMode == ChatToolMode.None
+        var modelResponse = !usesToolProtocol
             ? new ModelToolResponse(result.Text, [])
             : ModelToolProtocol.ParseResponse(
                 result.Text,
                 toolDeclarations,
                 options?.ToolMode,
                 allowMultipleToolCalls);
+        streamingFilter?.Complete(modelResponse.Text);
         var responseMessage = CreateResponseMessage(modelResponse);
         var response = new ChatResponse(responseMessage)
         {

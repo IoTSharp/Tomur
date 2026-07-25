@@ -1358,6 +1358,20 @@ public static class ApiRouteExtensions
         {
             if (usesToolProtocol)
             {
+                if (request.Stream == true)
+                {
+                    await WriteOpenAiToolChatCompletionStreamAsync(
+                        context,
+                        model.Id,
+                        onGenerate: emit => ToolCallingChatAdapter.CompleteOpenAiAsync(
+                            chatClient,
+                            request with { Model = model.Id },
+                            context.RequestAborted,
+                            emit),
+                        onInferenceError: exception => diagnosticsProvider.GetRuntimeFailure(model.Id, exception));
+                    return;
+                }
+
                 var toolCompletion = await ToolCallingChatAdapter.CompleteOpenAiAsync(
                     chatClient,
                     request with { Model = model.Id },
@@ -1366,7 +1380,7 @@ public static class ApiRouteExtensions
                     context,
                     model.Id,
                     toolCompletion,
-                    request.Stream == true);
+                    stream: false);
                 return;
             }
 
@@ -3449,6 +3463,123 @@ public static class ApiRouteExtensions
         }
     }
 
+    /// <summary>
+    /// 流式写入工具感知的 OpenAI Chat 响应；角色帧先行，普通文本立即发送，结构化调用最终发送。
+    /// </summary>
+    internal static async Task WriteOpenAiToolChatCompletionStreamAsync(
+        HttpContext context,
+        string model,
+        Func<Action<string>, Task<ToolAwareCompletion>> onGenerate,
+        Func<InferenceException, RuntimeDiagnostic> onInferenceError)
+    {
+        var id = $"chatcmpl-{Guid.NewGuid():N}";
+        var created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var wroteText = false;
+
+        // 在同步推理开始前提交标准角色帧，让纯工具、required 和原始 JSON 响应也能立即建立 SSE。
+        StartOpenAiStream(context);
+        await WriteOpenAiChatChunkAsync(
+            context,
+            new OpenAiChatCompletionChunk(
+                id,
+                "chat.completion.chunk",
+                created,
+                model,
+                [new OpenAiChatCompletionChunkChoice(
+                    0,
+                    new OpenAiChatCompletionDelta("assistant", null),
+                    null)],
+                null));
+
+        ToolAwareCompletion result;
+        try
+        {
+            result = await onGenerate(chunk =>
+            {
+                if (string.IsNullOrEmpty(chunk))
+                {
+                    return;
+                }
+
+                WriteOpenAiChatChunkAsync(
+                    context,
+                    new OpenAiChatCompletionChunk(
+                        id,
+                        "chat.completion.chunk",
+                        created,
+                        model,
+                        [new OpenAiChatCompletionChunkChoice(0, new OpenAiChatCompletionDelta(null, chunk), null)],
+                        null)).GetAwaiter().GetResult();
+                wroteText = true;
+            }).ConfigureAwait(false);
+        }
+        catch (InferenceException exception)
+        {
+            await WriteOpenAiStreamErrorAsync(
+                context,
+                OpenAiErrorResponse.RuntimeUnavailable(onInferenceError(exception)));
+            return;
+        }
+        catch (Exception exception) when (IsNativeRuntimeException(exception))
+        {
+            await WriteOpenAiStreamErrorAsync(
+                context,
+                OpenAiErrorResponse.RuntimeUnavailable(onInferenceError(CreateNativeRuntimeException(exception))));
+            return;
+        }
+
+        if (!wroteText && !string.IsNullOrEmpty(result.Text))
+        {
+            await WriteOpenAiChatChunkAsync(
+                context,
+                new OpenAiChatCompletionChunk(
+                    id,
+                    "chat.completion.chunk",
+                    created,
+                    model,
+                    [new OpenAiChatCompletionChunkChoice(
+                        0,
+                        new OpenAiChatCompletionDelta(null, result.Text),
+                        null)],
+                    null));
+        }
+
+        var toolCalls = CreateOpenAiToolCalls(result.ToolCalls, includeIndex: true);
+        if (toolCalls.Count > 0)
+        {
+            await WriteOpenAiChatChunkAsync(
+                context,
+                new OpenAiChatCompletionChunk(
+                    id,
+                    "chat.completion.chunk",
+                    created,
+                    model,
+                    [new OpenAiChatCompletionChunkChoice(
+                        0,
+                        new OpenAiChatCompletionDelta(null, null)
+                        {
+                            ToolCalls = toolCalls
+                        },
+                        null)],
+                    null));
+        }
+
+        await WriteOpenAiChatChunkAsync(
+            context,
+            new OpenAiChatCompletionChunk(
+                id,
+                "chat.completion.chunk",
+                created,
+                model,
+                [new OpenAiChatCompletionChunkChoice(
+                    0,
+                    new OpenAiChatCompletionDelta(null, null),
+                    toolCalls.Count > 0 ? "tool_calls" : "stop")],
+                ToOpenAiUsage(result.Completion.Usage)));
+        await context.Response.WriteAsync("data: [DONE]\n\n", context.RequestAborted);
+        await context.Response.Body.FlushAsync(context.RequestAborted);
+    }
+
     private static async Task WriteOpenAiCompletionStreamAsync(
         HttpContext context,
         string model,
@@ -4476,7 +4607,7 @@ public static class ApiRouteExtensions
                  string.Equals(message.Role, "tool", StringComparison.OrdinalIgnoreCase))) == true;
 
     /// <summary>
-    /// 仅在存在非空声明或历史调用时进入缓冲工具路径，空 tools 和无工具选项保留旧 streaming。
+    /// 仅在存在非空声明或历史调用时进入工具感知路径，空 tools 和无工具选项保留旧 streaming。
     /// </summary>
     internal static bool UsesOpenAiToolProtocol(OpenAiChatCompletionRequest request)
         => HasOpenAiToolHistory(request) ||

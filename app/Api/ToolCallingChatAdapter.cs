@@ -17,7 +17,8 @@ internal static class ToolCallingChatAdapter
     public static async Task<ToolAwareCompletion> CompleteOpenAiAsync(
         LocalChatClient chatClient,
         OpenAiChatCompletionRequest request,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<string>? onText = null)
     {
         ArgumentNullException.ThrowIfNull(chatClient);
         ArgumentNullException.ThrowIfNull(request);
@@ -39,6 +40,7 @@ internal static class ToolCallingChatAdapter
                     ToolMode = toolMode,
                     AllowMultipleToolCalls = request.ParallelToolCalls != false
                 },
+                onText,
                 cancellationToken)
             .ConfigureAwait(false);
         return ToCompletion(response);

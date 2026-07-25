@@ -70,6 +70,203 @@ internal static class ModelToolProtocol
     private const string CallEnd = "</tool_call>";
 
     /// <summary>
+    /// 创建工具响应文本过滤器；只有已排除工具 envelope 的普通文本才会立即下发。
+    /// </summary>
+    internal static StreamingTextFilter CreateStreamingTextFilter(
+        ChatToolMode? toolMode,
+        Action<string> onText)
+        => new(toolMode is RequiredChatToolMode, onText);
+
+    /// <summary>
+    /// 在增量生成阶段保留可能属于工具协议的前缀，并在最终解析后补齐普通文本。
+    /// </summary>
+    internal sealed class StreamingTextFilter
+    {
+        private static readonly string[] StartTags = [CallsStart, CallStart];
+        private readonly Action<string> onText;
+        private readonly StringBuilder pending = new();
+        private readonly StringBuilder emitted = new();
+        private bool bufferUntilComplete;
+        private bool sawFirstContent;
+        private bool completed;
+
+        /// <summary>
+        /// 创建增量过滤器；required 模式必须等最终工具校验通过后才能输出文本。
+        /// </summary>
+        internal StreamingTextFilter(bool bufferUntilComplete, Action<string> onText)
+        {
+            ArgumentNullException.ThrowIfNull(onText);
+            this.bufferUntilComplete = bufferUntilComplete;
+            this.onText = onText;
+        }
+
+        /// <summary>
+        /// 接收模型增量文本，并立即输出已经能够证明不是工具协议的部分。
+        /// </summary>
+        public void Append(string value)
+        {
+            ObjectDisposedException.ThrowIf(completed, this);
+            if (string.IsNullOrEmpty(value) || bufferUntilComplete)
+            {
+                return;
+            }
+
+            pending.Append(value);
+            ProcessPending();
+        }
+
+        /// <summary>
+        /// 使用最终协议解析后的普通文本完成流，确保标签或原始 JSON envelope 不会外泄。
+        /// </summary>
+        public void Complete(string finalText)
+        {
+            ObjectDisposedException.ThrowIf(completed, this);
+            ArgumentNullException.ThrowIfNull(finalText);
+            completed = true;
+
+            var emittedText = emitted.ToString();
+            if (!finalText.StartsWith(emittedText, StringComparison.Ordinal))
+            {
+                throw new InferenceException(
+                    "tool_stream_mismatch",
+                    "The parsed tool response no longer starts with the text already emitted to the client.",
+                    ["Retry the request and inspect the model tool protocol output."]);
+            }
+
+            Emit(finalText[emittedText.Length..]);
+            pending.Clear();
+        }
+
+        /// <summary>
+        /// 扫描待定文本；首个 JSON 对象和任何工具起始标签都切换为最终缓冲模式。
+        /// </summary>
+        private void ProcessPending()
+        {
+            var value = pending.ToString();
+            if (!sawFirstContent)
+            {
+                var contentStart = 0;
+                while (contentStart < value.Length && char.IsWhiteSpace(value[contentStart]))
+                {
+                    contentStart++;
+                }
+
+                if (contentStart == value.Length)
+                {
+                    return;
+                }
+
+                if (value[contentStart] == '{')
+                {
+                    BufferUntilComplete();
+                    return;
+                }
+
+                pending.Remove(0, contentStart);
+                value = pending.ToString();
+                sawFirstContent = true;
+            }
+
+            var tagIndex = FindFirstStartTag(value);
+            if (tagIndex >= 0)
+            {
+                var safeLength = TrimTrailingWhitespace(value, tagIndex);
+                Emit(value[..safeLength]);
+                BufferUntilComplete();
+                return;
+            }
+
+            var retainedTagLength = FindRetainedTagPrefixLength(value);
+            var emitLength = TrimTrailingWhitespace(value, value.Length - retainedTagLength);
+            if (emitLength <= 0)
+            {
+                return;
+            }
+
+            Emit(value[..emitLength]);
+            pending.Remove(0, emitLength);
+        }
+
+        /// <summary>
+        /// 查找最早出现的完整工具起始标签，标签匹配与最终解析保持大小写不敏感。
+        /// </summary>
+        private static int FindFirstStartTag(string value)
+        {
+            var result = -1;
+            foreach (var tag in StartTags)
+            {
+                var index = value.IndexOf(tag, StringComparison.OrdinalIgnoreCase);
+                if (index >= 0 && (result < 0 || index < result))
+                {
+                    result = index;
+                }
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// 保留可能跨 token 分片的工具标签前缀，避免把半个标签作为 content 发出。
+        /// </summary>
+        private static int FindRetainedTagPrefixLength(string value)
+        {
+            var retained = 0;
+            foreach (var tag in StartTags)
+            {
+                var maximum = Math.Min(value.Length, tag.Length - 1);
+                for (var length = maximum; length > retained; length--)
+                {
+                    if (value.AsSpan(value.Length - length).Equals(
+                            tag.AsSpan(0, length),
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        retained = length;
+                        break;
+                    }
+                }
+            }
+
+            return retained;
+        }
+
+        /// <summary>
+        /// 暂留尾部空白，使最终 Trim 语义与非流式工具响应保持一致。
+        /// </summary>
+        private static int TrimTrailingWhitespace(string value, int end)
+        {
+            while (end > 0 && char.IsWhiteSpace(value[end - 1]))
+            {
+                end--;
+            }
+
+            return end;
+        }
+
+        /// <summary>
+        /// 输出确定安全的普通文本，并记录已发前缀供最终结果一致性校验。
+        /// </summary>
+        private void Emit(string value)
+        {
+            if (value.Length == 0)
+            {
+                return;
+            }
+
+            onText(value);
+            emitted.Append(value);
+        }
+
+        /// <summary>
+        /// 一旦识别到工具协议意图，丢弃待定原文并仅接受最终解析后的普通文本。
+        /// </summary>
+        private void BufferUntilComplete()
+        {
+            bufferUntilComplete = true;
+            pending.Clear();
+        }
+    }
+
+    /// <summary>
     /// 为不直接暴露原生函数模板的本地模型生成稳定、可解析的工具调用约束。
     /// </summary>
     public static string BuildInstructions(
