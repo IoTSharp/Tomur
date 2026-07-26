@@ -1,0 +1,14 @@
+.git
+**/.git
+**/bin
+**/obj
+**/node_modules
+**/*.log
+.tmp
+artifacts
+build
+output
+TestResults
+app/wwwroot
+native/**/.vs
+native/**/build

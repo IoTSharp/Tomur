@@ -139,6 +139,17 @@ public sealed class NativeCuda129Tests
         Assert.Equal("cuda129", MultimodalExecutionService.ResolveNativeVariant(plan));
     }
 
+    /// <summary>验证 llama_sampler_sample 自动接收 token 后托管层不会再次写入采样历史。</summary>
+    [Fact]
+    public void LlamaSamplerDoesNotAcceptSampledTokenTwice()
+    {
+        var session = File.ReadAllText(FindRepositoryFile("app", "Inference", "LlamaNativeSession.cs"));
+        var methods = File.ReadAllText(FindRepositoryFile("app", "Inference", "LlamaNativeMethods.cs"));
+
+        Assert.DoesNotContain("SamplerAccept", session, StringComparison.Ordinal);
+        Assert.DoesNotContain("llama_sampler_accept", methods, StringComparison.Ordinal);
+    }
+
     /// <summary>验证 CPU 加速计划选择 CPU 多模态 runtime 变体。</summary>
     [Fact]
     public void CpuAccelerationSelectsCpuRuntimeVariant()

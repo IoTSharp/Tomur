@@ -54,6 +54,7 @@ import {
 } from "./app/conversations";
 import { resolveSettingsSectionFromDiagnostic } from "./app/diagnostics";
 import { createTitle } from "./app/format";
+import { createClientId } from "./app/ids";
 import { isChatModel } from "./app/models";
 import type { AppView, SettingsSection } from "./app/viewTypes";
 import type { ThemeMode } from "./app/theme";
@@ -472,7 +473,7 @@ function App({
   }, [openSettings]);
 
   const startConversation = useCallback(() => {
-    const id = `chat-${crypto.randomUUID()}`;
+    const id = `chat-${createClientId()}`;
     const conversation: Conversation = {
       id,
       title: "新会话",
@@ -678,13 +679,13 @@ function App({
 
       const conversationId = activeConversation.id;
       const userMessage: ChatMessage = {
-        id: crypto.randomUUID(),
+        id: createClientId(),
         role: "user",
         content: "正在转写语音...",
         status: "loading"
       };
       const assistantMessage: ChatMessage = {
-        id: crypto.randomUUID(),
+        id: createClientId(),
         role: "assistant",
         content: "",
         status: "loading"
@@ -849,14 +850,14 @@ function App({
 
       const conversationId = activeConversation.id;
       const userMessage: ChatMessage = {
-        id: crypto.randomUUID(),
+        id: createClientId(),
         role: "user",
         content: formatUserContent(trimmed, attachments),
         status: "local",
         attachments
       };
       const assistantMessage: ChatMessage = {
-        id: crypto.randomUUID(),
+        id: createClientId(),
         role: "assistant",
         content: "",
         status: "loading"
@@ -1021,7 +1022,7 @@ function App({
     const conversationId = activeConversation.id;
     const history = activeConversation.messages.slice(0, lastUserIndex + 1);
     const assistantMessage: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: createClientId(),
       role: "assistant",
       content: "",
       status: "loading"

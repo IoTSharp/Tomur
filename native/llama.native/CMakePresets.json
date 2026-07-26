@@ -113,6 +113,7 @@
       "cacheVariables": {
         "GGML_CUDA": "ON",
         "GGML_CUDA_GRAPHS": "ON",
+        "GGML_CUDA_NCCL": "OFF",
         "GGML_CPU_ALL_VARIANTS": "OFF",
         "CMAKE_CUDA_ARCHITECTURES": "89"
       }

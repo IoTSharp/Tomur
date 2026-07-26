@@ -1,10 +1,11 @@
 import type { ConversationAttachment } from "../types";
+import { createClientId } from "./ids";
 
 export async function createLocalAttachment(file: File): Promise<ConversationAttachment> {
   const mediaType = file.type || resolveMediaTypeFromFileName(file.name);
   if (mediaType.startsWith("image/") || mediaType.startsWith("audio/")) {
     return {
-      id: crypto.randomUUID(),
+      id: createClientId(),
       type: mediaType.startsWith("image/") ? "image" : "audio",
       name: file.name,
       media_type: mediaType,
@@ -15,7 +16,7 @@ export async function createLocalAttachment(file: File): Promise<ConversationAtt
 
   if (isTextAttachment(file, mediaType)) {
     return {
-      id: crypto.randomUUID(),
+      id: createClientId(),
       type: "file",
       name: file.name,
       media_type: mediaType || "text/plain",
@@ -36,7 +37,7 @@ export function toAttachmentItem(attachment: ConversationAttachment) {
       : "file";
 
   return {
-    uid: attachment.id ?? attachment.name ?? crypto.randomUUID(),
+    uid: attachment.id ?? attachment.name ?? createClientId(),
     name: attachment.name ?? "attachment",
     status: "done" as const,
     size: attachment.bytes ?? undefined,

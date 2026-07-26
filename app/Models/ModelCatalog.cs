@@ -172,7 +172,7 @@ public sealed class ModelCatalog
             Format: "gguf",
             Quantization: "Q8_0",
             License: null,
-            SizeBytes: null,
+            SizeBytes: 328_577_056,
             ParameterCount: 300_000_000,
             PrimaryFileName: "embeddinggemma-300M-Q8_0.gguf",
             Recommended: true,
@@ -181,7 +181,12 @@ public sealed class ModelCatalog
             Tags: ["default", "local", "embeddings", "retrieval"],
             Assets:
             [
-                DownloadAsset.HuggingFace("ggml-org/embeddinggemma-300M-GGUF", "embeddinggemma-300M-Q8_0.gguf")
+                DownloadAsset.Direct(
+                    "unsloth/embeddinggemma-300m-GGUF@6661a6504c30d8304af13455cb4a5d4f5bc6011f",
+                    "https://huggingface.co/unsloth/embeddinggemma-300m-GGUF/resolve/6661a6504c30d8304af13455cb4a5d4f5bc6011f/embeddinggemma-300M-Q8_0.gguf?download=true",
+                    targetRelativePath: "embeddinggemma-300M-Q8_0.gguf",
+                    expectedSha256: "a0f7b4e13c397a6e1b32c2de75b1f65a14c92ec524d5f674d94a4290a1c4969b",
+                    "https://modelscope.cn/models/unsloth/embeddinggemma-300m-GGUF/resolve/fb9fea662e5b5c302d2b54da02dbe98422e08a29/embeddinggemma-300M-Q8_0.gguf")
             ],
             BundleAssets: [],
             MinimumMemoryBytes: Gib(4),
@@ -200,7 +205,7 @@ public sealed class ModelCatalog
             Format: "gguf",
             Quantization: "Q8_0",
             License: "mit",
-            SizeBytes: null,
+            SizeBytes: 635_676_416,
             ParameterCount: null,
             PrimaryFileName: "bge-reranker-v2-m3-Q8_0.gguf",
             Recommended: true,
@@ -209,7 +214,12 @@ public sealed class ModelCatalog
             Tags: ["default", "local", "rerank", "retrieval"],
             Assets:
             [
-                DownloadAsset.HuggingFace("gpustack/bge-reranker-v2-m3-GGUF", "bge-reranker-v2-m3-Q8_0.gguf")
+                DownloadAsset.Direct(
+                    "gpustack/bge-reranker-v2-m3-GGUF@3093af03b1a635e67b084b1d8c03c5f5e020fd05",
+                    "https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/resolve/3093af03b1a635e67b084b1d8c03c5f5e020fd05/bge-reranker-v2-m3-Q8_0.gguf?download=true",
+                    targetRelativePath: "bge-reranker-v2-m3-Q8_0.gguf",
+                    expectedSha256: "a43c7c9b11a4c1517e5bf95151960e1621d1b72f7a493364b01e386cf1aaa1d3",
+                    "https://modelscope.cn/models/gpustack/bge-reranker-v2-m3-GGUF/resolve/d49f7d400a3f5fa38ebd1ffe116b2ef15ffefbc2/bge-reranker-v2-m3-Q8_0.gguf")
             ],
             BundleAssets: [],
             MinimumMemoryBytes: Gib(4),
@@ -374,7 +384,7 @@ public sealed class ModelCatalog
             Format: "gguf",
             Quantization: "Q4_K_M",
             License: null,
-            SizeBytes: null,
+            SizeBytes: 2_604_311_104,
             ParameterCount: 4_000_000_000,
             PrimaryFileName: "flux-2-klein-4b-Q4_K_M.gguf",
             Recommended: true,
@@ -386,15 +396,27 @@ public sealed class ModelCatalog
                 DownloadAsset.HuggingFace(
                     "unsloth/FLUX.2-klein-4B-GGUF",
                     "flux-2-klein-4b-Q4_K_M.gguf",
-                    expectedSha256: "0b25d143c8469b342bc5af3bce92b783bf6b0636d285f7b2f75e38af63af9a15"),
-                DownloadAsset.HuggingFace("Comfy-Org/vae-text-encorder-for-flux-klein-4b", "split_files/vae/flux2-vae.safetensors", "vae/flux2-vae.safetensors"),
-                DownloadAsset.HuggingFace("Comfy-Org/vae-text-encorder-for-flux-klein-4b", "split_files/text_encoders/qwen_3_4b.safetensors", "text-encoders/qwen_3_4b.safetensors")
+                    null,
+                    "0b25d143c8469b342bc5af3bce92b783bf6b0636d285f7b2f75e38af63af9a15",
+                    "https://modelscope.cn/models/unsloth/FLUX.2-klein-4B-GGUF/resolve/master/flux-2-klein-4b-Q4_K_M.gguf"),
+                DownloadAsset.HuggingFace(
+                    "Comfy-Org/vae-text-encorder-for-flux-klein-4b",
+                    "split_files/vae/flux2-vae.safetensors",
+                    "vae/flux2-vae.safetensors",
+                    "868fe7b343cc8f3a19dbcfcafbc3d5f888802be3f89bd81b65b3621a066ce8f3",
+                    "https://modelscope.cn/models/Comfy-Org/vae-text-encorder-for-flux-klein-4b/resolve/master/split_files/vae/flux2-vae.safetensors"),
+                DownloadAsset.HuggingFace(
+                    "Comfy-Org/vae-text-encorder-for-flux-klein-4b",
+                    "split_files/text_encoders/qwen_3_4b.safetensors",
+                    "text-encoders/qwen_3_4b.safetensors",
+                    "6c671498573ac2f7a5501502ccce8d2b08ea6ca2f661c458e708f36b36edfc5a",
+                    "https://modelscope.cn/models/Comfy-Org/vae-text-encorder-for-flux-klein-4b/resolve/master/split_files/text_encoders/qwen_3_4b.safetensors")
             ],
             BundleAssets:
             [
-                new ModelBundleAsset("diffusion-model", "diffusion-model", true, "flux-2-klein-4b-Q4_K_M.gguf", "flux-2-klein-4b-Q4_K_M.gguf", "gguf", "Q4_K_M"),
-                new ModelBundleAsset("vae", "vae", true, "vae/flux2-vae.safetensors", "flux2-vae.safetensors", "safetensors"),
-                new ModelBundleAsset("llm-text-encoder", "text-encoder", true, "text-encoders/qwen_3_4b.safetensors", "qwen_3_4b.safetensors", "safetensors")
+                new ModelBundleAsset("diffusion-model", "diffusion-model", true, "flux-2-klein-4b-Q4_K_M.gguf", "flux-2-klein-4b-Q4_K_M.gguf", "gguf", "Q4_K_M", SizeBytes: 2_604_311_104, ExpectedSha256: "0b25d143c8469b342bc5af3bce92b783bf6b0636d285f7b2f75e38af63af9a15"),
+                new ModelBundleAsset("vae", "vae", true, "vae/flux2-vae.safetensors", "flux2-vae.safetensors", "safetensors", SizeBytes: 336_211_292, ExpectedSha256: "868fe7b343cc8f3a19dbcfcafbc3d5f888802be3f89bd81b65b3621a066ce8f3"),
+                new ModelBundleAsset("llm-text-encoder", "text-encoder", true, "text-encoders/qwen_3_4b.safetensors", "qwen_3_4b.safetensors", "safetensors", SizeBytes: 8_044_982_048, ExpectedSha256: "6c671498573ac2f7a5501502ccce8d2b08ea6ca2f661c458e708f36b36edfc5a")
             ],
             MinimumMemoryBytes: Gib(16),
             HardwareTier: "standard",

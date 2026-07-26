@@ -11,11 +11,15 @@ internal sealed class LlamaNativeSession : IDisposable
 {
     private const int PoolingTypeNone = 0;
     private const int PoolingTypeMean = 1;
+    private const int MaxBatchSize = 2048;
+    private const int MaxMicroBatchSize = 512;
 
     private readonly object gate = new();
     private readonly string modelId;
     private readonly string modelPath;
     private readonly int contextSize;
+    private readonly int batchSize;
+    private readonly int microBatchSize;
     private readonly int gpuLayers;
     private readonly string? acceleratorKey;
     private readonly AcceleratorDevice? accelerator;
@@ -44,6 +48,7 @@ internal sealed class LlamaNativeSession : IDisposable
         this.modelId = modelId;
         this.modelPath = modelPath;
         this.contextSize = Math.Max(512, contextSize);
+        (batchSize, microBatchSize) = ResolveBatchSizes(this.contextSize);
         this.gpuLayers = Math.Max(0, gpuLayers);
         this.acceleratorKey = string.IsNullOrWhiteSpace(acceleratorKey) ? null : acceleratorKey.Trim();
         this.accelerator = accelerator;
@@ -88,8 +93,8 @@ internal sealed class LlamaNativeSession : IDisposable
         var threads = Math.Max(1, Environment.ProcessorCount);
         var contextParams = LlamaNativeMethods.ContextDefaultParams();
         contextParams.n_ctx = (uint)this.contextSize;
-        contextParams.n_batch = (uint)this.contextSize;
-        contextParams.n_ubatch = (uint)this.contextSize;
+        contextParams.n_batch = (uint)batchSize;
+        contextParams.n_ubatch = (uint)microBatchSize;
         contextParams.n_seq_max = 1;
         contextParams.n_threads = threads;
         contextParams.n_threads_batch = threads;
@@ -138,6 +143,25 @@ internal sealed class LlamaNativeSession : IDisposable
     }
 
     public DateTimeOffset LoadedAt { get; }
+
+    internal static (int BatchSize, int MicroBatchSize) ResolveBatchSizes(int contextSize)
+    {
+        var batch = Math.Min(Math.Max(512, contextSize), MaxBatchSize);
+        return (batch, Math.Min(batch, MaxMicroBatchSize));
+    }
+
+    internal static IEnumerable<(int Offset, int Count)> ResolvePrefillChunks(int tokenCount, int batchSize)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(tokenCount);
+        ArgumentOutOfRangeException.ThrowIfLessThan(batchSize, 1);
+
+        for (var offset = 0; offset < tokenCount;)
+        {
+            var count = Math.Min(batchSize, tokenCount - offset);
+            yield return (offset, count);
+            offset += count;
+        }
+    }
 
     public CompletionResult Generate(
         string prompt,
@@ -377,23 +401,29 @@ internal sealed class LlamaNativeSession : IDisposable
         {
             fixed (int* tokenPointer = promptTokens)
             {
-                var prefill = LlamaNativeMethods.BatchGetOne((nint)tokenPointer, promptTokens.Length);
-                var prefillResult = LlamaNativeMethods.Decode(contextHandle.DangerousGetHandle(), prefill);
-                if (prefillResult != 0)
+                foreach (var chunk in ResolvePrefillChunks(promptTokens.Length, batchSize))
                 {
-                    logger.DecodeFailed("prompt", prefillResult);
-                    throw IsNpuSelected()
-                        ? CreateNpuException(
-                            "npu_prompt_decode_failed",
-                            $"The prompt prefill step failed on the selected Intel NPU / OpenVINO accelerator with native return code {prefillResult}.",
-                            [
-                                "Reduce the prompt length, num_ctx or runtime.accelerator.npu_prefill_chunk before retrying on Intel NPU.",
-                                "Retry on CPU, SYCL, Vulkan or OpenVINO GPU to confirm whether the model and prompt are otherwise valid."
-                            ])
-                        : new InferenceException(
-                            "prompt_decode_failed",
-                            $"The prompt decode step failed with native return code {prefillResult}.",
-                            ["Reduce the prompt length or use a different GGUF model."]);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var prefill = LlamaNativeMethods.BatchGetOne(
+                        (nint)(tokenPointer + chunk.Offset),
+                        chunk.Count);
+                    var prefillResult = LlamaNativeMethods.Decode(contextHandle.DangerousGetHandle(), prefill);
+                    if (prefillResult != 0)
+                    {
+                        logger.DecodeFailed("prompt", prefillResult);
+                        throw IsNpuSelected()
+                            ? CreateNpuException(
+                                "npu_prompt_decode_failed",
+                                $"The prompt prefill step failed on the selected Intel NPU / OpenVINO accelerator with native return code {prefillResult}.",
+                                [
+                                    "Reduce the prompt length, num_ctx or runtime.accelerator.npu_prefill_chunk before retrying on Intel NPU.",
+                                    "Retry on CPU, SYCL, Vulkan or OpenVINO GPU to confirm whether the model and prompt are otherwise valid."
+                                ])
+                            : new InferenceException(
+                                "prompt_decode_failed",
+                                $"The prompt decode step failed with native return code {prefillResult}.",
+                                ["Reduce the prompt length or use a different GGUF model."]);
+                    }
                 }
             }
         }
@@ -413,7 +443,6 @@ internal sealed class LlamaNativeSession : IDisposable
                 break;
             }
 
-            LlamaNativeMethods.SamplerAccept(samplerHandle, token);
             emittedTokenCount++;
             var piece = TokenToPiece(token);
             if (piece.Length > 0)
@@ -577,6 +606,8 @@ internal sealed class LlamaNativeSession : IDisposable
             $"model-id: {modelId}",
             $"model-path: {modelPath}",
             $"context-size: {contextSize}",
+            $"batch-size: {batchSize}",
+            $"micro-batch-size: {microBatchSize}",
             $"gpu-layers: {gpuLayers}",
             $"accelerator: {ResolveAcceleratorSummary()}"
         };

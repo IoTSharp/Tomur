@@ -150,10 +150,6 @@ internal static partial class LlamaNativeMethods
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial int SamplerSample(nint samplerChain, nint contextHandle, int idx);
 
-    [LibraryImport(LibraryName, EntryPoint = "llama_sampler_accept")]
-    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial void SamplerAccept(nint samplerChain, int tokenId);
-
     [LibraryImport(LibraryName, EntryPoint = "llama_token_to_piece")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial int TokenToPiece(

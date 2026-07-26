@@ -1,0 +1,273 @@
+# syntax=docker/dockerfile:1.7
+
+ARG CUDA_BUILD_IMAGE=nvidia/cuda:12.9.1-devel-ubuntu24.04
+ARG NODE_IMAGE=node:26
+ARG DOTNET_SDK_IMAGE=mcr.microsoft.com/dotnet/sdk:10.0
+
+FROM ${CUDA_BUILD_IMAGE} AS native-base
+ARG NATIVE_BUILD_JOBS=8
+ENV DEBIAN_FRONTEND=noninteractive
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+      build-essential \
+      ca-certificates \
+      cmake \
+      git \
+      ninja-build \
+      pkg-config && \
+    nvcc --version | grep -q 'release 12\.9'
+
+# Build the CUDA-capable llama runtime and every multimodal consumer in both
+# CPU fallback and CUDA 12.9 variants. All consumers share llama's ggml ABI.
+FROM native-base AS inference-native-build
+WORKDIR /src/native
+COPY native/llama.cpp/ ./llama.cpp/
+COPY native/whisper.cpp/ ./whisper.cpp/
+COPY native/stable-diffusion.cpp/ ./stable-diffusion.cpp/
+COPY native/llama.native/ ./llama.native/
+COPY native/whisper.native/ ./whisper.native/
+COPY native/stable-diffusion.native/ ./stable-diffusion.native/
+COPY native/ocr.native/ ./ocr.native/
+COPY native/tts.native/ ./tts.native/
+
+RUN cmake --preset linux-x64-cuda129 -S /src/native/llama.native && \
+    cmake --build /src/native/llama.native/build/linux-x64-cuda129 \
+      --target install --parallel "$NATIVE_BUILD_JOBS"
+
+RUN set -eu; \
+    for component in whisper.native stable-diffusion.native ocr.native tts.native; do \
+      cmake --preset linux-x64 -S "/src/native/$component"; \
+      cmake --build "/src/native/$component/build/linux-x64" \
+        --target install --parallel "$NATIVE_BUILD_JOBS"; \
+      cmake --preset linux-x64-cuda129 -S "/src/native/$component"; \
+      cmake --build "/src/native/$component/build/linux-x64-cuda129" \
+        --target install --parallel "$NATIVE_BUILD_JOBS"; \
+    done
+
+# HyperLPR3 remains a CPU component. OpenCV, MNN, HyperLPR3 and the Tomur
+# bridge are compiled from the repository-pinned source revisions.
+FROM native-base AS plate-native-build
+WORKDIR /src/native
+COPY native/opencv/ ./opencv/
+COPY native/mnn/ ./mnn/
+COPY native/hyperlpr3/ ./hyperlpr3/
+COPY native/plate.native/ ./plate.native/
+COPY deploy/patches/mnn-2.2.0-gcc13.patch /tmp/mnn-2.2.0-gcc13.patch
+
+RUN cmake \
+      -S /src/native/opencv \
+      -B /build/opencv \
+      -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=/deps/opencv \
+      -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
+      -DCMAKE_INSTALL_RPATH=\$ORIGIN \
+      -DBUILD_LIST=core,imgproc,imgcodecs \
+      -DBUILD_SHARED_LIBS=ON \
+      -DBUILD_opencv_apps=OFF \
+      -DBUILD_opencv_js=OFF \
+      -DBUILD_opencv_java=OFF \
+      -DBUILD_opencv_python2=OFF \
+      -DBUILD_opencv_python3=OFF \
+      -DBUILD_EXAMPLES=OFF \
+      -DBUILD_TESTS=OFF \
+      -DBUILD_PERF_TESTS=OFF \
+      -DBUILD_DOCS=OFF \
+      -DOPENCV_FORCE_3RDPARTY_BUILD=ON \
+      -DBUILD_ZLIB=ON \
+      -DBUILD_JPEG=ON \
+      -DBUILD_PNG=ON \
+      -DBUILD_WEBP=ON \
+      -DWITH_JPEG=ON \
+      -DWITH_PNG=ON \
+      -DWITH_WEBP=ON \
+      -DWITH_OPENCL=OFF \
+      -DWITH_IPP=OFF \
+      -DWITH_ITT=OFF \
+      -DWITH_TBB=OFF \
+      -DWITH_EIGEN=OFF \
+      -DWITH_FFMPEG=OFF \
+      -DWITH_GSTREAMER=OFF \
+      -DWITH_GTK=OFF && \
+    cmake --build /build/opencv --parallel "$NATIVE_BUILD_JOBS" && \
+    cmake --install /build/opencv --strip
+
+RUN git -C /src/native/mnn apply --check /tmp/mnn-2.2.0-gcc13.patch && \
+    git -C /src/native/mnn apply /tmp/mnn-2.2.0-gcc13.patch && \
+    cmake \
+      -S /src/native/hyperlpr3 \
+      -B /build/hyperlpr3 \
+      -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+      -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
+      -DCMAKE_INSTALL_RPATH=\$ORIGIN \
+      -DOpenCV_DIR=/deps/opencv/lib/cmake/opencv4 \
+      -DLINUX_FETCH_MNN=ON \
+      -DFETCHCONTENT_SOURCE_DIR_MNN=/src/native/mnn \
+      -DMNN_BUILD_SHARED_LIBS=OFF \
+      -DMNN_SEP_BUILD=OFF \
+      -DMNN_BUILD_TOOLS=OFF \
+      -DMNN_BUILD_TEST=OFF \
+      -DMNN_BUILD_BENCHMARK=OFF \
+      -DMNN_BUILD_DEMO=OFF \
+      -DMNN_BUILD_CONVERTER=OFF \
+      -DMNN_BUILD_PROTOBUFFER=OFF \
+      -DMNN_ARM82=OFF \
+      -DBUILD_SHARE=ON \
+      -DBUILD_SAMPLES=OFF \
+      -DBUILD_TEST=OFF && \
+    cmake --build /build/hyperlpr3 \
+      --target hyperlpr3 --parallel "$NATIVE_BUILD_JOBS" && \
+    mkdir -p /deps/hyperlpr3/include /deps/hyperlpr3/lib && \
+    cp /src/native/hyperlpr3/cpp/c_api/hyper_lpr_sdk.h /deps/hyperlpr3/include/ && \
+    hyperlpr_library="$(find /build/hyperlpr3 -name libhyperlpr3.so -type f | head -n 1)" && \
+    test -s "$hyperlpr_library" && \
+    cp "$hyperlpr_library" /deps/hyperlpr3/lib/libhyperlpr3.so
+
+RUN cmake \
+      -S /src/native/plate.native \
+      -B /build/plate \
+      -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=/out/native \
+      -DTOMUR_HYPERLPR3_ROOT=/deps/hyperlpr3 \
+      -DOpenCV_DIR=/deps/opencv/lib/cmake/opencv4 && \
+    cmake --build /build/plate --parallel "$NATIVE_BUILD_JOBS" && \
+    cmake --install /build/plate --strip && \
+    plate_root=/out/native/runtimes/linux-x64/native/plate/cpu && \
+    cp -a /deps/opencv/lib/libopencv_core.so* "$plate_root/" && \
+    cp -a /deps/opencv/lib/libopencv_imgproc.so* "$plate_root/" && \
+    cp -a /deps/opencv/lib/libopencv_imgcodecs.so* "$plate_root/"
+
+# Assemble one self-contained native tree, preserving CUDA/OpenCV symlinks.
+FROM native-base AS native-assemble
+WORKDIR /out/native
+COPY native/bundle.manifest.json ./bundle.manifest.json
+COPY --from=inference-native-build /src/native/runtimes/ ./runtimes/
+COPY --from=plate-native-build /out/native/runtimes/ ./runtimes/
+# libcuda.so.1 is provided by the NVIDIA driver on the target host.
+RUN runtime_root=/out/native/runtimes/linux-x64/native && \
+    cuda_lib=/usr/local/cuda/targets/x86_64-linux/lib && \
+    cp -a "$cuda_lib"/libcudart.so* "$runtime_root/" && \
+    cp -a "$cuda_lib"/libcublas.so* "$runtime_root/" && \
+    cp -a "$cuda_lib"/libcublasLt.so* "$runtime_root/" && \
+    cp /NGC-DL-CONTAINER-LICENSE "$runtime_root/CUDA-NGC-LICENSE" && \
+    libgomp_path="$(gcc -print-file-name=libgomp.so.1)" && \
+    test -s "$libgomp_path" && \
+    cp --dereference "$libgomp_path" "$runtime_root/libgomp.so.1"
+
+RUN runtime_root=/out/native/runtimes/linux-x64/native && \
+    for library in \
+      libllama.so libggml.so libggml-base.so libggml-cpu.so libggml-cuda.so \
+      libtomur-llama-mtmd.so libtomur-llama-vlm.so \
+      whisper/cpu/libwhisper.so whisper/cuda129/libwhisper.so \
+      stable-diffusion/cpu/libstable-diffusion.so \
+      stable-diffusion/cuda129/libstable-diffusion.so \
+      ocr/cpu/libtomur-ocr.so ocr/cpu/libtomur-mtmd.so \
+      ocr/cuda129/libtomur-ocr.so ocr/cuda129/libtomur-mtmd.so \
+      tts/cpu/libtomur-tts.so tts/cuda129/libtomur-tts.so \
+      plate/cpu/libtomur-plate.so plate/cpu/libhyperlpr3.so; do \
+        test -s "$runtime_root/$library" || { echo "Missing native library: $library" >&2; exit 1; }; \
+      done && \
+    for object in $(find "$runtime_root" -type f -name '*.so*'); do \
+      readelf -h "$object" | grep -q 'Machine:.*Advanced Micro Devices X86-64' || \
+        { echo "Unexpected ELF architecture: $object" >&2; exit 1; }; \
+      unresolved="$(LD_LIBRARY_PATH="$runtime_root:$runtime_root/plate/cpu" ldd "$object" | \
+        awk '/not found/ && $1 != "libcuda.so.1" { print }')"; \
+      if [ -n "$unresolved" ]; then \
+        echo "Unresolved dependency: $object" >&2; \
+        echo "$unresolved" >&2; \
+        exit 1; \
+      fi; \
+    done && \
+    nm -D "$runtime_root/libtomur-llama-vlm.so" | grep -q ' tomur_llama_vlm_generate$' && \
+    nm -D "$runtime_root/whisper/cuda129/libwhisper.so" | grep -q ' tomur_whisper_full_with_params$' && \
+    nm -D "$runtime_root/stable-diffusion/cuda129/libstable-diffusion.so" | grep -q ' tomur_sd_generate_png$' && \
+    nm -D "$runtime_root/ocr/cuda129/libtomur-ocr.so" | grep -q ' tomur_paddleocrvl_recognize_image$' && \
+    nm -D "$runtime_root/tts/cuda129/libtomur-tts.so" | grep -q ' tomur_tts_synthesize_to_pcm$' && \
+    nm -D "$runtime_root/plate/cpu/libtomur-plate.so" | grep -q ' tomur_plate_recognize_image$' && \
+    ! find "$runtime_root" -type f -name '*.so*' -exec readelf -d {} \; | \
+      grep -q 'Shared library: \[libnccl\.so'
+
+FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS web-build
+WORKDIR /src
+COPY web/package.json ./web/package.json
+RUN --mount=type=cache,target=/root/.npm \
+    cd web && npm install --no-audit --no-fund --no-package-lock
+COPY web/ ./web/
+RUN cd web && npm run build
+
+FROM --platform=$BUILDPLATFORM ${DOTNET_SDK_IMAGE} AS app-build
+ARG TOMUR_REVISION
+WORKDIR /src
+COPY app/ ./app/
+COPY providers/ ./providers/
+COPY native/bundle.manifest.json ./native/bundle.manifest.json
+COPY LICENSE ./LICENSE
+COPY NOTICE ./NOTICE
+COPY THIRD_PARTY_NOTICES.md ./THIRD_PARTY_NOTICES.md
+COPY --from=web-build /src/app/wwwroot/ ./app/wwwroot/
+RUN --mount=type=cache,target=/root/.nuget/packages \
+    test -n "$TOMUR_REVISION" && \
+    dotnet publish app/Tomur.csproj \
+      --configuration Release \
+      --runtime linux-x64 \
+      --self-contained true \
+      --output /out/tomur \
+      -p:PublishSingleFile=true \
+      -p:IncludeNativeLibrariesForSelfExtract=true \
+      -p:IncludeAllContentForSelfExtract=false \
+      -p:DebugType=None \
+      -p:DebugSymbols=false \
+      -p:ContinuousIntegrationBuild=true \
+      -p:InformationalVersion="0.5.0-r5+$TOMUR_REVISION"
+COPY --from=native-assemble /out/native/runtimes/ /out/tomur/native/runtimes/
+
+COPY native/llama.cpp/LICENSE /out/tomur/licenses/llama.cpp/LICENSE
+COPY native/whisper.cpp/LICENSE /out/tomur/licenses/whisper.cpp/LICENSE
+COPY native/stable-diffusion.cpp/LICENSE /out/tomur/licenses/stable-diffusion.cpp/LICENSE
+COPY native/paddleocr/LICENSE /out/tomur/licenses/paddleocr/LICENSE
+COPY native/hyperlpr3/LICENSE /out/tomur/licenses/hyperlpr3/LICENSE
+COPY native/mnn/MNN.podspec /out/tomur/licenses/mnn/MNN.podspec
+COPY native/opencv/LICENSE /out/tomur/licenses/opencv/LICENSE
+
+FROM native-base AS package-build
+ARG TOMUR_REVISION
+ARG LLAMA_REVISION
+ARG WHISPER_REVISION
+ARG STABLE_DIFFUSION_REVISION
+ARG PADDLEOCR_REVISION
+ARG HYPERLPR3_REVISION
+ARG MNN_REVISION
+ARG OPENCV_REVISION
+ARG RELEASE_ID
+ARG SOURCE_DATE_EPOCH
+WORKDIR /package
+COPY --from=app-build /out/tomur/ ./tomur/
+RUN for revision in \
+      "$TOMUR_REVISION" "$LLAMA_REVISION" "$WHISPER_REVISION" \
+      "$STABLE_DIFFUSION_REVISION" "$PADDLEOCR_REVISION" \
+      "$HYPERLPR3_REVISION" "$MNN_REVISION" "$OPENCV_REVISION"; do \
+        test "${#revision}" -eq 40; \
+      done && \
+    test -n "$RELEASE_ID" && \
+    test -n "$SOURCE_DATE_EPOCH" && \
+    printf '%s\n' \
+      "{\"release_id\":\"$RELEASE_ID\",\"rid\":\"linux-x64\",\"cuda\":\"12.9.1\",\"cuda_architectures\":\"89\",\"tomur_revision\":\"$TOMUR_REVISION\",\"llama_revision\":\"$LLAMA_REVISION\",\"whisper_revision\":\"$WHISPER_REVISION\",\"stable_diffusion_revision\":\"$STABLE_DIFFUSION_REVISION\",\"paddleocr_revision\":\"$PADDLEOCR_REVISION\",\"hyperlpr3_revision\":\"$HYPERLPR3_REVISION\",\"mnn_revision\":\"$MNN_REVISION\",\"opencv_revision\":\"$OPENCV_REVISION\"}" \
+      > tomur/build-info.json
+RUN mkdir -p /out && \
+    tar \
+      --sort=name \
+      --owner=0 \
+      --group=0 \
+      --numeric-owner \
+      --mtime="@$SOURCE_DATE_EPOCH" \
+      -cf - tomur | gzip -n -9 > "/out/$RELEASE_ID.tar.gz" && \
+    cd /out && sha256sum "$RELEASE_ID.tar.gz" > "$RELEASE_ID.tar.gz.sha256"
+
+FROM scratch AS release-export
+ARG RELEASE_ID
+COPY --from=package-build /out/ /
