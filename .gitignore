@@ -20,3 +20,4 @@ docs/r8-smoke-evidence/
 build/
 .tmp/
 .playwright-cli/
+graphify-out/
