@@ -193,7 +193,7 @@ public sealed class ConversationOrchestrationService
                         "tool",
                         BuildToolMessageContent(agentResponse.ToolCalls),
                         "tool",
-                        agentResponse.ToolCalls.Any(IsBlockedToolCall) ? "partial" : "ok",
+                        agentResponse.ToolCalls.Any(static tool => IsNonOkStatus(tool.Status)) ? "partial" : "ok",
                         agentResponse.Model,
                         null,
                         agentResponse.ToolCalls.Select(ToConversationToolCall).ToArray(),

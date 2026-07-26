@@ -74,6 +74,11 @@ public sealed class LocalInferenceService
     public void Unload()
         => sessionManager.Unload();
 
+    internal IDisposable AcquireExclusiveExecution(
+        CancellationToken cancellationToken,
+        out bool releasedSession)
+        => sessionManager.AcquireExclusiveExecution(cancellationToken, out releasedSession);
+
     public static CompletionOptions MergeOptions(
         CompletionOptions defaults,
         double? temperature,

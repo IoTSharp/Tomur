@@ -494,6 +494,37 @@ public sealed class SessionManager : IDisposable
         }
     }
 
+    internal IDisposable AcquireExclusiveExecution(
+        CancellationToken cancellationToken,
+        out bool releasedSession)
+    {
+        executionGate.Wait(cancellationToken);
+        try
+        {
+            lock (gate)
+            {
+                ObjectDisposedException.ThrowIf(disposed, this);
+                releasedSession = currentSession is not null || currentManagedSession is not null;
+                UnloadCore();
+            }
+
+            return new ExecutionLease(executionGate);
+        }
+        catch
+        {
+            executionGate.Release();
+            throw;
+        }
+    }
+
+    private sealed class ExecutionLease(SemaphoreSlim executionGate) : IDisposable
+    {
+        private SemaphoreSlim? gate = executionGate;
+
+        public void Dispose()
+            => Interlocked.Exchange(ref gate, null)?.Release();
+    }
+
     public SessionSnapshot GetSnapshot()
     {
         lock (gate)

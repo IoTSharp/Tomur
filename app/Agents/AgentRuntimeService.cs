@@ -158,7 +158,11 @@ public sealed class AgentRuntimeService
         var modelId = ResolveChatModelId(options.ModelId);
         options.ModelId = modelId;
         string responseText;
-        if (modelSelectedMode)
+        if (!modelSelectedMode && HasFailedToolCalls(toolCalls))
+        {
+            responseText = BuildFailedToolResponse(toolCalls);
+        }
+        else if (modelSelectedMode)
         {
             responseText = await RunModelSelectedChatAsync(
                     request,
@@ -183,6 +187,11 @@ public sealed class AgentRuntimeService
                     cancellationToken)
                 .ConfigureAwait(false);
             responseText = response.Text ?? string.Empty;
+        }
+
+        if (modelSelectedMode && HasFailedToolCalls(toolCalls))
+        {
+            responseText = BuildFailedToolResponse(toolCalls);
         }
 
         var agentResponse = new AgentChatResponse(
@@ -245,7 +254,9 @@ public sealed class AgentRuntimeService
         string? model = null;
         var shouldRespond = request.Respond ??
             modelCatalog.ListModels().Any(IsChatModel);
-        if (shouldRespond)
+        var hasFailedTools = HasFailedToolCalls(steps);
+        var shouldSummarize = shouldRespond && !hasFailedTools;
+        if (shouldSummarize)
         {
             var summary = await RunWorkflowSummaryAsync(
                     request,
@@ -254,6 +265,10 @@ public sealed class AgentRuntimeService
                 .ConfigureAwait(false);
             text = summary.Text;
             model = summary.Model;
+        }
+        else if (hasFailedTools)
+        {
+            text = BuildFailedToolResponse(steps);
         }
 
         var workflowResponse = new AgentReadOnlyWorkflowResponse(
@@ -265,7 +280,7 @@ public sealed class AgentRuntimeService
             steps,
             text,
             (long)Math.Round((DateTimeOffset.UtcNow - started).TotalMilliseconds),
-            BuildWorkflowDiagnostics(steps, shouldRespond));
+            BuildWorkflowDiagnostics(steps, shouldSummarize));
         telemetry.CompleteWorkflow(activity, workflowResponse);
         await eventLog.WriteWorkflowAsync(workflowResponse, cancellationToken).ConfigureAwait(false);
         return workflowResponse;
@@ -1192,6 +1207,38 @@ public sealed class AgentRuntimeService
 
     private static bool IsNonOkToolStatus(string status)
         => !string.Equals(status, "ok", StringComparison.OrdinalIgnoreCase);
+
+    internal static bool HasFailedToolCalls(IReadOnlyList<AgentChatToolCall> toolCalls)
+        => toolCalls.Any(static tool => IsNonOkToolStatus(tool.Status));
+
+    internal static string BuildFailedToolResponse(IReadOnlyList<AgentChatToolCall> toolCalls)
+    {
+        var failures = toolCalls.Where(static tool => IsNonOkToolStatus(tool.Status));
+        return string.Join(
+            Environment.NewLine,
+            failures.Select(static tool =>
+            {
+                var detail = TryReadToolFailureMessage(tool.Result);
+                return string.IsNullOrWhiteSpace(detail)
+                    ? $"Tool '{tool.Tool}' returned status '{tool.Status}'. No model-generated summary was produced."
+                    : $"Tool '{tool.Tool}' returned status '{tool.Status}': {detail}. No model-generated summary was produced.";
+            }));
+    }
+
+    private static string? TryReadToolFailureMessage(JsonElement? result)
+    {
+        if (result is not JsonElement value ||
+            value.ValueKind != JsonValueKind.Object ||
+            !value.TryGetProperty("diagnostic", out var diagnostic) ||
+            diagnostic.ValueKind != JsonValueKind.Object ||
+            !diagnostic.TryGetProperty("message", out var message) ||
+            message.ValueKind != JsonValueKind.String)
+        {
+            return null;
+        }
+
+        return message.GetString()?.Trim();
+    }
 
     private static string NormalizeToolResultContent(AgentChatToolResult toolResult)
     {

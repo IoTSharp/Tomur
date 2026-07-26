@@ -136,6 +136,7 @@ public sealed class ToolExecutionService
         JsonElement? arguments,
         CancellationToken cancellationToken)
     {
+        var started = DateTimeOffset.UtcNow;
         cancellationToken.ThrowIfCancellationRequested();
         var model = ResolveModel(arguments, "model", "vision", "vlm", descriptor.Route);
         var prompt = RequireString(arguments, "prompt");
@@ -144,12 +145,27 @@ public sealed class ToolExecutionService
 
         try
         {
+            using var executionLease = inferenceService.AcquireExclusiveExecution(
+                cancellationToken,
+                out var releasedTextSession);
             var result = multimodalExecution.AnalyzeVision(model, prompt, images, options, cancellationToken);
+            if (releasedTextSession)
+            {
+                result = result with
+                {
+                    Diagnostics = ["text-session: released-before-vlm", .. result.Diagnostics]
+                };
+            }
+
             return CreateTextResult(descriptor, model.Id, result);
         }
         catch (InferenceException exception)
         {
-            return CreateFailureResult(descriptor, model.Id, diagnosticsProvider.GetRuntimeFailure(model.Id, exception));
+            return CreateFailureResult(
+                descriptor,
+                model.Id,
+                diagnosticsProvider.GetRuntimeFailure(model.Id, exception),
+                (long)Math.Round((DateTimeOffset.UtcNow - started).TotalMilliseconds));
         }
     }
 
@@ -461,7 +477,8 @@ public sealed class ToolExecutionService
     private static AgentToolExecutionResult CreateFailureResult(
         AgentToolDescriptor descriptor,
         string? model,
-        RuntimeDiagnostic diagnostic)
+        RuntimeDiagnostic diagnostic,
+        long elapsedMs = 0)
         => new(
             "error",
             descriptor.Name,
@@ -470,7 +487,7 @@ public sealed class ToolExecutionService
             descriptor.Route,
             null,
             null,
-            0,
+            Math.Max(0, elapsedMs),
             [$"{diagnostic.Code}: {diagnostic.Message}"],
             diagnostic);
 

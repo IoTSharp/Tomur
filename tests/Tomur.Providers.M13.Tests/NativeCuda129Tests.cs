@@ -150,6 +150,29 @@ public sealed class NativeCuda129Tests
         Assert.DoesNotContain("llama_sampler_accept", methods, StringComparison.Ordinal);
     }
 
+    /// <summary>验证 VLM 执行前释放空闲文本会话，避免大模型在 GPU 中重复驻留。</summary>
+    [Fact]
+    public void VisionToolReleasesIdleTextSessionBeforeLoadingVlm()
+    {
+        var toolExecution = File.ReadAllText(FindRepositoryFile("app", "Agents", "ToolExecutionService.cs"));
+        var visionMethod = toolExecution.IndexOf(
+            "private AgentToolExecutionResult ExecuteVisionAnalysis(",
+            StringComparison.Ordinal);
+        var release = toolExecution.IndexOf(
+            "inferenceService.AcquireExclusiveExecution(",
+            visionMethod,
+            StringComparison.Ordinal);
+        var analyze = toolExecution.IndexOf(
+            "multimodalExecution.AnalyzeVision(",
+            visionMethod,
+            StringComparison.Ordinal);
+
+        Assert.True(visionMethod >= 0);
+        Assert.True(release > visionMethod);
+        Assert.True(analyze > release);
+        Assert.Contains("text-session: released-before-vlm", toolExecution, StringComparison.Ordinal);
+    }
+
     /// <summary>验证 CPU 加速计划选择 CPU 多模态 runtime 变体。</summary>
     [Fact]
     public void CpuAccelerationSelectsCpuRuntimeVariant()

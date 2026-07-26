@@ -178,6 +178,26 @@ public sealed class AgentAutonomousToolSafetyTests
         Assert.True(AgentRuntimeService.SupportsInvocationMode(descriptor, "manual-controlled"));
     }
 
+    /// <summary>验证工具失败后返回确定性诊断，不再让聊天模型生成未经工具支持的结论。</summary>
+    [Fact]
+    public void FailedToolCallUsesDeterministicDiagnosticResponse()
+    {
+        var result = ParseJson(
+            """{"status":"error","diagnostic":{"message":"failed to load llama model"}}""");
+        var toolCall = new AgentChatToolCall(
+            "vision.analyze",
+            "error",
+            7856,
+            result,
+            [],
+            new AgentToolInvokeAudit(DateTimeOffset.UtcNow, "test", "read", false, []));
+
+        Assert.True(AgentRuntimeService.HasFailedToolCalls([toolCall]));
+        Assert.Equal(
+            "Tool 'vision.analyze' returned status 'error': failed to load llama model. No model-generated summary was produced.",
+            AgentRuntimeService.BuildFailedToolResponse([toolCall]));
+    }
+
     /// <summary>
     /// 创建确认边界测试使用的副作用工具描述器。
     /// </summary>
