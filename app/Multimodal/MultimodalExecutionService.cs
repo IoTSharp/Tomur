@@ -417,13 +417,13 @@ public sealed class MultimodalExecutionService
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            var normalizedLanguage = NormalizeLanguage(language);
+            var whisperLanguage = ResolveWhisperLanguage(language);
             var statusCode = MultimodalNativeMethods.WhisperFull(
                 contextHandle.DangerousGetHandle(),
                 parametersHandle.DangerousGetHandle(),
                 samples,
-                normalizedLanguage,
-                detectLanguage: string.IsNullOrWhiteSpace(normalizedLanguage),
+                whisperLanguage.NativeLanguage,
+                detectLanguage: whisperLanguage.DetectLanguageOnly,
                 translate: false);
             if (statusCode != 0)
             {
@@ -462,9 +462,9 @@ public sealed class MultimodalExecutionService
                 $"native-variant-requested: {nativeRuntime.RequestedVariant}",
                 $"native-variant: {nativeRuntime.EffectiveVariant}"
             };
-            if (!string.IsNullOrWhiteSpace(normalizedLanguage))
+            if (!whisperLanguage.NativeLanguage.Equals("auto", StringComparison.Ordinal))
             {
-                diagnostics.Add($"language: {normalizedLanguage}");
+                diagnostics.Add($"language: {whisperLanguage.NativeLanguage}");
             }
 
             return new NativeOperationResult(
@@ -886,15 +886,15 @@ public sealed class MultimodalExecutionService
     private static string NormalizeSamplingToken(string? value)
         => string.IsNullOrWhiteSpace(value) ? "auto" : value.Trim().ToLowerInvariant();
 
-    private static string? NormalizeLanguage(string? value)
+    internal static (string NativeLanguage, bool DetectLanguageOnly) ResolveWhisperLanguage(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
         {
-            return null;
+            return ("auto", false);
         }
 
         var normalized = value.Trim().ToLowerInvariant();
-        return normalized is "auto" ? null : normalized;
+        return (normalized is "auto" ? "auto" : normalized, false);
     }
 
     private static float[] DecodeWavPcm16To16KhzMono(byte[] bytes)
