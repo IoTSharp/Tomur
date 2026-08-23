@@ -13,6 +13,8 @@ Tomur supports two local large-model runtime paths: managed model providers impl
 
 Both paths share the same model catalog, install manifests, session management, OpenAI / Ollama / Anthropic Messages-compatible APIs, runtime diagnostics, and web chat workspace. Model weights, SQLite data, logs, user files, and generated artifacts are managed consistently as local assets.
 
+The web workspace remains Chat-first. Its composer accepts attachments, recorded voice turns, transcription-only audio files, confirmed local image generation, and generation options. Images, audio, text attachments, and generated artifacts support preview, open, download, and path-copy actions. Regenerating a plain-text, attachment, or full recorded-voice conversation turn replaces the persisted message tail while preserving generated local artifact files.
+
 ## 🧮 Pure C# Real-Model Evidence
 
 Tomur's pure C# managed providers have loaded real GLM-4.7 and OLMoE models and completed non-streaming Web Chat conversations inside the single Tomur process, without an external inference process or third-party inference dynamic library. The screenshots below record real model responses; this evidence does not imply that the full protocol, performance, and cross-platform matrices are complete.
@@ -71,7 +73,7 @@ Run the local HTTP API service:
 tomur serve --open
 ```
 
-When developing from source, run the main application project directly:
+Source builds require the .NET 10 SDK and Node.js/npm; the main project runs `npm ci` and the incremental Web build when needed. Run the application project directly:
 
 ```powershell
 dotnet run --project app -- --help
@@ -260,7 +262,7 @@ Tomur/
 
 `native/` contains upstream source trees, Tomur CMake adapter projects, and the release `bundle.manifest.json`. `app/Native/` prepares the bundle and resolves and loads dynamic libraries, `app/Inference/` owns llama.cpp text sessions, `app/Multimodal/` connects Whisper, OCR, stable-diffusion.cpp, and GGUF TTS, and `app/PlateRecognition/` exposes plate recognition through an isolated HyperLPR3/MNN C ABI. Pure managed providers coexist with these runtimes and do not replace the existing native paths.
 
-`web/` uses React, TypeScript, Vite, and Ant Design X. Its build output is written to `app/wwwroot`, embedded, and served by the Tomur local HTTP service. The M1-M13 projects under `tests/` cover staged GLM provider contracts and regressions, while OLMoE has a dedicated test project; these projects belong only to the validation surface and do not create product services.
+`web/` uses React, TypeScript, Vite, and Ant Design X. Dependencies are pinned by `package-lock.json`; before compilation, `Tomur.csproj` incrementally generates `app/wwwroot` from changed Web sources, refreshes the embedded resources, and serves them from the Tomur local HTTP service. The M1-M13 projects under `tests/` cover staged GLM provider contracts and regressions, while OLMoE has a dedicated test project; these projects belong only to the validation surface and do not create product services.
 
 ## 📁 Local State
 

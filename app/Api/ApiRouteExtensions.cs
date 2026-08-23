@@ -257,6 +257,7 @@ public static class ApiRouteExtensions
         app.MapPost("/api/conversations/{conversationId}/turns", HandleConversationTurnAsync);
         app.MapPost("/api/conversations/{conversationId}/voice-turns", HandleConversationVoiceTurnAsync);
         app.MapPost("/api/conversations/{conversationId}/messages", HandleConversationAppendMessageAsync);
+        app.MapDelete("/api/conversations/{conversationId}/messages/{messageId}/tail", HandleConversationTailDeleteAsync);
         app.MapPost("/api/conversations/{conversationId}/artifacts", HandleConversationRegisterArtifactAsync);
         app.MapGet("/api/conversations/{conversationId}/artifacts/{artifactId}/content", HandleConversationArtifactContentAsync);
         app.MapPost("/api/conversations/{conversationId}/diagnostics", HandleConversationAppendDiagnosticAsync);
@@ -369,6 +370,7 @@ public static class ApiRouteExtensions
                     "POST /api/conversations/{conversationId}/turns",
                     "POST /api/conversations/{conversationId}/voice-turns",
                     "POST /api/conversations/{conversationId}/messages",
+                    "DELETE /api/conversations/{conversationId}/messages/{messageId}/tail",
                     "POST /api/conversations/{conversationId}/artifacts",
                     "/api/conversations/{conversationId}/artifacts/{artifactId}/content",
                     "POST /api/conversations/{conversationId}/diagnostics",
@@ -923,6 +925,26 @@ public static class ApiRouteExtensions
         {
             var response = conversations.AppendMessage(conversationId, request);
             await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.ConversationAppendMessageResponse);
+        }
+        catch (ConversationStoreException exception)
+        {
+            await WriteConversationErrorAsync(context, exception);
+        }
+    }
+
+    private static async Task HandleConversationTailDeleteAsync(
+        HttpContext context,
+        ConversationStore conversations,
+        string conversationId,
+        string messageId)
+    {
+        try
+        {
+            var response = conversations.DeleteMessageTail(conversationId, messageId);
+            await JsonHttpResponse.WriteAsync(
+                context,
+                response,
+                AppJsonSerializerContext.Default.ConversationTailDeleteResponse);
         }
         catch (ConversationStoreException exception)
         {
@@ -2566,7 +2588,10 @@ public static class ApiRouteExtensions
             ReadFormDouble(form, "temperature"),
             ReadFormDouble(form, "top_p"),
             ReadFormInt(form, "history_limit"),
-            null);
+            null)
+        {
+            TranscribeOnly = ReadFormBool(form, "transcribe_only")
+        };
 
         return new ParsedVoiceTurnRequest(
             request,

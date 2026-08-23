@@ -118,12 +118,11 @@ Tomur 的自包含目标是降低本地部署前置条件，避免要求用户�
 | --- | --- | --- | --- |
 | 00 | R0-R11 | ✅ 已完成 | 项目门面、API、模型资产、本地推理、多模态、Agent、会话与 Web 工作台 |
 | 01 | R12 | 🚧 进行中 | Native AOT / 自包含发布矩阵 |
-| 02 | R13 | 🚧 进行中 | Web 前端能力聚合闭环 |
-| 03 | R14 | 🚧 进行中 | Intel GPU / NPU 加速支持 |
-| 04 | R15 | 🚧 进行中 | 纯 C# GLM / MoE 模型提供器实验 |
-| 05 | R16 | 🚧 进行中 | Tool Calling 兼容协议与 Agent 自主编排闭环 |
-| 06 | R17 | ⏳ 计划中 | Runtime 偏好、下载队列与 Settings 写入 |
-| 07 | R18 | ⏳ 计划中 | 回归 smoke、发布证据与长期维护 |
+| 02 | R14 | 🚧 进行中 | Intel GPU / NPU 加速支持 |
+| 03 | R15 | 🚧 进行中 | 纯 C# GLM / MoE 模型提供器实验 |
+| 04 | R16 | 🚧 进行中 | Tool Calling 兼容协议与 Agent 自主编排闭环 |
+| 05 | R17 | ⏳ 计划中 | Runtime 偏好、下载队列与 Settings 写入 |
+| 06 | R18 | ⏳ 计划中 | 回归 smoke、发布证据与长期维护 |
 
 已完成历史、验收边界和 smoke 记录入口见 [CHANGELOG.md](./CHANGELOG.md)。后续阶段不得把尚未接通或未经验证的 runtime 能力写成已实现。
 
@@ -155,36 +154,7 @@ Tomur 的自包含目标是降低本地部署前置条件，避免要求用户�
 5. AOT profile 保持完整 Tomur build surface，不通过删除公开能力绕过兼容性问题。
 6. 非 AOT profile 保持自包含、单文件或近似单体体验，并使用同一套公开命令与 API。
 
-### 02. 🚧 R13: Web 前端能力聚合闭环
-
-目标：在保持 Chat-first 默认入口的前提下，把 Tomur 已具备的本地后端能力聚合到 Web 工作台中，让用户可以从 Chat、Settings 和状态抽屉进入模型、下载、runtime、Agent 工具、多模态、协议兼容、产物和本地文件能力。
-
-不改变以下边界：
-
-1. 不把首屏改造成管理后台或营销页。
-2. 不把 Models、Downloads、Runtime、Files 提升为默认一级导航。
-3. 不引入多租户、RBAC、SSO、远程团队治理或外部平台叙事。
-4. 对会产生副作用的动作继续使用明确确认边界。
-5. UI 只展示 Tomur 自身能力；未接通或后端不存在的动作必须显示诊断、路线或 CLI/API 入口。
-
-仍需推进：
-
-1. 多模态与产物呈现：补齐图像、音频、文本文件和生成产物的预览、打开、复制路径或下载入口。
-2. 下载体验增强：在后端具备 Web 下载操作 API 前，继续提供推荐、命令和状态；后续补可视化下载队列、进度、失败重试和 proxy 配置。
-3. Settings 写入增强：逐步补齐 API key 创建/撤销、server URL、默认 backend、proxy、GPU/offload 偏好等本地配置编辑能力。
-4. 文件与本地检索入口：补齐附件目录、生成产物目录、文件索引状态和更完整 RAG 配置。
-5. Chat 操作补齐：基础采样参数、history limit、TTS 参数、模型能力提示，以及附件/语音持久化回合替换能力。
-6. 发布闭环：明确前端构建产物生成与 `app/wwwroot` 嵌入流程，避免发布包缺失 Web 静态资源。
-
-验收：
-
-1. 用户可以在 Web UI 中看到 Tomur 当前公开后端能力的完整地图。
-2. 用户可以区分 OpenAI、Ollama、Claude Code、Conversations、Agent、Runtime 与多模态能力的已可用、缺模型、缺 native runtime、需确认和仅 CLI/API 可用状态。
-3. 用户可以从 Chat 进入对应诊断或 Settings 分组。
-4. 前端不虚标未实现动作；每个不可用状态都给出本地可执行的下一步。
-5. Web UI 继续由 Tomur 本地 HTTP 服务托管，首屏仍是可直接使用的 Chat 工作台。
-
-### 03. 🚧 R14: Intel GPU / NPU 加速支持
+### 02. 🚧 R14: Intel GPU / NPU 加速支持
 
 目标：在现有 llama.cpp / ggml dynamic backend 机制内支持 Intel GPU 与 Intel NPU，并保持 CPU fallback、可诊断加载和不伪造推理结果的边界。
 
@@ -215,7 +185,7 @@ Tomur 的自包含目标是降低本地部署前置条件，避免要求用户�
 4. 🚧 Intel GPU / NPU smoke 记录入口已建立并包含具体 backend、设备名、模型、上下文、token usage 和成功或失败证据字段；真实 GPU / NPU 实机证据仍需补充。
 5. ✅ README、ROADMAP、CHANGELOG 和 runtime UI 口径都明确区分“backend 可见”“设备可枚举”“真实推理通过”三个状态。
 
-### 04. 🚧 R15: 纯 C# GLM / MoE 模型提供器实验
+### 03. 🚧 R15: 纯 C# GLM / MoE 模型提供器实验
 
 目标：在保留 llama.cpp 等现有 native provider 的前提下，新增一个由 Tomur 自己实现的纯 C# 模型提供器，用于加载特定 GLM / MoE 模型格式并逐步接通本地文本生成。
 
@@ -283,7 +253,7 @@ GLM 基础代码顺序、性能计划、集中验证门槛与发布标准见 [pr
 5. ⏳ 完整 GLM-5.2 固定清单为 `383,760,077,466` bytes（357.4 GiB，约 384 GB）；Linux 验证机当前已出现 150 个正式文件且没有 `.part`，但主下载状态失败，最终 inventory、size 与 SHA-256 审计尚未完成，不得据此宣称模型可用或真实对话通过。
 6. 🚧 M14 完成前，managed GLM provider 继续保持实验状态；已经通过的真实对话可以作为 smoke 证据，但不等同于完整可用性验收。
 
-### 05. 🚧 R16: Tool Calling 兼容协议与 Agent 自主编排闭环
+### 04. 🚧 R16: Tool Calling 兼容协议与 Agent 自主编排闭环
 
 目标：让本地模型能够根据函数声明自主选择工具，并在 OpenAI、Ollama 与 Tomur Agent 三条入口中保持可关联、可回灌、可流式表达的多轮调用协议。
 
@@ -311,7 +281,7 @@ GLM 基础代码顺序、性能计划、集中验证门槛与发布标准见 [pr
 3. 未声明工具、非法 arguments、工具失败、确认拒绝、取消和轮次超限返回对应协议风格的明确诊断。
 4. source-generated JSON、Native AOT 和旧 provider 契约回归通过，不启用反射序列化兜底。
 
-### 06. ⏳ R17: Runtime 偏好、下载队列与 Settings 写入
+### 05. ⏳ R17: Runtime 偏好、下载队列与 Settings 写入
 
 目标：把当前以诊断和 CLI 为主的运行时控制，逐步收敛为可在 Web UI 中安全编辑和确认的本地设置。
 
@@ -332,7 +302,7 @@ GLM 基础代码顺序、性能计划、集中验证门槛与发布标准见 [pr
 3. Web UI 不绕过 Tomur 本地配置文件、模型 manifest 和 runtime 诊断状态。
 4. 不引入多租户、后台管理壳或企业治理概念。
 
-### 07. ⏳ R18: 回归 smoke、发布证据与长期维护
+### 06. ⏳ R18: 回归 smoke、发布证据与长期维护
 
 目标：把已经接通的 API、native runtime、Web UI、服务模式和发布形态收敛成可重复维护的回归证据。
 

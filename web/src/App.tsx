@@ -18,15 +18,19 @@ import {
   getMultimodalStatus,
   getRuntimeStatus,
   getVersion,
+  appendConversationMessage,
   prepareNativeRuntime,
+  registerConversationArtifact,
   sendChatCompletion,
   sendConversationTurn,
   sendConversationVoiceTurn,
+  truncateConversationFromMessage,
   unloadRuntimeSession
 } from "./api";
 import {
   createDefaultControlledToolArguments,
   isSideEffectAgentTool,
+  parseAgentToolExecutionResult,
   parseJsonObject
 } from "./app/agentTools";
 import { cleanupRecording, convertRecordingToPcmWav } from "./app/audio";
@@ -40,6 +44,11 @@ import {
   initialConversationId,
   initialConversations
 } from "./app/conversationState";
+import {
+  persistChatOptions,
+  readStoredChatOptions,
+  type ChatOptions
+} from "./app/chatOptions";
 import {
   appendPlainTurnToBackend,
   buildTurnMessages,
@@ -55,7 +64,12 @@ import {
 import { resolveSettingsSectionFromDiagnostic } from "./app/diagnostics";
 import { createTitle } from "./app/format";
 import { createClientId } from "./app/ids";
-import { isChatModel } from "./app/models";
+import {
+  isChatModel,
+  isImageModel,
+  isSpeechModel,
+  isTranscriptionModel
+} from "./app/models";
 import type { AppView, SettingsSection } from "./app/viewTypes";
 import type { ThemeMode } from "./app/theme";
 import { ChatWorkspace } from "./components/chat/ChatWorkspace";
@@ -97,7 +111,7 @@ function App({
   themeMode: ThemeMode;
   onToggleTheme: () => void;
 }) {
-  const { message } = AntApp.useApp();
+  const { message, modal } = AntApp.useApp();
   const [conversations, setConversations] = useState<Conversation[]>(initialConversations);
   const [activeConversationId, setActiveConversationId] = useState(initialConversationId);
   const [input, setInput] = useState("");
@@ -131,7 +145,9 @@ function App({
   const [pendingAttachments, setPendingAttachments] = useState<ConversationAttachment[]>([]);
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
   const [speechEnabled, setSpeechEnabled] = useState(false);
+  const [chatOptions, setChatOptions] = useState<ChatOptions>(() => readStoredChatOptions());
   const [recording, setRecording] = useState(false);
+  const [multimodalAction, setMultimodalAction] = useState<"image" | "transcription" | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordingStreamRef = useRef<MediaStream | null>(null);
@@ -162,11 +178,21 @@ function App({
       })),
     [chatModels]
   );
+  const ttsModelOptions = useMemo(
+    () => models.filter(isSpeechModel).map((model) => ({ value: model.id, label: model.id })),
+    [models]
+  );
+  const imageModels = useMemo(() => models.filter(isImageModel), [models]);
+  const transcriptionModels = useMemo(() => models.filter(isTranscriptionModel), [models]);
   const controlledAgentTools = useMemo(
     () => (agentTools?.tools ?? []).filter(isSideEffectAgentTool),
     [agentTools]
   );
   const selectedModelLabel = selectedChatModel?.id;
+
+  useEffect(() => {
+    persistChatOptions(chatOptions);
+  }, [chatOptions]);
 
   const warningDiagnostics = useMemo(
     () =>
@@ -663,6 +689,242 @@ function App({
     setPendingAttachments((current) => current.filter((item) => item.id !== id));
   }, []);
 
+  const runImageGeneration = useCallback(
+    async (prompt: string, model: string) => {
+      const conversationId = activeConversation.id;
+      const controller = new AbortController();
+      abortRef.current = controller;
+      setSending(true);
+      setMultimodalAction("image");
+
+      try {
+        const invocation = await invokeAgentTool(
+          {
+            tool: "image.generate",
+            mode: "controlled",
+            confirm: true,
+            arguments: {
+              model,
+              prompt,
+              size: "1024x1024"
+            }
+          },
+          controller.signal
+        );
+        if (invocation.status !== "ok") {
+          throw new Error(
+            invocation.audit.actions.at(0) ?? invocation.diagnostics.at(0) ?? "本地图像生成未完成"
+          );
+        }
+
+        const execution = parseAgentToolExecutionResult(invocation.result);
+        if (execution.status !== "ok" || !execution.artifact?.path) {
+          throw new Error(execution.diagnostics.at(0) ?? "图像工具未返回本地产物");
+        }
+
+        const backendConversationId = await ensureBackendConversation(
+          activeConversation,
+          model,
+          controller.signal
+        );
+        const artifactResponse = await registerConversationArtifact(
+          backendConversationId,
+          {
+            type: execution.artifact.type,
+            path: execution.artifact.path,
+            media_type: execution.artifact.media_type ?? undefined,
+            source: "web.chat.image.generate",
+            status: "available",
+            bytes: execution.artifact.bytes,
+            metadata: {
+              model: execution.model ?? model,
+              prompt,
+              format: execution.artifact.format
+            }
+          },
+          controller.signal
+        );
+        const userAppend = await appendConversationMessage(
+          backendConversationId,
+          {
+            role: "user",
+            content: prompt,
+            modality: "text",
+            status: "ok",
+            model
+          },
+          controller.signal
+        );
+        const assistantAppend = await appendConversationMessage(
+          backendConversationId,
+          {
+            role: "assistant",
+            content: "已生成本地图片。",
+            modality: "image",
+            status: "ok",
+            model,
+            artifact_ids: [artifactResponse.artifact.id],
+            metadata: {
+              tool: "image.generate"
+            }
+          },
+          controller.signal
+        );
+
+        updateConversation(conversationId, (conversation) => ({
+          ...conversation,
+          backendId: backendConversationId,
+          title: resolveConversationTitle(conversation, assistantAppend.conversation, prompt),
+          updatedAt: parseApiTime(assistantAppend.conversation.updated_at),
+          loaded: true,
+          loading: false,
+          messages: [
+            ...conversation.messages,
+            {
+              id: userAppend.message.id,
+              role: "user",
+              content: prompt,
+              status: "success"
+            },
+            {
+              id: assistantAppend.message.id,
+              role: "assistant",
+              content: assistantAppend.message.content,
+              status: "success",
+              artifacts: [artifactResponse.artifact]
+            }
+          ]
+        }));
+        setInput("");
+        message.success("图片已生成并登记到当前会话");
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : "本地图像生成失败");
+      } finally {
+        setSending(false);
+        setMultimodalAction(null);
+        abortRef.current = null;
+      }
+    },
+    [activeConversation, ensureBackendConversation, message, updateConversation]
+  );
+
+  const generateImageFromInput = useCallback(() => {
+    const prompt = input.trim();
+    const imageModel = imageModels.at(0);
+    const imageTool = agentTools?.tools.find((tool) => tool.name === "image.generate");
+    if (!prompt) {
+      message.warning("请先在输入框中填写图像提示词");
+      return;
+    }
+
+    if (!imageModel || !imageTool?.callable) {
+      openSettings(imageModel ? "runtime" : "models");
+      message.warning(imageTool?.message ?? "当前没有可用的本地图像生成模型");
+      return;
+    }
+
+    modal.confirm({
+      title: "生成本地图片",
+      content: `将使用 ${imageModel.id} 生成图片并写入 Tomur 本地产物目录。`,
+      okText: "确认生成",
+      cancelText: "取消",
+      onOk: () => runImageGeneration(prompt, imageModel.id)
+    });
+  }, [agentTools, imageModels, input, message, modal, openSettings, runImageGeneration]);
+
+  const transcribeAudioFile = useCallback(
+    async (file: File) => {
+      const asrModel = transcriptionModels.at(0);
+      if (sending) {
+        return;
+      }
+
+      if (!asrModel) {
+        openSettings("models");
+        message.warning("当前没有可用的本地音频转写模型");
+        return;
+      }
+
+      const conversationId = activeConversation.id;
+      const userMessage: ChatMessage = {
+        id: createClientId(),
+        role: "user",
+        content: `正在转写 ${file.name}...`,
+        status: "loading"
+      };
+      const assistantMessage: ChatMessage = {
+        id: createClientId(),
+        role: "assistant",
+        content: "",
+        status: "loading"
+      };
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        title: conversation.messages.length === 0 ? "音频转写" : conversation.title,
+        updatedAt: Date.now(),
+        messages: [...conversation.messages, userMessage, assistantMessage]
+      }));
+
+      const controller = new AbortController();
+      abortRef.current = controller;
+      setSending(true);
+      setMultimodalAction("transcription");
+
+      try {
+        const wavBlob = await convertRecordingToPcmWav(file);
+        const backendConversationId = await ensureBackendConversation(
+          activeConversation,
+          asrModel.id,
+          controller.signal
+        );
+        const fileStem = file.name.replace(/\.[^/.]+$/, "").trim() || "audio";
+        const response = await sendConversationVoiceTurn(
+          backendConversationId,
+          wavBlob,
+          {
+            fileName: `${fileStem}.wav`,
+            asrModel: asrModel.id,
+            speak: false,
+            transcribeOnly: true,
+            language: chatOptions.language || undefined
+          },
+          controller.signal
+        );
+        applyVoiceTurnResponse(conversationId, userMessage.id, assistantMessage.id, response);
+        message.success("音频已转写并保存到当前会话");
+      } catch (error) {
+        const errorText =
+          error instanceof DOMException && error.name === "AbortError"
+            ? "已停止音频转写。"
+            : error instanceof Error
+              ? error.message
+              : "本地音频转写失败";
+        updateConversation(conversationId, (conversation) => ({
+          ...conversation,
+          messages: replaceTurnMessages(conversation.messages, userMessage.id, assistantMessage.id, [
+            { ...userMessage, content: file.name, status: "error" },
+            { ...assistantMessage, content: errorText, status: "error" }
+          ])
+        }));
+      } finally {
+        setSending(false);
+        setMultimodalAction(null);
+        abortRef.current = null;
+      }
+    },
+    [
+      activeConversation,
+      applyVoiceTurnResponse,
+      chatOptions.language,
+      ensureBackendConversation,
+      message,
+      openSettings,
+      sending,
+      transcriptionModels,
+      updateConversation
+    ]
+  );
+
   const submitVoiceBlob = useCallback(
     async (recordedBlob: Blob) => {
       const model = selectedModelLabel;
@@ -716,7 +978,15 @@ function App({
             fileName: `voice-${Date.now()}.wav`,
             model,
             speak: true,
-            responseFormat: "wav"
+            language: chatOptions.language || undefined,
+            voice: chatOptions.voice || undefined,
+            ttsModel: chatOptions.ttsModel || undefined,
+            responseFormat: "wav",
+            speed: chatOptions.speed,
+            maxTokens: chatOptions.maxTokens,
+            temperature: chatOptions.temperature,
+            topP: chatOptions.topP,
+            historyLimit: chatOptions.historyLimit
           },
           controller.signal
         );
@@ -744,6 +1014,7 @@ function App({
     [
       activeConversation,
       applyVoiceTurnResponse,
+      chatOptions,
       ensureBackendConversation,
       message,
       openSettings,
@@ -894,9 +1165,17 @@ function App({
               model,
               attachments,
               max_tool_rounds: 4,
+              max_tokens: chatOptions.maxTokens,
+              temperature: chatOptions.temperature,
+              top_p: chatOptions.topP,
+              history_limit: chatOptions.historyLimit,
               speak: speechEnabled,
               confirm: speechEnabled,
-              response_format: "wav"
+              voice: chatOptions.voice || undefined,
+              tts_model: chatOptions.ttsModel || undefined,
+              response_format: "wav",
+              speed: chatOptions.speed,
+              language: chatOptions.language || undefined
             },
             controller.signal
           );
@@ -910,6 +1189,7 @@ function App({
         const text = await sendChatCompletion(
           model,
           sentMessages,
+          chatOptions,
           controller.signal,
           (chunk) => {
             accumulated += chunk;
@@ -941,13 +1221,31 @@ function App({
             controller.signal,
             activeConversation.messages
           );
-          await appendPlainTurnToBackend(
+          const persisted = await appendPlainTurnToBackend(
             backendConversationId,
             model,
             userMessage.content,
             text || accumulated,
             controller.signal
           );
+          updateConversation(conversationId, (conversation) => ({
+            ...conversation,
+            backendId: backendConversationId,
+            title: resolveConversationTitle(conversation, persisted.conversation, userMessage.content),
+            updatedAt: parseApiTime(persisted.conversation.updated_at),
+            loaded: true,
+            messages: conversation.messages.map((item) => {
+              if (item.id === userMessage.id) {
+                return { ...item, id: persisted.userMessage.id, status: "success" };
+              }
+
+              if (item.id === assistantMessage.id) {
+                return { ...item, id: persisted.assistantMessage.id };
+              }
+
+              return item;
+            })
+          }));
         } catch (error) {
           if (error instanceof DOMException && error.name === "AbortError") {
             throw error;
@@ -985,6 +1283,7 @@ function App({
       activeConversation.messages,
       activeConversation,
       applyTurnResponse,
+      chatOptions,
       ensureBackendConversation,
       message,
       openSettings,
@@ -1014,8 +1313,121 @@ function App({
     }
 
     const lastUser = activeConversation.messages[lastUserIndex];
+    const followingMessages = activeConversation.messages.slice(lastUserIndex + 1);
+    const latestAssistant = [...followingMessages]
+      .reverse()
+      .find((item) => item.role === "assistant");
+    const generatedImageResponse = latestAssistant?.artifacts?.some(
+      (artifact) =>
+        artifact.type.toLowerCase() === "image" ||
+        artifact.media_type?.toLowerCase().startsWith("image/")
+    );
+    if (generatedImageResponse) {
+      setInput(lastUser.content);
+      message.info("图片生成需要再次确认；提示词已恢复，请使用图片生成按钮重试。");
+      return;
+    }
+
+    if (lastUser.transcript && !latestAssistant) {
+      message.info("仅转写记录没有助手回复；请重新选择音频文件以再次转写。");
+      return;
+    }
+
     if (lastUser.attachments?.length || lastUser.transcript) {
-      message.warning("附件或语音回合请重新发送原始输入。");
+      const backendConversationId = activeConversation.backendId;
+      if (!backendConversationId) {
+        message.warning("当前回合尚未持久化，请重新发送原始输入。");
+        return;
+      }
+
+      const conversationId = activeConversation.id;
+      const assistantMessage: ChatMessage = {
+        id: createClientId(),
+        role: "assistant",
+        content: "",
+        status: "loading"
+      };
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        updatedAt: Date.now(),
+        messages: [
+          ...conversation.messages.slice(0, lastUserIndex),
+          lastUser,
+          assistantMessage
+        ]
+      }));
+
+      const controller = new AbortController();
+      abortRef.current = controller;
+      setSending(true);
+
+      try {
+        await truncateConversationFromMessage(
+          backendConversationId,
+          lastUser.id,
+          controller.signal
+        );
+        const voiceRetry = Boolean(lastUser.transcript);
+        const response = await sendConversationTurn(
+          backendConversationId,
+          {
+            content: lastUser.transcript ?? lastUser.content,
+            modality: voiceRetry ? "audio" : "multimodal",
+            model,
+            attachments: lastUser.attachments,
+            max_tool_rounds: 4,
+            max_tokens: chatOptions.maxTokens,
+            temperature: chatOptions.temperature,
+            top_p: chatOptions.topP,
+            history_limit: chatOptions.historyLimit,
+            speak: voiceRetry || speechEnabled,
+            confirm: voiceRetry || speechEnabled,
+            voice: chatOptions.voice || undefined,
+            tts_model: chatOptions.ttsModel || undefined,
+            response_format: "wav",
+            speed: chatOptions.speed,
+            language: chatOptions.language || undefined
+          },
+          controller.signal
+        );
+        applyTurnResponse(conversationId, lastUser.id, assistantMessage.id, response);
+      } catch (error) {
+        try {
+          const detail = await getConversationDetail(backendConversationId);
+          updateConversation(conversationId, () => mapConversationDetail(detail));
+        } catch {
+          updateConversation(conversationId, (conversation) => ({
+            ...conversation,
+            messages: conversation.messages.map((item) =>
+              item.id === assistantMessage.id
+                ? {
+                    ...item,
+                    content: error instanceof Error ? error.message : "持久化回合重试失败",
+                    status: "error"
+                  }
+                : item
+            )
+          }));
+        }
+
+        message.error(
+          error instanceof DOMException && error.name === "AbortError"
+            ? "已停止重新生成"
+            : error instanceof Error
+              ? error.message
+              : "持久化回合重试失败"
+        );
+      } finally {
+        setSending(false);
+        abortRef.current = null;
+      }
+
+      return;
+    }
+
+    const backendConversationId = activeConversation.backendId;
+    if (!backendConversationId) {
+      message.warning("当前回合尚未持久化，请重新发送原始输入。");
       return;
     }
 
@@ -1039,10 +1451,16 @@ function App({
     setSending(true);
 
     try {
+      await truncateConversationFromMessage(
+        backendConversationId,
+        lastUser.id,
+        controller.signal
+      );
       let accumulated = "";
       const text = await sendChatCompletion(
         model,
         history,
+        chatOptions,
         controller.signal,
         (chunk) => {
           accumulated += chunk;
@@ -1056,32 +1474,63 @@ function App({
           }));
         }
       );
+      const persisted = await appendPlainTurnToBackend(
+        backendConversationId,
+        model,
+        lastUser.content,
+        text || accumulated,
+        controller.signal
+      );
 
       updateConversation(conversationId, (conversation) => ({
         ...conversation,
-        updatedAt: Date.now(),
-        messages: conversation.messages.map((item) =>
-          item.id === assistantMessage.id
-            ? { ...item, content: text || accumulated, status: "success" }
-            : item
-        )
+        backendId: backendConversationId,
+        title: resolveConversationTitle(conversation, persisted.conversation, lastUser.content),
+        updatedAt: parseApiTime(persisted.conversation.updated_at),
+        loaded: true,
+        messages: conversation.messages.map((item) => {
+          if (item.id === lastUser.id) {
+            return { ...item, id: persisted.userMessage.id, status: "success" };
+          }
+
+          if (item.id === assistantMessage.id) {
+            return {
+              ...item,
+              id: persisted.assistantMessage.id,
+              content: text || accumulated,
+              status: "success"
+            };
+          }
+
+          return item;
+        })
       }));
     } catch (error) {
-      const errorText =
+      try {
+        const detail = await getConversationDetail(backendConversationId);
+        updateConversation(conversationId, () => mapConversationDetail(detail));
+      } catch {
+        updateConversation(conversationId, (conversation) => ({
+          ...conversation,
+          messages: conversation.messages.map((item) =>
+            item.id === assistantMessage.id
+              ? {
+                  ...item,
+                  content: error instanceof Error ? error.message : "纯文本回合重试失败",
+                  status: "error"
+                }
+              : item
+          )
+        }));
+      }
+
+      message.error(
         error instanceof DOMException && error.name === "AbortError"
-          ? "已停止生成。"
+          ? "已停止重新生成"
           : error instanceof Error
             ? error.message
-            : "Tomur Chat 请求失败";
-
-      updateConversation(conversationId, (conversation) => ({
-        ...conversation,
-        messages: conversation.messages.map((item) =>
-          item.id === assistantMessage.id
-            ? { ...item, content: errorText, status: "error" }
-            : item
-        )
-      }));
+            : "纯文本回合重试失败"
+      );
     } finally {
       setSending(false);
       abortRef.current = null;
@@ -1089,10 +1538,14 @@ function App({
   }, [
     activeConversation.id,
     activeConversation.messages,
+    activeConversation.backendId,
+    applyTurnResponse,
+    chatOptions,
     message,
     openSettings,
     selectedModelLabel,
     sending,
+    speechEnabled,
     updateConversation
   ]);
 
@@ -1174,7 +1627,10 @@ function App({
               sending={sending}
               recording={recording}
               uploadingAttachment={uploadingAttachment}
+              multimodalAction={multimodalAction}
               speechEnabled={speechEnabled}
+              chatOptions={chatOptions}
+              ttsModelOptions={ttsModelOptions}
               inputPlaceholder={inputPlaceholder}
               onSelectedModelChange={setSelectedModel}
               onRefreshStatus={() => void refreshStatus()}
@@ -1183,9 +1639,12 @@ function App({
               onInputChange={setInput}
               onAddPendingAttachment={(file) => void addPendingAttachment(file)}
               onRemovePendingAttachment={removePendingAttachment}
+              onGenerateImage={generateImageFromInput}
+              onTranscribeAudio={transcribeAudioFile}
               onStartVoiceRecording={() => void startVoiceRecording()}
               onStopVoiceRecording={stopVoiceRecording}
               onToggleSpeech={() => setSpeechEnabled((current) => !current)}
+              onChatOptionsChange={setChatOptions}
               onSubmitMessage={(value) => void submitMessage(value)}
               onStopGeneration={stopGeneration}
               onRegenerate={() => void regenerate()}

@@ -1,4 +1,5 @@
 import { XStream } from "@ant-design/x-sdk";
+import type { ChatGenerationOptions } from "./app/chatOptions";
 import type {
   AgentEventLogRecentResponse,
   AgentFrameworkToolBindingResponse,
@@ -14,6 +15,9 @@ import type {
   ConversationCreateResponse,
   ConversationDeleteResponse,
   ConversationDetailResponse,
+  ConversationRegisterArtifactRequest,
+  ConversationRegisterArtifactResponse,
+  ConversationTailDeleteResponse,
   ConversationListResponse,
   ConversationTurnRequest,
   ConversationTurnResponse,
@@ -237,17 +241,56 @@ export async function appendConversationMessage(
   );
 }
 
+export async function truncateConversationFromMessage(
+  conversationId: string,
+  messageId: string,
+  signal?: AbortSignal
+): Promise<ConversationTailDeleteResponse> {
+  const response = await fetch(
+    `${conversationUrl(conversationId)}/messages/${encodeURIComponent(messageId)}/tail`,
+    {
+      method: "DELETE",
+      signal
+    }
+  );
+
+  if (!response.ok) {
+    throw await createApiError(response);
+  }
+
+  return (await response.json()) as ConversationTailDeleteResponse;
+}
+
+export async function registerConversationArtifact(
+  conversationId: string,
+  request: ConversationRegisterArtifactRequest,
+  signal?: AbortSignal
+): Promise<ConversationRegisterArtifactResponse> {
+  return postJson<ConversationRegisterArtifactResponse>(
+    `${conversationUrl(conversationId)}/artifacts`,
+    request,
+    signal
+  );
+}
+
 export async function sendConversationVoiceTurn(
   conversationId: string,
   file: Blob,
   options: {
     fileName: string;
     model?: string;
+    asrModel?: string;
     speak?: boolean;
+    transcribeOnly?: boolean;
     language?: string;
     voice?: string;
+    ttsModel?: string;
     responseFormat?: string;
     speed?: number;
+    maxTokens?: number;
+    temperature?: number;
+    topP?: number;
+    historyLimit?: number;
   },
   signal?: AbortSignal
 ): Promise<ConversationVoiceTurnResponse> {
@@ -258,8 +301,14 @@ export async function sendConversationVoiceTurn(
   if (options.model) {
     form.append("model", options.model);
   }
+  if (options.asrModel) {
+    form.append("asr_model", options.asrModel);
+  }
   if (options.speak !== undefined) {
     form.append("speak", String(options.speak));
+  }
+  if (options.transcribeOnly !== undefined) {
+    form.append("transcribe_only", String(options.transcribeOnly));
   }
   if (options.language) {
     form.append("language", options.language);
@@ -267,11 +316,26 @@ export async function sendConversationVoiceTurn(
   if (options.voice) {
     form.append("voice", options.voice);
   }
+  if (options.ttsModel) {
+    form.append("tts_model", options.ttsModel);
+  }
   if (options.responseFormat) {
     form.append("response_format", options.responseFormat);
   }
   if (options.speed !== undefined) {
     form.append("speed", String(options.speed));
+  }
+  if (options.maxTokens !== undefined) {
+    form.append("max_tokens", String(options.maxTokens));
+  }
+  if (options.temperature !== undefined) {
+    form.append("temperature", String(options.temperature));
+  }
+  if (options.topP !== undefined) {
+    form.append("top_p", String(options.topP));
+  }
+  if (options.historyLimit !== undefined) {
+    form.append("history_limit", String(options.historyLimit));
   }
 
   const response = await fetch(`${conversationUrl(conversationId)}/voice-turns`, {
@@ -290,6 +354,7 @@ export function getConversationArtifactContentUrl(conversationId: string, artifa
 export async function sendChatCompletion(
   model: string,
   messages: ChatMessage[],
+  options: ChatGenerationOptions,
   signal?: AbortSignal,
   onChunk?: (content: string) => void
 ): Promise<string> {
@@ -299,6 +364,9 @@ export async function sendChatCompletion(
     body: JSON.stringify({
       model,
       stream: true,
+      max_tokens: options.maxTokens,
+      temperature: options.temperature,
+      top_p: options.topP,
       messages: messages
         .filter((message) =>
           message.role !== "tool" &&
@@ -309,6 +377,7 @@ export async function sendChatCompletion(
           role: message.role,
           content: message.content.trim()
         }))
+        .slice(-options.historyLimit)
     }),
     signal
   });

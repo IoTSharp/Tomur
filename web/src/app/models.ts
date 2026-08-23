@@ -10,3 +10,21 @@ export function isChatModel(model: OpenAiModel) {
     (capability) => capability === "chat" || capability === "completion"
   );
 }
+
+export function isSpeechModel(model: OpenAiModel) {
+  return (model.capabilities ?? []).some((capability) =>
+    ["tts", "speech", "audio-output"].includes(capability.toLowerCase())
+  );
+}
+
+export function isImageModel(model: OpenAiModel) {
+  return (model.capabilities ?? []).some((capability) =>
+    ["image", "image-generation"].includes(capability.toLowerCase())
+  );
+}
+
+export function isTranscriptionModel(model: OpenAiModel) {
+  return (model.capabilities ?? []).some((capability) =>
+    ["audio", "asr", "transcription"].includes(capability.toLowerCase())
+  );
+}

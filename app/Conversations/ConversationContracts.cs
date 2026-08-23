@@ -46,6 +46,12 @@ public sealed record ConversationAppendMessageResponse(
     [property: JsonPropertyName("conversation")] ConversationRecord Conversation,
     [property: JsonPropertyName("message")] ConversationMessageRecord Message);
 
+public sealed record ConversationTailDeleteResponse(
+    [property: JsonPropertyName("status")] string Status,
+    [property: JsonPropertyName("conversation")] ConversationRecord Conversation,
+    [property: JsonPropertyName("removed_message_count")] int RemovedMessageCount,
+    [property: JsonPropertyName("removed_diagnostic_count")] int RemovedDiagnosticCount);
+
 public sealed record ConversationRegisterArtifactRequest(
     [property: JsonPropertyName("type")] string? Type,
     [property: JsonPropertyName("path")] string? Path,
@@ -131,7 +137,11 @@ public sealed record ConversationVoiceTurnRequest(
     [property: JsonPropertyName("temperature")] double? Temperature,
     [property: JsonPropertyName("top_p")] double? TopP,
     [property: JsonPropertyName("history_limit")] int? HistoryLimit,
-    [property: JsonPropertyName("metadata")] JsonElement? Metadata);
+    [property: JsonPropertyName("metadata")] JsonElement? Metadata)
+{
+    [JsonPropertyName("transcribe_only")]
+    public bool? TranscribeOnly { get; init; }
+}
 
 public sealed record ConversationVoiceTurnResponse(
     [property: JsonPropertyName("status")] string Status,
@@ -145,7 +155,11 @@ public sealed record ConversationVoiceTurnResponse(
     [property: JsonPropertyName("diagnostics")] IReadOnlyList<ConversationDiagnosticRecord> Diagnostics,
     [property: JsonPropertyName("turn")] ConversationTurnResponse? Turn,
     [property: JsonPropertyName("speech_media_type")] string? SpeechMediaType,
-    [property: JsonPropertyName("speech_bytes")] long? SpeechBytes);
+    [property: JsonPropertyName("speech_bytes")] long? SpeechBytes)
+{
+    [JsonPropertyName("transcribe_only")]
+    public bool TranscribeOnly { get; init; }
+}
 
 public sealed record ConversationRecord(
     [property: JsonPropertyName("id")] string Id,

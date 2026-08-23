@@ -485,6 +485,49 @@ public sealed class ConversationOrchestrationService
                 HttpBadRequest);
         }
 
+        if (request.TranscribeOnly == true)
+        {
+            var userAppend = conversations.AppendMessage(
+                conversationId,
+                new ConversationAppendMessageRequest(
+                    "user",
+                    transcript,
+                    "audio",
+                    "ok",
+                    asrModel.Id,
+                    [
+                        new ConversationAttachment(
+                            inputArtifact.Id,
+                            "artifact",
+                            NormalizeOptional(audioName) ?? NormalizeOptional(request.AudioName),
+                            inputArtifact.MediaType,
+                            inputArtifact.Path,
+                            inputArtifact.Bytes,
+                            null)
+                    ],
+                    null,
+                    [inputArtifact.Id],
+                    request.Metadata));
+            return new ConversationVoiceTurnResult(
+                new ConversationVoiceTurnResponse(
+                    "ok",
+                    userAppend.Conversation,
+                    transcript,
+                    inputArtifact,
+                    userAppend.Message,
+                    null,
+                    null,
+                    null,
+                    diagnostics,
+                    null,
+                    null,
+                    null)
+                {
+                    TranscribeOnly = true
+                },
+                HttpOk);
+        }
+
         var turnRequest = new ConversationTurnRequest(
             transcript,
             "audio",

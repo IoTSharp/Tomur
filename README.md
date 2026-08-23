@@ -13,6 +13,8 @@ Tomur 同时支持两条本地大模型运行路线：由 Tomur 使用纯 C# 实
 
 两条路线共用同一套模型 Catalog、安装清单、session 管理、OpenAI / Ollama / Anthropic Messages 兼容 API、Runtime 诊断和 Web Chat。模型权重、SQLite 数据库、日志、用户文件和生成结果统一作为本地资产管理。
 
+Web 工作台保持 Chat-first：输入区可发送附件、录制语音回合、选择音频文件仅转写、确认生成本地图片并调整生成参数；会话中的图片、音频、文本附件和生成产物支持预览、打开、下载与复制路径。纯文本、附件或完整语音对话回合重新生成时会替换持久化消息尾部，已生成的本地产物文件继续保留。
+
 ## 🧮 纯 C# 大模型运行实证
 
 Tomur 的纯 C# managed provider 已在 Tomur 单进程内完成 GLM-4.7 与 OLMoE 真实模型加载和 Web Chat 非流式对话，不依赖外部推理进程或第三方推理 dynamic library。以下截图记录真实模型回复；证据范围不等同于完整协议、性能与跨平台矩阵均已完成。
@@ -71,7 +73,7 @@ tomur pull recommended
 tomur serve --open
 ```
 
-源码仓库内开发运行时，可直接指向主程序项目：
+源码构建需要 .NET 10 SDK 与 Node.js/npm；主程序会按需执行 `npm ci` 和前端增量构建。开发运行时可直接指向主程序项目：
 
 ```powershell
 dotnet run --project app -- --help
@@ -280,7 +282,7 @@ Tomur/
 
 `native/` 保存上游源码、Tomur CMake 适配工程和 `bundle.manifest.json` 发布清单。`app/Native/` 负责 bundle 准备、动态库解析和加载，`app/Inference/` 承载 llama.cpp 文本 session，`app/Multimodal/` 连接 Whisper、OCR、stable-diffusion.cpp 与 GGUF TTS，`app/PlateRecognition/` 通过独立的 HyperLPR3/MNN C ABI 提供车牌识别。纯托管 provider 与这些 native runtime 并行存在，不替换现有 native 能力。
 
-`web/` 使用 React、TypeScript、Vite 与 Ant Design X；构建产物写入 `app/wwwroot` 并作为嵌入资源由 Tomur 本地 HTTP 服务托管。`tests/` 中的 M1-M13 项目覆盖 GLM provider 的分阶段契约与回归，OLMoE 使用独立测试项目；它们只属于验证面，不形成产品服务。
+`web/` 使用 React、TypeScript、Vite 与 Ant Design X；依赖由 `package-lock.json` 固定，`Tomur.csproj` 在编译前按源文件变化增量生成 `app/wwwroot`，刷新嵌入资源后由 Tomur 本地 HTTP 服务托管。`tests/` 中的 M1-M13 项目覆盖 GLM provider 的分阶段契约与回归，OLMoE 使用独立测试项目；它们只属于验证面，不形成产品服务。
 
 ## 📁 本地状态
 

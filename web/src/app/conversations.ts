@@ -173,7 +173,11 @@ export function buildVoiceTurnMessages(
         audioMediaType: response.speech_media_type
       };
 
-  return [userMessage, toolMessage, assistantMessage].filter(
+  return [
+    userMessage,
+    toolMessage,
+    response.transcribe_only ? null : assistantMessage
+  ].filter(
     (item): item is ChatMessage => item !== null
   );
 }
@@ -325,7 +329,7 @@ export async function appendPlainTurnToBackend(
   assistantContent: string,
   signal?: AbortSignal
 ) {
-  await appendConversationMessage(
+  const userAppend = await appendConversationMessage(
     conversationId,
     {
       role: "user",
@@ -336,7 +340,7 @@ export async function appendPlainTurnToBackend(
     },
     signal
   );
-  await appendConversationMessage(
+  const assistantAppend = await appendConversationMessage(
     conversationId,
     {
       role: "assistant",
@@ -347,4 +351,10 @@ export async function appendPlainTurnToBackend(
     },
     signal
   );
+
+  return {
+    conversation: assistantAppend.conversation,
+    userMessage: userAppend.message,
+    assistantMessage: assistantAppend.message
+  };
 }

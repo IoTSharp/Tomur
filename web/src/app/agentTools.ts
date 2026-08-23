@@ -1,4 +1,4 @@
-import type { AgentToolMapResponse } from "../types";
+import type { AgentToolExecutionResult, AgentToolMapResponse } from "../types";
 import { formatJsonPreview } from "./format";
 
 export { formatJsonPreview } from "./format";
@@ -44,6 +44,19 @@ export function parseJsonObject(value: string): Record<string, unknown> {
   }
 
   return parsed as Record<string, unknown>;
+}
+
+export function parseAgentToolExecutionResult(value: unknown): AgentToolExecutionResult {
+  if (!value || typeof value !== "object") {
+    throw new Error("工具未返回结构化执行结果");
+  }
+
+  const result = value as Partial<AgentToolExecutionResult>;
+  if (typeof result.status !== "string" || typeof result.tool !== "string") {
+    throw new Error("工具执行结果缺少 status 或 tool");
+  }
+
+  return result as AgentToolExecutionResult;
 }
 
 export function buildControlledToolInvokeSample(

@@ -223,7 +223,15 @@ function buildCapabilityRows({
       route: "POST /api/conversations/{conversationId}/voice-turns",
       status: multimodal(["asr"])?.status ?? "checking",
       ui: "chat",
-      message: "按钮录音会转为 PCM WAV 并走语音回合服务。"
+      message: "麦克风录音可进入完整语音回合，音频文件可使用 transcribe_only 仅转写并保存。"
+    },
+    {
+      group: "Conversations",
+      title: "Persistent turn retry",
+      route: "DELETE /api/conversations/{conversationId}/messages/{messageId}/tail",
+      status: conversationStatus,
+      ui: "chat",
+      message: "纯文本、附件或完整语音对话回合重新生成前会截断旧消息尾部；已生成的本地产物文件保留。"
     },
     {
       group: "Conversations",
@@ -274,7 +282,7 @@ function buildCapabilityRows({
       route: "POST /v1/images/generations",
       status: multimodal(["image", "stable-diffusion"])?.status ?? "not_configured",
       ui: "artifact",
-      message: "后端已接入；Web 先通过会话产物展示，独立生成面板后续补齐。"
+      message: "Chat 输入区可确认生成本地图片，并登记为可预览、打开和下载的会话产物。"
     },
     {
       group: "OpenAI",
@@ -282,7 +290,7 @@ function buildCapabilityRows({
       route: "POST /v1/audio/transcriptions",
       status: multimodal(["asr", "whisper"])?.status ?? "not_configured",
       ui: "chat",
-      message: "语音回合已复用 ASR；独立转写面板后续补齐。"
+      message: "Chat 输入区可选择音频文件，仅执行本地转写并持久化音频与文本。"
     },
     {
       group: "OpenAI",

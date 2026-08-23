@@ -1,5 +1,5 @@
 import { Button, Descriptions, List, Space, Tag, Typography } from "antd";
-import { Download } from "lucide-react";
+import { Copy, Download } from "lucide-react";
 import type {
   InstalledModelAsset,
   InstalledModelPackage,
@@ -12,10 +12,12 @@ import type { CopyTextHandler } from "../../app/viewTypes";
 
 export function PackageDetails({
   packageItem,
-  assets
+  assets,
+  onCopyText
 }: {
   packageItem: InstalledModelPackage;
   assets: InstalledModelAsset[];
+  onCopyText: CopyTextHandler;
 }) {
   return (
     <Space direction="vertical" size={10} className="drawer-stack">
@@ -25,6 +27,13 @@ export function PackageDetails({
         <Descriptions.Item label="Primary path">{packageItem.primary_path}</Descriptions.Item>
         <Descriptions.Item label="License notice">{packageItem.license_notice}</Descriptions.Item>
       </Descriptions>
+      <Button
+        size="small"
+        icon={<Copy size={14} />}
+        onClick={() => void onCopyText(packageItem.directory, "已复制模型包目录")}
+      >
+        复制安装目录
+      </Button>
       <List
         size="small"
         dataSource={assets}
@@ -130,4 +139,3 @@ function renderBundleAssetSummary(asset: ModelCatalogBundleAsset) {
 
   return `${details} - ${asset.description}`;
 }
-

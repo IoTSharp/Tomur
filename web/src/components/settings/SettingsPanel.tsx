@@ -11,7 +11,7 @@ import {
   Tag,
   Typography
 } from "antd";
-import { Copy, Download, HardDrive, Layers3 } from "lucide-react";
+import { Copy, Download, FolderOpen, HardDrive, Layers3 } from "lucide-react";
 import type {
   AgentEventLogRecentResponse,
   AgentFrameworkToolBindingResponse,
@@ -116,6 +116,9 @@ export function SettingsPanel({
   const installedPackages = installedModels?.packages ?? [];
   const recommendedPackages = (catalog?.packages ?? []).filter((item) => item.recommended);
   const downloadablePackages = (catalog?.packages ?? []).filter((item) => !item.installed);
+  const filesDirectory = joinLocalPath(runtimeStatus?.paths.data_directory, "files");
+  const conversationArtifactsDirectory = joinLocalPath(filesDirectory, "conversations");
+  const agentArtifactsDirectory = joinLocalPath(filesDirectory, "agents");
   const selectedAccelerator = runtimeStatus?.acceleration.selected_accelerator;
   const currentDeviceName = selectedAccelerator
     ? `${selectedAccelerator.name}${selectedAccelerator.integrated ? " (integrated)" : ""}`
@@ -265,7 +268,13 @@ export function SettingsPanel({
                       <Typography.Text type="secondary">{formatRelativeTime(item.updated_at_utc)}</Typography.Text>
                     </Space>
                   ),
-                  children: <PackageDetails packageItem={item} assets={item.assets} />
+                  children: (
+                    <PackageDetails
+                      packageItem={item}
+                      assets={item.assets}
+                      onCopyText={onCopyText}
+                    />
+                  )
                 }))}
               />
             </Card>
@@ -353,8 +362,12 @@ export function SettingsPanel({
             <Alert
               type="info"
               showIcon
-              message="Web UI 当前不直接执行下载"
-              description="下载、断点续传、校验和修复仍通过 CLI 完成。这里提供状态与可复制的 pull 命令。"
+              message="下载状态与本地执行边界"
+              description={
+                `模型写入 ${runtimeStatus?.paths.models_directory ?? "Tomur models 目录"}；` +
+                `当前代理状态为 ${runtimeStatus?.proxy.status ?? "未加载"}。` +
+                "Web 提供 Catalog、安装状态和 pull/重装命令；下载队列、进度、重试与 proxy 写入由 R17 的受控 API 接入。"
+              }
             />
           </Space>
         )}
@@ -465,7 +478,52 @@ export function SettingsPanel({
                         <Descriptions.Item label="Database">
                           {runtimeStatus?.paths.database_path ?? "-"} ({runtimeStatus?.database.status ?? "-"})
                         </Descriptions.Item>
+                        <Descriptions.Item label="Files">
+                          {filesDirectory ?? "-"}
+                        </Descriptions.Item>
+                        <Descriptions.Item label="Conversation artifacts">
+                          {conversationArtifactsDirectory ?? "-"}
+                        </Descriptions.Item>
+                        <Descriptions.Item label="Agent artifacts">
+                          {agentArtifactsDirectory ?? "-"}
+                        </Descriptions.Item>
                       </Descriptions>
+                      <Space wrap>
+                        <Button
+                          icon={<FolderOpen size={14} />}
+                          disabled={!filesDirectory}
+                          onClick={() => void onCopyText(filesDirectory ?? "", "已复制本地文件目录")}
+                        >
+                          复制文件目录
+                        </Button>
+                        <Button
+                          icon={<Copy size={14} />}
+                          disabled={!conversationArtifactsDirectory}
+                          onClick={() =>
+                            void onCopyText(
+                              conversationArtifactsDirectory ?? "",
+                              "已复制会话产物目录"
+                            )
+                          }
+                        >
+                          复制会话产物目录
+                        </Button>
+                        <Button
+                          icon={<Copy size={14} />}
+                          disabled={!agentArtifactsDirectory}
+                          onClick={() =>
+                            void onCopyText(agentArtifactsDirectory ?? "", "已复制 Agent 产物目录")
+                          }
+                        >
+                          复制 Agent 产物目录
+                        </Button>
+                      </Space>
+                      <Alert
+                        type="info"
+                        showIcon
+                        message="本地文件检索范围"
+                        description="files.search 只索引 Tomur files 目录内的受支持文本文件；检索结果、索引摘要和下一步诊断显示在 Agent 工具面板。"
+                      />
                       <List
                         size="small"
                         header="目录状态"
@@ -515,4 +573,15 @@ export function SettingsPanel({
       </div>
     </section>
   );
+}
+
+function joinLocalPath(base: string | undefined, ...segments: string[]) {
+  if (!base) {
+    return undefined;
+  }
+
+  const separator = base.includes("\\") ? "\\" : "/";
+  return [base.replace(/[\\/]+$/, ""), ...segments.map((segment) => segment.replace(/^[\\/]+|[\\/]+$/g, ""))]
+    .filter(Boolean)
+    .join(separator);
 }

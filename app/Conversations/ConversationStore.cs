@@ -317,6 +317,103 @@ public sealed class ConversationStore
             message);
     }
 
+    public ConversationTailDeleteResponse DeleteMessageTail(
+        string conversationId,
+        string messageId)
+    {
+        var id = NormalizeId(conversationId);
+        var normalizedMessageId = NormalizeId(messageId);
+        var now = DateTimeOffset.UtcNow;
+
+        using var connection = database.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        _ = GetConversation(connection, id, transaction);
+
+        long targetRowId;
+        string targetCreatedAt;
+        using (var target = connection.CreateCommand())
+        {
+            target.Transaction = transaction;
+            target.CommandText =
+                """
+                SELECT rowid, created_at
+                FROM conversation_messages
+                WHERE conversation_id = $conversation_id
+                  AND id = $message_id
+                LIMIT 1;
+                """;
+            target.Parameters.AddWithValue("$conversation_id", id);
+            target.Parameters.AddWithValue("$message_id", normalizedMessageId);
+            using var reader = target.ExecuteReader();
+            if (!reader.Read())
+            {
+                throw new ConversationStoreException(
+                    "not_found",
+                    "conversation_message_not_found",
+                    "The requested conversation message does not exist.",
+                    ["Reload the conversation before retrying the turn."]);
+            }
+
+            targetRowId = reader.GetInt64(0);
+            targetCreatedAt = reader.GetString(1);
+        }
+
+        int removedMessages;
+        using (var deleteMessages = connection.CreateCommand())
+        {
+            deleteMessages.Transaction = transaction;
+            deleteMessages.CommandText =
+                """
+                DELETE FROM conversation_messages
+                WHERE conversation_id = $conversation_id
+                  AND rowid >= $target_rowid;
+                """;
+            deleteMessages.Parameters.AddWithValue("$conversation_id", id);
+            deleteMessages.Parameters.AddWithValue("$target_rowid", targetRowId);
+            removedMessages = deleteMessages.ExecuteNonQuery();
+        }
+
+        int removedDiagnostics;
+        using (var deleteDiagnostics = connection.CreateCommand())
+        {
+            deleteDiagnostics.Transaction = transaction;
+            deleteDiagnostics.CommandText =
+                """
+                DELETE FROM conversation_diagnostics
+                WHERE conversation_id = $conversation_id
+                  AND created_at >= $target_created_at;
+                """;
+            deleteDiagnostics.Parameters.AddWithValue("$conversation_id", id);
+            deleteDiagnostics.Parameters.AddWithValue("$target_created_at", targetCreatedAt);
+            removedDiagnostics = deleteDiagnostics.ExecuteNonQuery();
+        }
+
+        using (var updateConversation = connection.CreateCommand())
+        {
+            updateConversation.Transaction = transaction;
+            updateConversation.CommandText =
+                """
+                UPDATE conversations
+                SET updated_at = $updated_at,
+                    last_message_at = (
+                        SELECT MAX(created_at)
+                        FROM conversation_messages
+                        WHERE conversation_id = $conversation_id)
+                WHERE id = $conversation_id;
+                """;
+            updateConversation.Parameters.AddWithValue("$conversation_id", id);
+            updateConversation.Parameters.AddWithValue("$updated_at", FormatDate(now));
+            updateConversation.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
+        return new ConversationTailDeleteResponse(
+            "ok",
+            GetConversation(connection, id),
+            removedMessages,
+            removedDiagnostics);
+    }
+
     public ConversationRegisterArtifactResponse RegisterArtifact(
         string conversationId,
         ConversationRegisterArtifactRequest request)

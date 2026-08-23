@@ -100,13 +100,20 @@ Tomur 自有源代码已采用 Apache License 2.0，版权主体为 IoTSharp con
 1. Agent runtime、工具地图、tool bindings、events 和 telemetry 已接入 Web 只读查询。
 2. Settings 增加 `Agents` 与 `Capabilities` 分组，展示 Agent 工具状态、bindings、事件、telemetry、OpenAI / Ollama / Claude Code / Conversations / Multimodal / Runtime API 能力地图。
 3. Chat 欢迎区快捷 Prompt 已注入当前本地状态摘要。
-4. Chat 气泡底部已增加图片产物预览和产物打开入口；音频产物继续使用播放器。
+4. Chat 气泡底部已支持图片、音频与文本附件及生成产物的预览，并提供打开、下载和复制本地路径或内容链接入口。
 5. Agents 分组已提供 `runtime.diagnose`、`tools.inspect` 与 `files.search` 的只读 Web 调用。
 6. `image.generate`、`audio.speak` 与 `runtime.repair` 通过副作用工具确认卡片调用，执行前必须显式确认。
-7. 纯文本重新生成已替换上一条 assistant 回复；附件和语音回合仍要求重新发送原始输入。
+7. 重新生成已支持持久化替换纯文本、附件和完整语音对话回合；`DELETE /api/conversations/{conversationId}/messages/{messageId}/tail` 会在重试前移除目标消息及其后的消息与诊断，同时保留本地产物文件。图片生成仍需再次确认，单独转写仍需重新选择音频。
 8. `GET /v1/models?limit=1000` 已支持 Claude Code 模型发现形状，为本地文本模型返回 `claude-tomur-*` 别名。
 9. `POST /v1/messages` 与 `POST /v1/messages/count_tokens` 已接入 Anthropic Messages 风格请求、非流式响应和 SSE streaming 事件，并映射到 Tomur 本地文本 runtime。
 10. Capabilities 分组已为 OpenAI、Ollama、Claude Code、Conversations 与 Agent API 提供最小请求示例复制入口。
+11. Chat 输入区已增加本地持久化生成参数，支持 `max_tokens`、`temperature`、`top_p` 与 `history_limit`，并统一接入 OpenAI streaming、Conversations 附件回合和语音回合。
+12. Chat 语音输出已增加 TTS model、voice、language 与 speed 参数，模型选择区同步展示当前模型格式、量化与能力标签。
+13. Web 依赖已由 `package-lock.json` 固定；`Tomur.csproj` 已在编译前按源文件变化增量执行前端构建，并在生成 manifest resource 前刷新 `app/wwwroot` 嵌入项。本轮未执行前端构建、.NET 构建或浏览器 smoke。
+14. Chat 输入区已增加确认式本地图像生成入口；生成结果会登记为当前会话产物，并提供预览、打开、下载与复制路径操作。
+15. 语音回合新增 `transcribe_only` 模式；Chat 可选择音频文件，仅执行本地 ASR，并持久化输入音频与 transcript，不强制启动文本生成或 TTS。
+16. Settings 已显示 Tomur files、会话产物与 Agent 产物目录并提供复制入口；模型区统一展示 Catalog、安装目录、proxy 状态及 CLI 下载/重装边界。
+17. R13 已完成代码接线并移出 ROADMAP 当前阶段；本轮未执行前端构建、.NET 构建、浏览器或真实模型 smoke，因此不把代码完成表述为 smoke 验证通过。
 
 ### R12 已完成历史
 

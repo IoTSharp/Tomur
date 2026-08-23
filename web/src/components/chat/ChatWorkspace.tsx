@@ -1,4 +1,5 @@
 import type { BubbleItemType } from "@ant-design/x";
+import type { ChatOptions } from "../../app/chatOptions";
 import { promptItems, promptText } from "../../app/constants";
 import { resolvePromptText } from "../../app/promptContext";
 import type { SettingsSection } from "../../app/settings";
@@ -46,7 +47,10 @@ export function ChatWorkspace({
   sending,
   recording,
   uploadingAttachment,
+  multimodalAction,
   speechEnabled,
+  chatOptions,
+  ttsModelOptions,
   inputPlaceholder,
   onSelectedModelChange,
   onRefreshStatus,
@@ -55,9 +59,12 @@ export function ChatWorkspace({
   onInputChange,
   onAddPendingAttachment,
   onRemovePendingAttachment,
+  onGenerateImage,
+  onTranscribeAudio,
   onStartVoiceRecording,
   onStopVoiceRecording,
   onToggleSpeech,
+  onChatOptionsChange,
   onSubmitMessage,
   onStopGeneration,
   onRegenerate
@@ -83,7 +90,10 @@ export function ChatWorkspace({
   sending: boolean;
   recording: boolean;
   uploadingAttachment: boolean;
+  multimodalAction: "image" | "transcription" | null;
   speechEnabled: boolean;
+  chatOptions: ChatOptions;
+  ttsModelOptions: Array<{ value: string; label: string }>;
   inputPlaceholder: string;
   onSelectedModelChange: (value: string) => void;
   onRefreshStatus: () => void | Promise<void>;
@@ -92,9 +102,12 @@ export function ChatWorkspace({
   onInputChange: (value: string) => void;
   onAddPendingAttachment: (file: File) => void | Promise<void>;
   onRemovePendingAttachment: (id: string) => void;
+  onGenerateImage: () => void;
+  onTranscribeAudio: (file: File) => void | Promise<void>;
   onStartVoiceRecording: () => void | Promise<void>;
   onStopVoiceRecording: () => void;
   onToggleSpeech: () => void;
+  onChatOptionsChange: (value: ChatOptions) => void;
   onSubmitMessage: (value: string) => void | Promise<void>;
   onStopGeneration: () => void;
   onRegenerate: () => void | Promise<void>;
@@ -102,6 +115,7 @@ export function ChatWorkspace({
   return (
     <main className="workspace">
       <WorkspaceHeader
+        selectedModel={chatModels.find((model) => model.id === selectedModelLabel)}
         selectedModelLabel={selectedModelLabel}
         visibleChatModels={visibleChatModels}
         chatModelCount={chatModels.length}
@@ -143,7 +157,10 @@ export function ChatWorkspace({
         sending={sending}
         recording={recording}
         uploadingAttachment={uploadingAttachment}
+        multimodalAction={multimodalAction}
         speechEnabled={speechEnabled}
+        chatOptions={chatOptions}
+        ttsModelOptions={ttsModelOptions}
         chatReady={chatReady}
         inputPlaceholder={inputPlaceholder}
         selectedModelLabel={selectedModelLabel}
@@ -153,9 +170,12 @@ export function ChatWorkspace({
         onSubmitMessage={(value) => void onSubmitMessage(value)}
         onAddPendingAttachment={(file) => void onAddPendingAttachment(file)}
         onRemovePendingAttachment={onRemovePendingAttachment}
+        onGenerateImage={onGenerateImage}
+        onTranscribeAudio={(file) => void onTranscribeAudio(file)}
         onStartVoiceRecording={() => void onStartVoiceRecording()}
         onStopVoiceRecording={onStopVoiceRecording}
         onToggleSpeech={onToggleSpeech}
+        onChatOptionsChange={onChatOptionsChange}
         onStopGeneration={onStopGeneration}
         onRegenerate={() => void onRegenerate()}
       />

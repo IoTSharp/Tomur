@@ -1,15 +1,20 @@
-import { Button, Flex, Space, Tooltip, Typography } from "antd";
+import { Button, Flex, Space, Tooltip, Typography, Upload } from "antd";
 import { Attachments, Sender } from "@ant-design/x";
-import { Mic, Paperclip, RotateCcw, Square, Volume2 } from "lucide-react";
+import { FileAudio, Image, Mic, Paperclip, RotateCcw, Square, Volume2 } from "lucide-react";
+import type { ChatOptions } from "../../app/chatOptions";
 import type { ConversationAttachment } from "../../types";
 import { buildComposerStatus, toAttachmentItem } from "../../app/attachments";
+import { ChatOptionsPopover } from "./ChatOptionsPopover";
 
 export function ComposerBar({
   input,
   sending,
   recording,
   uploadingAttachment,
+  multimodalAction,
   speechEnabled,
+  chatOptions,
+  ttsModelOptions,
   chatReady,
   inputPlaceholder,
   selectedModelLabel,
@@ -19,9 +24,12 @@ export function ComposerBar({
   onSubmitMessage,
   onAddPendingAttachment,
   onRemovePendingAttachment,
+  onGenerateImage,
+  onTranscribeAudio,
   onStartVoiceRecording,
   onStopVoiceRecording,
   onToggleSpeech,
+  onChatOptionsChange,
   onStopGeneration,
   onRegenerate
 }: {
@@ -29,7 +37,10 @@ export function ComposerBar({
   sending: boolean;
   recording: boolean;
   uploadingAttachment: boolean;
+  multimodalAction: "image" | "transcription" | null;
   speechEnabled: boolean;
+  chatOptions: ChatOptions;
+  ttsModelOptions: Array<{ value: string; label: string }>;
   chatReady: boolean;
   inputPlaceholder: string;
   selectedModelLabel?: string;
@@ -39,9 +50,12 @@ export function ComposerBar({
   onSubmitMessage: (value: string) => void;
   onAddPendingAttachment: (file: File) => void;
   onRemovePendingAttachment: (id: string) => void;
+  onGenerateImage: () => void;
+  onTranscribeAudio: (file: File) => void;
   onStartVoiceRecording: () => void;
   onStopVoiceRecording: () => void;
   onToggleSpeech: () => void;
+  onChatOptionsChange: (value: ChatOptions) => void;
   onStopGeneration: () => void;
   onRegenerate: () => void;
 }) {
@@ -73,6 +87,34 @@ export function ComposerBar({
             附件
           </Button>
         </Attachments>
+        <Tooltip title={input.trim() ? "用当前输入生成本地图片" : "输入图像提示词后生成图片"}>
+          <Button
+            icon={<Image size={16} />}
+            loading={multimodalAction === "image"}
+            disabled={sending || recording || uploadingAttachment || !input.trim()}
+            aria-label="生成本地图片"
+            onClick={onGenerateImage}
+          />
+        </Tooltip>
+        <Upload
+          accept="audio/*"
+          disabled={sending || recording || uploadingAttachment}
+          maxCount={1}
+          showUploadList={false}
+          beforeUpload={(file) => {
+            onTranscribeAudio(file);
+            return false;
+          }}
+        >
+          <Tooltip title="选择音频文件，仅转写并保存到当前会话">
+            <Button
+              icon={<FileAudio size={16} />}
+              loading={multimodalAction === "transcription"}
+              disabled={sending || recording || uploadingAttachment}
+              aria-label="选择音频文件并转写"
+            />
+          </Tooltip>
+        </Upload>
         <Tooltip title={recording ? "停止录音并发送" : "录音语音回合"}>
           <Button
             type={recording ? "primary" : "default"}
@@ -90,6 +132,13 @@ export function ComposerBar({
             onClick={onToggleSpeech}
           />
         </Tooltip>
+        <ChatOptionsPopover
+          value={chatOptions}
+          disabled={sending || recording}
+          speechEnabled={speechEnabled}
+          ttsModelOptions={ttsModelOptions}
+          onChange={onChatOptionsChange}
+        />
         {pendingAttachments.length > 0 && (
           <Button
             type="primary"
@@ -141,4 +190,3 @@ export function ComposerBar({
     </footer>
   );
 }
-

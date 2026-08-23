@@ -145,6 +145,7 @@ namespace Tomur.Serialization;
 [JsonSerializable(typeof(ConversationDeleteResponse))]
 [JsonSerializable(typeof(ConversationAppendMessageRequest))]
 [JsonSerializable(typeof(ConversationAppendMessageResponse))]
+[JsonSerializable(typeof(ConversationTailDeleteResponse))]
 [JsonSerializable(typeof(ConversationRegisterArtifactRequest))]
 [JsonSerializable(typeof(ConversationRegisterArtifactResponse))]
 [JsonSerializable(typeof(ConversationAppendDiagnosticRequest))]

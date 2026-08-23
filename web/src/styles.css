@@ -345,6 +345,11 @@ button {
   width: min(360px, 42vw);
 }
 
+.model-capabilities {
+  display: flex;
+  margin-top: 6px;
+}
+
 .status-pill-row {
   display: flex;
   gap: 10px;
@@ -448,6 +453,50 @@ button {
 
 .attachment-strip .ant-x-attachments {
   max-width: min(100%, 560px);
+}
+
+.chat-options-panel {
+  width: min(380px, calc(100vw - 32px));
+}
+
+.chat-options-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 28px;
+}
+
+.chat-options-panel .ant-divider {
+  margin: 14px 0 10px;
+}
+
+.chat-option-row {
+  display: grid;
+  grid-template-columns: 96px minmax(120px, 1fr) 82px;
+  gap: 10px;
+  align-items: center;
+  min-height: 40px;
+}
+
+.chat-option-row .ant-slider {
+  margin: 10px 4px;
+}
+
+.chat-option-row .ant-input-number {
+  width: 82px;
+}
+
+.chat-option-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.chat-option-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .message-footer {
@@ -1039,5 +1088,14 @@ button {
 
   .acceleration-summary-grid {
     grid-template-columns: 1fr;
+  }
+
+  .chat-option-row {
+    grid-template-columns: 80px minmax(100px, 1fr) 76px;
+    gap: 8px;
+  }
+
+  .chat-option-row .ant-input-number {
+    width: 76px;
   }
 }

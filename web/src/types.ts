@@ -70,6 +70,29 @@ export interface ConversationAppendMessageResponse {
   message: ConversationMessageRecord;
 }
 
+export interface ConversationTailDeleteResponse {
+  status: string;
+  conversation: ConversationRecord;
+  removed_message_count: number;
+  removed_diagnostic_count: number;
+}
+
+export interface ConversationRegisterArtifactRequest {
+  type?: string;
+  path?: string;
+  media_type?: string;
+  source?: string;
+  status?: string;
+  bytes?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ConversationRegisterArtifactResponse {
+  status: string;
+  conversation: ConversationRecord;
+  artifact: ConversationArtifactRecord;
+}
+
 export interface ConversationTurnRequest {
   content?: string;
   modality?: string;
@@ -119,6 +142,7 @@ export interface ConversationVoiceTurnResponse {
   turn?: ConversationTurnResponse | null;
   speech_media_type?: string | null;
   speech_bytes?: number | null;
+  transcribe_only?: boolean;
 }
 
 export interface ConversationRecord {
@@ -860,6 +884,27 @@ export interface AgentToolInvokeResponse {
   result?: unknown;
   diagnostics: string[];
   audit: AgentToolInvokeAudit;
+}
+
+export interface AgentToolExecutionResult {
+  status: string;
+  tool: string;
+  backend: string;
+  model?: string | null;
+  route?: string | null;
+  text?: string | null;
+  artifact?: AgentToolArtifact | null;
+  elapsed_ms: number;
+  diagnostics: string[];
+}
+
+export interface AgentToolArtifact {
+  type: string;
+  path: string;
+  media_type?: string | null;
+  format?: string | null;
+  bytes: number;
+  sample_rate?: number | null;
 }
 
 export interface AgentToolInvokeAudit {
