@@ -18,6 +18,8 @@
 
 OpenAI `POST /v1/chat/completions` 与 Ollama `POST /api/chat` 兼容端点已接入 function 工具声明、带调用 ID 的模型 tool calls，以及客户端执行工具后按 ID 回灌结果的消息契约；兼容端点保持客户端执行边界，不在服务端执行客户端声明的任意函数。`POST /api/agents/chat` 已接入模型自主选择 Tomur 本地工具的有界服务端循环：只读工具可自动执行，有副作用的工具必须位于请求显式 allowlist，确认与预批准的完整 JSON 参数精确绑定且只能消费一次。模型调用会跨轮拒绝重复 ID，工具错误以结构化结果回灌；调用 ID、规范化参数 SHA-256 和确认状态使用独立短超时尝试写入事件审计。工具调用 streaming 当前在完整本地推理和协议解析后发送可聚合调用帧，并非逐 token 参数增量；OpenAI `strict=true` 当前返回明确 400，不会被静默忽略。M10 专项 `49/49` 自动化测试和 win-x64 Native AOT 发布已通过；真实模型 smoke、完整 Agent 工具循环、请求取消后的副作用审计和并发事件日志仍未验证。
 
+本轮将 `Microsoft.Agents.AI` 与 `Microsoft.Agents.AI.Workflows` 升级到最新稳定版 `1.19.0`，并将 `Microsoft.Extensions.AI` 对齐到 `10.9.0`。Agent 自主循环新增 `parallel_tool_calls` 请求控制：同轮多个调用可被接受，但本地执行器保持顺序执行以维持确认与审计顺序；`/api/agents/runtime` 额外报告实际框架版本及已接入的审批响应绑定、流式运行、workflow composition 和 usage aggregation 能力面。Ollama 工具调用的非流式与 NDJSON 终帧现在返回 `done_reason=tool_calls`。本轮未执行包升级后的构建、测试或真实模型 smoke。
+
 ### 开源许可
 
 Tomur 自有源代码已采用 Apache License 2.0，版权主体为 IoTSharp contributors；根目录新增 `LICENSE`、`NOTICE` 与 `THIRD_PARTY_NOTICES.md`，区分 Tomur 自有代码、第三方依赖、native runtime、可选硬件运行库和模型资产的许可边界，并明确致谢为纯 C# GLM / MoE provider 提供设计灵感与工程思路的 `JustVugg/colibri` 项目。win-x64 Native AOT 发布已确认三份许可文件复制到可执行文件旁；其他发布 profile 和跨平台包仍待验证。

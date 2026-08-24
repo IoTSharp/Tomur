@@ -105,6 +105,8 @@ OpenAI `POST /v1/chat/completions` 与 Ollama `POST /api/chat` 兼容端点支�
 
 `POST /api/agents/chat` 面向 Tomur 本地工具提供不同的执行边界：模型可在受最大轮次限制的服务端循环中自主选择工具。只读工具可自动执行；任何有副作用的工具都必须位于请求显式允许的工具范围内，确认必须与预批准的完整 JSON 参数精确匹配并且只能消费一次。调用 ID、参数指纹和确认状态会使用独立短超时尝试写入本地事件审计。
 
+Agent 自主请求支持 `parallel_tool_calls` 控制同轮多调用；Tomur 仍按顺序执行并逐次审计，以保持副作用确认边界。当前宿主配置为 Microsoft Agent Framework `1.19.0`，`GET /api/agents/runtime` 会报告实际程序集版本及已接入的审批响应绑定、流式 Agent、workflow composition 和 usage aggregation 能力面。该包升级后的构建、测试和真实模型 smoke 尚未执行。
+
 `plate.recognize` 已作为 controlled 模式下的只读本地工具接入，使用 `tomur-plate` 稳定 C ABI 调用 HyperLPR3 C++/MNN，并返回车牌文本、业务色码、`VehicleId`、识别置信度和候选框。HyperLPR3 模型权重不进入程序或 native bundle，必须独立放置于 `<data>/models/plate/hyperlpr3/r2_mobile`。M10 `70/70`、M13 `25/25` 自动化测试已通过，HyperLPR3 3.0、MNN 2.2.0、OpenCV 4.12.0 和 bridge 的 Linux ARM64 CPU 原生构建也已完成 ELF、C ABI 与依赖闭包校验；真实图片识别和目标机 smoke 仍待执行。
 
 车牌能力之外的既有工具调用基础代码已通过 M10 专项 `49/49` 自动化测试和 win-x64 Native AOT 发布；工具调用 streaming 当前在完整推理和协议解析后发送可聚合帧，不是逐 token 参数增量。真实模型 smoke、完整 Agent 工具循环、请求取消后的副作用审计和并发事件日志仍未验证。

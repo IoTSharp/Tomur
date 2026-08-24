@@ -153,6 +153,36 @@ public sealed class AgentAutonomousToolSafetyTests
         }
     }
 
+    /// <summary>
+    /// 验证 Agent 自主请求可以显式关闭同轮多个工具调用，并通过 source-generated JSON 保留字段。
+    /// </summary>
+    [Fact]
+    public void AgentChatPreservesParallelToolCallPreference()
+    {
+        var request = new AgentChatRequest(
+            null,
+            "inspect runtime",
+            null,
+            null,
+            "model_auto_read_only",
+            null,
+            2,
+            null,
+            null,
+            null,
+            null)
+        {
+            ParallelToolCalls = false
+        };
+
+        var json = JsonSerializer.Serialize(
+            request,
+            AppJsonSerializerContext.Default.AgentChatRequest);
+        using var document = JsonDocument.Parse(json);
+
+        Assert.False(document.RootElement.GetProperty("parallel_tool_calls").GetBoolean());
+    }
+
     /// <summary>验证车牌大图不会进入默认模型自主只读工具集合，只允许显式受控路径。</summary>
     [Fact]
     public void PlateRecognitionRequiresControlledModelInvocation()

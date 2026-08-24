@@ -4081,7 +4081,7 @@ public static class ApiRouteExtensions
                     result.Completion.Usage.PromptTokens,
                     result.Completion.Usage.CompletionTokens)
                 {
-                    DoneReason = "stop"
+                    DoneReason = toolCalls.Count > 0 ? "tool_calls" : "stop"
                 });
             return;
         }
@@ -4096,7 +4096,7 @@ public static class ApiRouteExtensions
             result.Completion.Usage.PromptTokens,
             result.Completion.Usage.CompletionTokens)
         {
-            DoneReason = "stop"
+            DoneReason = toolCalls.Count > 0 ? "tool_calls" : "stop"
         };
         await JsonHttpResponse.WriteAsync(
             context,

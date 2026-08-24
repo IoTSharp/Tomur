@@ -913,7 +913,7 @@ public sealed class ToolCallingProtocolTests
             Assert.Equal("weather.get", function.GetProperty("name").GetString());
             Assert.Equal(JsonValueKind.Object, function.GetProperty("arguments").ValueKind);
             Assert.True(terminal.RootElement.GetProperty("done").GetBoolean());
-            Assert.Equal("stop", terminal.RootElement.GetProperty("done_reason").GetString());
+            Assert.Equal("tool_calls", terminal.RootElement.GetProperty("done_reason").GetString());
             Assert.Equal(3, terminal.RootElement.GetProperty("prompt_eval_count").GetInt32());
             Assert.Equal(2, terminal.RootElement.GetProperty("eval_count").GetInt32());
         }

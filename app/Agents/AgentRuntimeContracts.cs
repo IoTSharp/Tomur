@@ -22,7 +22,16 @@ public sealed record AgentFrameworkStatus(
     [property: JsonPropertyName("status")] string Status,
     [property: JsonPropertyName("runtime")] string Runtime,
     [property: JsonPropertyName("message")] string Message,
-    [property: JsonPropertyName("actions")] IReadOnlyList<string> Actions);
+    [property: JsonPropertyName("actions")] IReadOnlyList<string> Actions)
+{
+    /// <summary>实际加载的 Microsoft Agent Framework 程序集版本。</summary>
+    [JsonPropertyName("version")]
+    public string? Version { get; init; }
+
+    /// <summary>当前宿主接入的框架能力面；不等同于真实模型 smoke 验证证据。</summary>
+    [JsonPropertyName("capabilities")]
+    public IReadOnlyList<string>? Capabilities { get; init; }
+}
 
 public sealed record AgentOrchestrationStatus(
     [property: JsonPropertyName("status")] string Status,
@@ -96,7 +105,12 @@ public sealed record AgentChatRequest(
     [property: JsonPropertyName("instructions")] string? Instructions,
     [property: JsonPropertyName("max_tokens")] int? MaxTokens,
     [property: JsonPropertyName("temperature")] double? Temperature,
-    [property: JsonPropertyName("top_p")] double? TopP);
+    [property: JsonPropertyName("top_p")] double? TopP)
+{
+    /// <summary>是否允许模型在同一轮返回多个工具调用；执行器仍按安全策略顺序执行。</summary>
+    [JsonPropertyName("parallel_tool_calls")]
+    public bool? ParallelToolCalls { get; init; }
+}
 
 public sealed record AgentReadOnlyWorkflowRequest(
     [property: JsonPropertyName("model")] string? Model,

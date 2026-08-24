@@ -268,9 +268,9 @@ GLM 基础代码顺序、性能计划、集中验证门槛与发布标准见 [pr
 当前进度：
 
 1. ✅ provider-neutral 工具声明、调用、结果与 finish reason 表达，以及本地模型 JSON tool-call codec 基础代码已完成。
-2. ✅ Microsoft.Extensions.AI `FunctionCallContent` / `FunctionResultContent` 与有界 `FunctionInvokingChatClient` 循环基础代码已完成。
-3. ✅ OpenAI / Ollama 非流式、缓冲式 streaming、调用 ID 和历史回灌 wire contract 基础代码已完成；当前 streaming 在完整推理和协议解析后发送可聚合帧，不是逐 token 参数增量。
-4. ✅ M10 专项 `49/49` 自动化测试与 win-x64 `native-aot-audit` 发布已通过；source-generated JSON 工具契约已进入该构建面。
+2. ✅ Microsoft.Extensions.AI `FunctionCallContent` / `FunctionResultContent` 与有界 `FunctionInvokingChatClient` 循环基础代码已完成；依赖已升级到 Microsoft Agent Framework `1.19.0` 与 Microsoft.Extensions.AI `10.9.0`，运行时状态会报告已接入的审批绑定、流式 Agent、workflow composition 和 usage aggregation 能力面。
+3. ✅ OpenAI / Ollama 非流式、缓冲式 streaming、调用 ID、历史回灌和同轮多个调用 wire contract 基础代码已完成；当前 streaming 在完整推理和协议解析后发送可聚合帧，不是逐 token 参数增量，Ollama 工具终帧使用 `done_reason=tool_calls`。
+4. ✅ M10 专项 `49/49` 自动化测试与 win-x64 `native-aot-audit` 发布已通过；source-generated JSON 工具契约已进入该构建面。1.19.0 包升级后的构建与测试回归尚未执行。
 5. ⏳ 真实 GGUF、managed GLM 与 OLMoE 的单调用、并行调用、多轮结果回灌、取消和轮次上限 smoke，以及完整 Agent 工具循环、请求取消后的副作用审计和并发事件日志验证尚待执行。
 6. 🚧 `plate.recognize` 只读工具已接入 controlled 调用边界、source-generated JSON、`tomur-plate` C ABI 与 native bundle manifest；M10 `70/70`、M13 `25/25` 自动化测试已通过，HyperLPR3/MNN/OpenCV 的 Linux ARM64 CPU 构建已完成 ELF、C ABI 与依赖闭包校验。六个 `r2_mobile` 模型资产、真实图片识别和 Linux ARM64 目标机 smoke 尚未验证。
 

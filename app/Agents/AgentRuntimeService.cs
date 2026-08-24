@@ -16,7 +16,17 @@ public sealed class AgentRuntimeService
     private const string AgentName = "tomur-local-agent";
     private const string AgentRuntime = "Microsoft.Agents.AI.ChatClientAgent";
     private const string WorkflowRuntime = "Tomur read-only tool plan with optional Microsoft.Agents.AI.Workflows summary";
-    private const string ChatRespondInputSchema = """{"type":"object","properties":{"message":{"type":"string"},"messages":{"type":"array","items":{"type":"object","properties":{"role":{"type":"string"},"content":{"type":"string"}}}},"tool_results":{"type":"array","items":{"type":"object","properties":{"tool":{"type":"string"},"content":{"type":"string"},"result":{"type":"object"}}}},"tool_mode":{"type":"string","enum":["none","read_only","auto_read_only","controlled","auto_controlled","model_auto_read_only","model_auto_controlled"]},"tools":{"type":"array","items":{"type":"object","required":["tool"],"properties":{"tool":{"type":"string","enum":["runtime.diagnose","tools.inspect","files.search","runtime.repair","vision.analyze","ocr.recognize","plate.recognize","audio.transcribe","image.generate","audio.speak"]},"arguments":{"type":"object"},"confirm":{"type":"boolean"}}}},"max_tool_rounds":{"type":"integer"},"model":{"type":"string"},"instructions":{"type":"string"},"max_tokens":{"type":"integer"}}}""";
+    private static readonly string AgentFrameworkVersion =
+        typeof(ChatClientAgent).Assembly.GetName().Version?.ToString() ?? "unknown";
+    private static readonly IReadOnlyList<string> AgentFrameworkCapabilities =
+    [
+        "function_invoking_chat_client",
+        "approval_response_binding",
+        "streaming_agent_runs",
+        "workflow_composition",
+        "usage_aggregation"
+    ];
+    private const string ChatRespondInputSchema = """{"type":"object","properties":{"message":{"type":"string"},"messages":{"type":"array","items":{"type":"object","properties":{"role":{"type":"string"},"content":{"type":"string"}}}},"tool_results":{"type":"array","items":{"type":"object","properties":{"tool":{"type":"string"},"content":{"type":"string"},"result":{"type":"object"}}}},"tool_mode":{"type":"string","enum":["none","read_only","auto_read_only","controlled","auto_controlled","model_auto_read_only","model_auto_controlled"]},"tools":{"type":"array","items":{"type":"object","required":["tool"],"properties":{"tool":{"type":"string","enum":["runtime.diagnose","tools.inspect","files.search","runtime.repair","vision.analyze","ocr.recognize","plate.recognize","audio.transcribe","image.generate","audio.speak"]},"arguments":{"type":"object"},"confirm":{"type":"boolean"}}}},"max_tool_rounds":{"type":"integer"},"parallel_tool_calls":{"type":"boolean"},"model":{"type":"string"},"instructions":{"type":"string"},"max_tokens":{"type":"integer"}}}""";
 
     private sealed record ModelToolSelection(
         AgentToolDescriptor Descriptor,
@@ -73,7 +83,7 @@ public sealed class AgentRuntimeService
             new AgentFrameworkStatus(
                 "wired",
                 "Microsoft.Agents.AI.ChatClientAgent / Microsoft.Agents.AI.Workflows",
-                "Agent Framework packages and Tomur-local AI boundaries are present. Local models can select declared Tomur tools through bounded model_auto_* modes; read-only calls run automatically, while controlled side effects keep explicit allowlist and confirmation requirements.",
+                $"Microsoft Agent Framework {AgentFrameworkVersion} is wired to Tomur-local AI boundaries. Local models can select declared Tomur tools through bounded model_auto_* modes; read-only calls run automatically, while controlled side effects keep explicit allowlist and confirmation requirements.",
                 [
                     "POST /api/agents/chat runs plain text, planned context, and bounded model-selected tool loops.",
                     "GET /api/agents/tools exposes the Tomur tool map.",
@@ -87,7 +97,11 @@ public sealed class AgentRuntimeService
                     "Use /api/agents/runtime to inspect the local tool map.",
                     "Use /api/runtime/multimodal to inspect backend readiness.",
                     "Plain OpenAI/Ollama-compatible text APIs continue to work without Agent Framework."
-                ]),
+                ])
+            {
+                Version = AgentFrameworkVersion,
+                Capabilities = AgentFrameworkCapabilities
+            },
             new AgentOrchestrationStatus(
                 defaultChatModel is null ? "not_ready" : "wired",
                 AgentRuntime,
@@ -469,7 +483,9 @@ public sealed class AgentRuntimeService
                 selection.Request?.Confirm == true ? selection.Request.Arguments : null))
             .ToArray();
         options.ToolMode = ChatToolMode.Auto;
-        options.AllowMultipleToolCalls = false;
+        // Accept multiple model calls in one response, but keep execution sequential so a
+        // side-effect approval cannot race another invocation or bypass the audit order.
+        options.AllowMultipleToolCalls = request.ParallelToolCalls != false;
 
         var functionClient = new FunctionInvokingChatClient(chatClient, loggerFactory, services)
         {
