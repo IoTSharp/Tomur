@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Tomur.Agents;
 using Tomur.Api;
 using Tomur.Api.OpenAI;
 using Tomur.Inference;
@@ -47,7 +48,9 @@ public sealed class OpenAiToolCallingWireContractTests
                         ParseJson("{\"type\":\"object\"}")))
             ],
             ToolChoice = ParseJson("{\"type\":\"function\",\"function\":{\"name\":\"get_weather\"}}"),
-            ParallelToolCalls = false
+            ParallelToolCalls = false,
+            ContextSize = 8192,
+            MaxCompletionTokens = 321
         };
 
         var json = JsonSerializer.Serialize(
@@ -59,12 +62,18 @@ public sealed class OpenAiToolCallingWireContractTests
 
         Assert.NotNull(roundTrip);
         Assert.False(roundTrip.ParallelToolCalls);
+        Assert.Equal(8192, roundTrip.ContextSize);
+        Assert.Equal(321, roundTrip.MaxCompletionTokens);
         Assert.Equal("get_weather", Assert.Single(roundTrip.Tools!).Function?.Name);
         Assert.Equal(
             "get_weather",
             roundTrip.ToolChoice?.GetProperty("function").GetProperty("name").GetString());
         Assert.Equal("call_1", roundTrip.Messages![0].ToolCalls![0].Id);
         Assert.Equal("call_1", roundTrip.Messages[1].ToolCallId);
+
+        using var document = JsonDocument.Parse(json);
+        Assert.Equal(8192, document.RootElement.GetProperty("context_size").GetInt32());
+        Assert.Equal(321, document.RootElement.GetProperty("max_completion_tokens").GetInt32());
     }
 
     /// <summary>
@@ -126,6 +135,88 @@ public sealed class OpenAiToolCallingWireContractTests
         Assert.NotNull(roundTrip);
         Assert.Equal("Forecast ready.", roundTrip.Content);
         Assert.Null(roundTrip.ToolCalls);
+    }
+
+    /// <summary>
+    /// 验证普通文本与工具调用共用 context_size 默认值和边界规则，并都传入最终推理参数。
+    /// </summary>
+    [Theory]
+    [InlineData(null, 4096)]
+    [InlineData(128, 512)]
+    [InlineData(8192, 8192)]
+    [InlineData(200000, 131072)]
+    public void ContextSizeIsSharedByTextAndToolPaths(int? requestedContextSize, int expectedContextSize)
+    {
+        var request = new OpenAiChatCompletionRequest(
+            "ready",
+            [new OpenAiChatMessage("user", ParseJson("\"hello\""))],
+            false,
+            0.25,
+            0.75,
+            123)
+        {
+            ContextSize = requestedContextSize,
+            Tools =
+            [
+                new OpenAiChatTool(
+                    "function",
+                    new OpenAiChatToolFunction(
+                        "get_weather",
+                        "Read weather",
+                        ParseJson("{\"type\":\"object\"}")))
+            ]
+        };
+
+        var textOptions = ToolCallingChatAdapter.CreateOpenAiCompletionOptions(request);
+        var chatOptions = ToolCallingChatAdapter.CreateOpenAiChatOptions(request);
+        var rawOptions = Assert.IsType<CompletionOptions>(chatOptions.RawRepresentationFactory!(null!));
+        var toolOptions = LocalChatClient.ResolveCompletionOptions(chatOptions, rawOptions);
+
+        Assert.Equal(expectedContextSize, textOptions.ContextSize);
+        Assert.Equal(expectedContextSize, toolOptions.ContextSize);
+        Assert.Equal(0.25f, toolOptions.Temperature);
+        Assert.Equal(0.75f, toolOptions.TopP);
+        Assert.Equal(123, toolOptions.MaxOutputTokens);
+        Assert.NotEmpty(chatOptions.Tools!);
+    }
+
+    /// <summary>
+    /// 验证新版 max_completion_tokens 优先于旧 max_tokens，且旧客户端未传新字段时仍可回退。
+    /// </summary>
+    [Theory]
+    [InlineData(null, 123)]
+    [InlineData(456, 456)]
+    public void MaxCompletionTokensTakesPrecedenceAcrossOpenAiPaths(
+        int? maxCompletionTokens,
+        int expectedMaxOutputTokens)
+    {
+        var request = new OpenAiChatCompletionRequest(
+            "ready",
+            [new OpenAiChatMessage("user", ParseJson("\"hello\""))],
+            false,
+            null,
+            null,
+            123)
+        {
+            MaxCompletionTokens = maxCompletionTokens,
+            Tools =
+            [
+                new OpenAiChatTool(
+                    "function",
+                    new OpenAiChatToolFunction(
+                        "get_weather",
+                        "Read weather",
+                        ParseJson("{\"type\":\"object\"}")))
+            ]
+        };
+
+        var sharedOptions = ToolCallingChatAdapter.CreateOpenAiCompletionOptions(request);
+        var chatOptions = ToolCallingChatAdapter.CreateOpenAiChatOptions(request);
+        var rawOptions = Assert.IsType<CompletionOptions>(chatOptions.RawRepresentationFactory!(null!));
+        var toolOptions = LocalChatClient.ResolveCompletionOptions(chatOptions, rawOptions);
+
+        Assert.Equal(expectedMaxOutputTokens, sharedOptions.MaxOutputTokens);
+        Assert.Equal(expectedMaxOutputTokens, toolOptions.MaxOutputTokens);
     }
 
     /// <summary>
