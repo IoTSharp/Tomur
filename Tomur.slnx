@@ -17,4 +17,5 @@
   <Project Path="tests/Tomur.Providers.M12.Tests/Tomur.Providers.M12.Tests.csproj" />
   <Project Path="tests/Tomur.Providers.M13.Tests/Tomur.Providers.M13.Tests.csproj" />
   <Project Path="tests/Tomur.Providers.Olmoe.Tests/Tomur.Providers.Olmoe.Tests.csproj" />
+  <Project Path="tests/Tomur.Realtime.Tests/Tomur.Realtime.Tests.csproj" />
 </Solution>

@@ -59,6 +59,10 @@
 - 只读 Tomur 工具可以自动执行；任何有副作用的工具都必须位于请求显式 allowlist 内，并在执行前取得明确确认，不得因模型选择而绕过安全边界。
 - R13 协议能力聚合包含 Claude Code 所需的 Anthropic Messages 兼容入口：`GET /v1/models?limit=1000`、`POST /v1/messages` 与 `POST /v1/messages/count_tokens`。
 - Claude Code / Anthropic Messages 兼容入口必须映射到 Tomur 本地模型与本地 runtime；未下载模型、runtime 不可用或上下文超限时返回对应协议风格的清晰诊断，不得伪造推理结果。
+- R20 Tomur Realtime v1 原生入口固定为 `GET /api/realtime/status`、`POST /api/realtime/tickets` 与 WebSocket `/api/realtime/v1`，subprotocol 保持为 `tomur.realtime.v1`。
+- Realtime v1 首个发布边界仅允许 loopback；必须校验 Host、浏览器 Origin、subprotocol、连接配额和身份凭据。一次性 ticket、API key、session token 或重连 token 不得进入 URL query 或日志。
+- Realtime 认证失败、协议错误或配额拒绝必须在分配 native session 前结束；控制事件、音频帧、队列、超时、单次发言和 session 必须有明确上限，不得静默丢弃或无界缓冲。
+- Realtime gateway available、VAD/ASR/TTS model ready、session warm、full duplex connected 与 realtime smoke passed 必须分开表达；未接通增量本地 runtime 时返回明确不可用诊断，不得伪造 transcript、文本或音频。
 - 未接通本地 runtime 时，API 必须返回清晰的未配置或不可用诊断，不得伪造推理结果。
 - Streaming、错误响应、模型未下载、runtime 不可用、上下文超限等协议行为必须明确设计。
 

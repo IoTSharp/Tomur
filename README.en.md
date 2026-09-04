@@ -96,6 +96,7 @@ The default local service URL is `http://127.0.0.1:5137`.
 10. 🎛️ Multimodal native runtimes for Whisper, OCR native, HyperLPR3/MNN plate recognition, stable-diffusion.cpp, and llama.cpp TTS / GGUF TTS.
 11. 🖥️ System service mode.
 12. 🧑‍💻 React + Ant Design X web workspace.
+13. 🎙️ Local Realtime WebSocket session-gateway foundation. The `tomur.realtime.v1` protocol shell, one-time tickets, a single-active-session lease, bounded queues, and manual-commit in-memory PCM buffering are connected. VAD, incremental ASR/TTS, AudioWorklet, full duplex, and real-device smoke remain unconnected or unverified.
 
 Tomur does not fabricate inference results when the local runtime is unavailable. Missing models, unavailable native runtime or managed providers, damaged bundle assets, context length limits, capability mismatches, and insufficient memory are reported as diagnosable errors through the API, CLI, and UI.
 
@@ -258,13 +259,13 @@ Tomur/
   CHANGELOG.md
 ```
 
-`app/Tomur.csproj` is the only product host. It contains the CLI, ASP.NET Core local HTTP API, OS service and tray startup, model and session management, runtime diagnostics, and web static asset hosting. `Program.cs` only owns process entry, top-level command dispatch, and global help. `app/Cli/ServeCommand.cs` assembles the shared local service host, while `app/Api/` provides Tomur endpoints and the OpenAI, Ollama, and Anthropic Messages compatibility surfaces.
+`app/Tomur.csproj` is the only product host. It contains the CLI, ASP.NET Core local HTTP API, OS service and tray startup, model and session management, runtime diagnostics, and web static asset hosting. `Program.cs` only owns process entry, top-level command dispatch, and global help. `app/Cli/ServeCommand.cs` assembles the shared local service host, `app/Api/` provides Tomur endpoints and the OpenAI, Ollama, and Anthropic Messages compatibility surfaces, and `app/Realtime/` owns the local WebSocket protocol, authentication, quotas, and session lifecycle.
 
 `providers/Abstractions` contains the model descriptors, manifests, inference contracts, and session contracts shared by the host and managed providers. `providers/Glm` and `providers/Olmoe` implement pure C# model loading and generation; OLMoE currently also reuses the managed tensor, kernel, and storage foundations from the GLM project. The host directly references and registers both providers, then selects one explicitly from the local model format, architecture, and manifest. Unmatched GGUF text and embedding models continue through llama.cpp. Provider class libraries do not expose a separate process or HTTP API.
 
 `native/` contains upstream source trees, Tomur CMake adapter projects, and the release `bundle.manifest.json`. `app/Native/` prepares the bundle and resolves and loads dynamic libraries, `app/Inference/` owns llama.cpp text sessions, `app/Multimodal/` connects Whisper, OCR, stable-diffusion.cpp, and GGUF TTS, and `app/PlateRecognition/` exposes plate recognition through an isolated HyperLPR3/MNN C ABI. Pure managed providers coexist with these runtimes and do not replace the existing native paths.
 
-`web/` uses React, TypeScript, Vite, and Ant Design X. Dependencies are pinned by `package-lock.json`; before compilation, `Tomur.csproj` incrementally generates `app/wwwroot` from changed Web sources, refreshes the embedded resources, and serves them from the Tomur local HTTP service. The M1-M13 projects under `tests/` cover staged GLM provider contracts and regressions, while OLMoE has a dedicated test project; these projects belong only to the validation surface and do not create product services.
+`web/` uses React, TypeScript, Vite, and Ant Design X. Dependencies are pinned by `package-lock.json`; before compilation, `Tomur.csproj` incrementally generates `app/wwwroot` from changed Web sources, refreshes the embedded resources, and serves them from the Tomur local HTTP service. The M1-M13 projects under `tests/` cover staged GLM provider contracts and regressions, while OLMoE and Realtime have dedicated test projects; these projects belong only to the validation surface and do not create product services.
 
 ## 📁 Local State
 

@@ -7,7 +7,10 @@ export default defineConfig({
     port: 5173,
     strictPort: false,
     proxy: {
-      "/api": "http://127.0.0.1:5137",
+      "/api": {
+        target: "http://127.0.0.1:5137",
+        ws: true
+      },
       "/v1": "http://127.0.0.1:5137",
       "/health": "http://127.0.0.1:5137"
     }

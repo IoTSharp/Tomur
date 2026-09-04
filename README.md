@@ -96,6 +96,7 @@ dotnet run --project app -- serve --open
 10. 🎛️ Whisper、OCR native、HyperLPR3 / MNN 车牌识别、stable-diffusion.cpp 与 llama.cpp TTS / GGUF TTS 多模态 native runtime。
 11. 🖥️ 系统服务运行模式。
 12. 🧑‍💻 React + Ant Design X Web 工作台。
+13. 🎙️ 本地 Realtime WebSocket 会话网关基础。当前已接入 `tomur.realtime.v1` 协议壳、一次性 ticket、单活跃 session、有界队列和手动 commit 的内存 PCM 缓冲；VAD、增量 ASR/TTS、AudioWorklet、全双工与真实设备 smoke 仍未接通或验证。
 
 Tomur 不会在未接通本地 runtime 时伪造推理结果。模型缺失、native runtime 或托管 provider 不可用、bundle 资产损坏、上下文超限、能力不匹配或内存不足时，API、CLI 和 UI 都应返回可诊断的错误。
 
@@ -278,13 +279,13 @@ Tomur/
   CHANGELOG.md
 ```
 
-`app/Tomur.csproj` 是唯一产品宿主，承载 CLI、ASP.NET Core 本地 HTTP API、系统服务与托盘启动、模型和会话管理、runtime 诊断以及 Web 静态资源托管。`Program.cs` 只负责进程入口、顶层命令分发和全局帮助；`app/Cli/ServeCommand.cs` 组装同一套本地服务 host，`app/Api/` 提供 Tomur API 与 OpenAI、Ollama、Anthropic Messages 兼容入口。
+`app/Tomur.csproj` 是唯一产品宿主，承载 CLI、ASP.NET Core 本地 HTTP API、系统服务与托盘启动、模型和会话管理、runtime 诊断以及 Web 静态资源托管。`Program.cs` 只负责进程入口、顶层命令分发和全局帮助；`app/Cli/ServeCommand.cs` 组装同一套本地服务 host，`app/Api/` 提供 Tomur API 与 OpenAI、Ollama、Anthropic Messages 兼容入口，`app/Realtime/` 承载本地 WebSocket 协议、认证、配额与 session 生命周期。
 
 `providers/Abstractions` 保存主程序与托管 provider 共用的模型描述、manifest、推理和 session 契约。`providers/Glm` 与 `providers/Olmoe` 实现纯 C# 模型加载和生成；OLMoE 当前同时复用 GLM 项目的托管 tensor、kernel 与存储基础。主程序直接引用并注册这两个 provider，再根据本地模型格式、架构和 manifest 显式选择；未匹配的 GGUF 文本与 embedding 模型继续使用 llama.cpp 路径。provider 类库不提供独立进程或另一套 HTTP API。
 
 `native/` 保存上游源码、Tomur CMake 适配工程和 `bundle.manifest.json` 发布清单。`app/Native/` 负责 bundle 准备、动态库解析和加载，`app/Inference/` 承载 llama.cpp 文本 session，`app/Multimodal/` 连接 Whisper、OCR、stable-diffusion.cpp 与 GGUF TTS，`app/PlateRecognition/` 通过独立的 HyperLPR3/MNN C ABI 提供车牌识别。纯托管 provider 与这些 native runtime 并行存在，不替换现有 native 能力。
 
-`web/` 使用 React、TypeScript、Vite 与 Ant Design X；依赖由 `package-lock.json` 固定，`Tomur.csproj` 在编译前按源文件变化增量生成 `app/wwwroot`，刷新嵌入资源后由 Tomur 本地 HTTP 服务托管。`tests/` 中的 M1-M13 项目覆盖 GLM provider 的分阶段契约与回归，OLMoE 使用独立测试项目；它们只属于验证面，不形成产品服务。
+`web/` 使用 React、TypeScript、Vite 与 Ant Design X；依赖由 `package-lock.json` 固定，`Tomur.csproj` 在编译前按源文件变化增量生成 `app/wwwroot`，刷新嵌入资源后由 Tomur 本地 HTTP 服务托管。`tests/` 中的 M1-M13 项目覆盖 GLM provider 的分阶段契约与回归，OLMoE 与 Realtime 使用独立测试项目；它们只属于验证面，不形成产品服务。
 
 ## 📁 本地状态
 
