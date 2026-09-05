@@ -1,0 +1,83 @@
+diff --git a/src/whisper.cpp b/src/whisper.cpp
+--- a/src/whisper.cpp
++++ b/src/whisper.cpp
+@@ -27,6 +27,7 @@
+ #include <fstream>
+ #include <functional>
+ #include <map>
++#include <memory>
+ #include <random>
+ #include <regex>
+ #include <set>
+@@ -3737,7 +3738,7 @@
+     if (!model_loaded) {
+         loader->close(loader->context);
+         WHISPER_LOG_ERROR("%s: failed to load model\n", __func__);
+-        delete ctx;
++        whisper_free(ctx);
+         return nullptr;
+     }
+
+@@ -3777,18 +3778,19 @@
+ }
+
+ struct whisper_context * whisper_init_with_params(struct whisper_model_loader * loader, struct whisper_context_params params) {
+-    whisper_context * ctx = whisper_init_with_params_no_state(loader, params);
++    std::unique_ptr<whisper_context, decltype(&whisper_free)> owned(
++        whisper_init_with_params_no_state(loader, params), whisper_free);
++    whisper_context * ctx = owned.get();
+     if (!ctx) {
+         return nullptr;
+     }
+
+     ctx->state = whisper_init_state(ctx);
+     if (!ctx->state) {
+-        whisper_free(ctx);
+         return nullptr;
+     }
+
+-    return ctx;
++    return owned.release();
+ }
+
+ struct whisper_context * whisper_init_from_file(const char * path_model) {
+@@ -4774,7 +4776,7 @@
+
+ struct whisper_vad_context * whisper_vad_init_with_params(
+             struct whisper_model_loader * loader,
+-            struct whisper_vad_context_params params) {
++            struct whisper_vad_context_params params) try {
+     // Read the VAD model
+     {
+         uint32_t magic;
+@@ -4785,7 +4787,10 @@
+         }
+     }
+
+-    whisper_vad_context * vctx = new whisper_vad_context;
++    // Loader callbacks can abort during allocation or tensor reads.
++    std::unique_ptr<whisper_vad_context, decltype(&whisper_vad_free)> owned(
++        new whisper_vad_context{}, whisper_vad_free);
++    whisper_vad_context * vctx = owned.get();
+     vctx->n_threads = params.n_threads;
+     vctx->params.use_gpu = params.use_gpu;
+     vctx->params.gpu_device = params.gpu_device;
+@@ -5090,11 +5095,16 @@
+     }
+
+     if (!whisper_vad_init_context(vctx)) {
+-        whisper_vad_free(vctx);
+         return nullptr;
+     }
+
+-    return vctx;
++    return owned.release();
++} catch (const std::exception & error) {
++    WHISPER_LOG_ERROR("%s: VAD model load failed: %s\n", __func__, error.what());
++    return nullptr;
++} catch (...) {
++    WHISPER_LOG_ERROR("%s: VAD model load failed\n", __func__);
++    return nullptr;
+ }
+
+ void whisper_vad_reset_state(whisper_vad_context * vctx) {

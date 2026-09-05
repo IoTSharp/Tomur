@@ -60,6 +60,36 @@ add_subdirectory(
     ${CMAKE_CURRENT_BINARY_DIR}/whisper.cpp
 )
 
+# Keep the upstream checkout intact; only the generated translation unit is patched.
+find_package(Git REQUIRED)
+set(WHISPER_REALTIME_PATCH "${CMAKE_CURRENT_SOURCE_DIR}/patches/realtime-load-cleanup.patch")
+set(WHISPER_REALTIME_SOURCE_ROOT "${CMAKE_CURRENT_BINARY_DIR}/realtime-patched")
+set(WHISPER_REALTIME_SOURCE "${WHISPER_REALTIME_SOURCE_ROOT}/src/whisper.cpp")
+configure_file("${CMAKE_CURRENT_SOURCE_DIR}/../whisper.cpp/src/whisper.cpp"
+    "${WHISPER_REALTIME_SOURCE}" COPYONLY)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${WHISPER_REALTIME_PATCH}")
+execute_process(
+    COMMAND "${GIT_EXECUTABLE}" apply --unsafe-paths
+        "--directory=${WHISPER_REALTIME_SOURCE_ROOT}" "${WHISPER_REALTIME_PATCH}"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    TIMEOUT 15
+    RESULT_VARIABLE WHISPER_REALTIME_PATCH_RESULT
+    ERROR_VARIABLE WHISPER_REALTIME_PATCH_ERROR
+)
+if(NOT WHISPER_REALTIME_PATCH_RESULT STREQUAL "0")
+    message(FATAL_ERROR "Whisper Realtime cleanup patch failed: ${WHISPER_REALTIME_PATCH_ERROR}")
+endif()
+get_target_property(WHISPER_REALTIME_SOURCES whisper SOURCES)
+list(LENGTH WHISPER_REALTIME_SOURCES WHISPER_REALTIME_SOURCE_COUNT)
+list(REMOVE_ITEM WHISPER_REALTIME_SOURCES "whisper.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../whisper.cpp/src/whisper.cpp")
+list(LENGTH WHISPER_REALTIME_SOURCES WHISPER_REALTIME_REMAINING_COUNT)
+math(EXPR WHISPER_REALTIME_EXPECTED_COUNT "${WHISPER_REALTIME_SOURCE_COUNT} - 1")
+if(NOT WHISPER_REALTIME_REMAINING_COUNT EQUAL WHISPER_REALTIME_EXPECTED_COUNT)
+    message(FATAL_ERROR "The upstream whisper source list changed; review the Realtime patch integration.")
+endif()
+set_property(TARGET whisper PROPERTY SOURCES ${WHISPER_REALTIME_SOURCES} "${WHISPER_REALTIME_SOURCE}")
+
 target_sources(whisper PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/whisper_bridge.c)
 target_sources(whisper PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/realtime_bridge.cpp)
 target_compile_features(whisper PRIVATE cxx_std_17)

@@ -12,6 +12,8 @@ Chat 新增 AudioWorklet 语音入口、输入与播放设备、静音、手动�
 
 补齐提交发送失败、转写期间取消、输入流切换和会话关闭的资源归属；播放消费完成后再恢复 listening。Whisper 加载异常释放部分 native context，TTS 重叠相加按实际列数执行，并加入频谱维度、DSP 取消和线程异常回收。
 
+Whisper 的加载清理修复作为仓库内版本化补丁随源码交付，CMake 仅修改构建目录中的生成源码；不依赖子模块中未提交或无法从上游获取的修改。
+
 本轮未执行构建、测试、native 编译、服务启动或真实模型/设备 smoke；现有发布库必须包含新增 Realtime ABI 后才能使用语音管线。OpenAI Realtime 风格适配仍待实现，性能、AEC、质量、跨平台和发布验收保持 pending，R20 不标记完成。
 
 ### R20 Realtime 会话网关基础
