@@ -268,6 +268,7 @@ RUN --mount=type=cache,target=/root/.nuget/packages \
       --runtime "$rid" \
       --self-contained true \
       --output /out/tomur \
+      -p:TomurBuildWebAssets=false \
       -p:PublishSingleFile=false \
       -p:DebugType=None \
       -p:DebugSymbols=false && \

@@ -83,6 +83,13 @@ internal static partial class LlamaNativeMethods
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial nint ModelGetVocab(nint modelHandle);
 
+    /// <summary>
+    /// 读取当前模型词表大小，供需要固定词表维度的采样器初始化。
+    /// </summary>
+    [LibraryImport(LibraryName, EntryPoint = "llama_vocab_n_tokens")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int VocabNTokens(nint vocabHandle);
+
     [LibraryImport(LibraryName, EntryPoint = "llama_model_n_embd")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial int ModelNEmbd(nint modelHandle);
@@ -132,7 +139,12 @@ internal static partial class LlamaNativeMethods
 
     [LibraryImport(LibraryName, EntryPoint = "llama_sampler_init_penalties")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial nint SamplerInitPenalties(int penaltyLastN, float penaltyRepeat, float penaltyFreq, float penaltyPresent);
+    internal static partial nint SamplerInitPenalties(
+        int vocabularySize,
+        int penaltyLastN,
+        float penaltyRepeat,
+        float penaltyFreq,
+        float penaltyPresent);
 
     [LibraryImport(LibraryName, EntryPoint = "llama_sampler_init_dist")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]

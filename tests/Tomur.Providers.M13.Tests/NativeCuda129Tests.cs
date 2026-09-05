@@ -150,6 +150,20 @@ public sealed class NativeCuda129Tests
         Assert.DoesNotContain("llama_sampler_accept", methods, StringComparison.Ordinal);
     }
 
+    /// <summary>验证文本和 VLM 路径都按固定 llama.cpp ABI 向 penalties sampler 传入词表大小。</summary>
+    [Fact]
+    public void PenaltySamplerReceivesVocabularySizeOnEveryLlamaPath()
+    {
+        var bridge = File.ReadAllText(FindRepositoryFile("native", "llama.native", "llama_vlm_bridge.cpp"));
+        var session = File.ReadAllText(FindRepositoryFile("app", "Inference", "LlamaNativeSession.cs"));
+        var methods = File.ReadAllText(FindRepositoryFile("app", "Inference", "LlamaNativeMethods.cs"));
+
+        Assert.Contains("llama_vocab_n_tokens(vocab)", bridge, StringComparison.Ordinal);
+        Assert.Contains("create_sampler(request, vocab)", bridge, StringComparison.Ordinal);
+        Assert.Contains("EntryPoint = \"llama_vocab_n_tokens\"", methods, StringComparison.Ordinal);
+        Assert.Contains("SamplerInitPenalties(\n                        vocabSize,", session, StringComparison.Ordinal);
+    }
+
     /// <summary>验证 VLM 执行前释放空闲文本会话，避免大模型在 GPU 中重复驻留。</summary>
     [Fact]
     public void VisionToolReleasesIdleTextSessionBeforeLoadingVlm()
