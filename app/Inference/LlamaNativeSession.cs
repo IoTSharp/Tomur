@@ -29,6 +29,7 @@ internal sealed class LlamaNativeSession : IDisposable
     private readonly LlamaModelHandle modelHandle;
     private readonly LlamaContextHandle contextHandle;
     private readonly nint vocabHandle;
+    private readonly int vocabSize;
     private bool disposed;
     private long requestCount;
     private long promptTokens;
@@ -137,6 +138,17 @@ internal sealed class LlamaNativeSession : IDisposable
                 "vocab_unavailable",
                 "The loaded model did not expose a llama vocabulary.",
                 ["Use a llama.cpp-compatible GGUF text or embedding model."]);
+        }
+
+        // penalties sampler 在当前 llama.cpp ABI 中必须接收完整词表大小，加载时一次校验并缓存。
+        vocabSize = LlamaNativeMethods.VocabNTokens(vocabHandle);
+        if (vocabSize <= 0)
+        {
+            Dispose();
+            throw new InferenceException(
+                "vocab_unavailable",
+                "The loaded model reported an invalid llama vocabulary size.",
+                ["Use a llama.cpp-compatible GGUF model with a valid vocabulary."]);
         }
 
         LoadedAt = DateTimeOffset.UtcNow;
@@ -522,6 +534,7 @@ internal sealed class LlamaNativeSession : IDisposable
                 AddSampler(
                     chainHandle,
                     LlamaNativeMethods.SamplerInitPenalties(
+                        vocabSize,
                         penaltyLastTokens,
                         Math.Max(0.01f, options.RepeatPenalty),
                         NormalizePenalty(options.FrequencyPenalty),

@@ -23,27 +23,61 @@ internal static class ToolCallingChatAdapter
         ArgumentNullException.ThrowIfNull(chatClient);
         ArgumentNullException.ThrowIfNull(request);
 
-        var tools = CreateOpenAiTools(request.Tools);
-        var toolMode = ResolveOpenAiToolMode(request.ToolChoice, tools);
         var messages = CreateOpenAiMessages(request.Messages ?? []);
+        var chatOptions = CreateOpenAiChatOptions(request);
         var response = await chatClient.GetResponseAsync(
                 messages,
-                new ChatOptions
-                {
-                    ModelId = request.Model,
-                    Temperature = NormalizeFloat(request.Temperature),
-                    TopP = NormalizeFloat(request.TopP),
-                    MaxOutputTokens = request.MaxTokens is > 0
-                        ? Math.Clamp(request.MaxTokens.Value, 1, 4096)
-                        : null,
-                    Tools = tools.Cast<AITool>().ToArray(),
-                    ToolMode = toolMode,
-                    AllowMultipleToolCalls = request.ParallelToolCalls != false
-                },
+                chatOptions,
                 onText,
                 cancellationToken)
             .ConfigureAwait(false);
         return ToCompletion(response);
+    }
+
+    /// <summary>
+    /// 构造 OpenAI 文本、视觉和工具路径共享的本地推理参数，并统一收敛上下文范围。
+    /// </summary>
+    internal static CompletionOptions CreateOpenAiCompletionOptions(
+        OpenAiChatCompletionRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var defaults = CompletionOptions.Default with
+        {
+            ContextSize = Math.Clamp(
+                request.ContextSize ?? CompletionOptions.Default.ContextSize,
+                512,
+                131072)
+        };
+        return LocalInferenceService.MergeOptions(
+            defaults,
+            request.Temperature,
+            request.TopP,
+            // 新版 OpenAI SDK 使用 max_completion_tokens，旧字段仅作为兼容回退。
+            request.MaxCompletionTokens ?? request.MaxTokens);
+    }
+
+    /// <summary>
+    /// 将 OpenAI 工具请求转换为聊天选项，并通过原始参数把上下文大小传入本地推理会话。
+    /// </summary>
+    internal static ChatOptions CreateOpenAiChatOptions(OpenAiChatCompletionRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var tools = CreateOpenAiTools(request.Tools);
+        var completionOptions = CreateOpenAiCompletionOptions(request);
+        return new ChatOptions
+        {
+            ModelId = request.Model,
+            Temperature = completionOptions.Temperature,
+            TopP = completionOptions.TopP,
+            MaxOutputTokens = completionOptions.MaxOutputTokens,
+            Tools = tools.Cast<AITool>().ToArray(),
+            ToolMode = ResolveOpenAiToolMode(request.ToolChoice, tools),
+            AllowMultipleToolCalls = request.ParallelToolCalls != false,
+            // MEAI 没有上下文窗口强类型字段，原始选项负责把 context_size 传到本地会话。
+            RawRepresentationFactory = _ => completionOptions
+        };
     }
 
     /// <summary>
@@ -619,14 +653,6 @@ internal static class ToolCallingChatAdapter
             throw InvalidRequest($"Tool '{name}' is declared more than once.");
         }
     }
-
-    /// <summary>
-    /// 过滤无效采样浮点值。
-    /// </summary>
-    private static float? NormalizeFloat(double? value)
-        => value is null || double.IsNaN(value.Value) || double.IsInfinity(value.Value)
-            ? null
-            : (float)value.Value;
 
     /// <summary>
     /// 创建供兼容路由转换为协议 400 响应的请求错误。

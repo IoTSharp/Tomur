@@ -11,6 +11,12 @@ public sealed record OpenAiChatCompletionRequest(
     [property: JsonPropertyName("top_p")] double? TopP,
     [property: JsonPropertyName("max_tokens")] int? MaxTokens)
 {
+    [JsonPropertyName("context_size")]
+    public int? ContextSize { get; init; }
+
+    [JsonPropertyName("max_completion_tokens")]
+    public int? MaxCompletionTokens { get; init; }
+
     [JsonPropertyName("tools")]
     public IReadOnlyList<OpenAiChatTool>? Tools { get; init; }
 

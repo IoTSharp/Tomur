@@ -399,7 +399,10 @@ void initialize_backend_once(std::vector<std::string> & diagnostics) {
     }
 }
 
-llama_sampler * create_sampler(const tomur_llama_vlm_request * request) {
+// 当前固定版本的 penalties sampler 需要完整词表大小来构造 backend graph。
+llama_sampler * create_sampler(
+    const tomur_llama_vlm_request * request,
+    const llama_vocab * vocab) {
     llama_sampler_chain_params sampler_params = llama_sampler_chain_default_params();
     llama_sampler * sampler = llama_sampler_chain_init(sampler_params);
     if (sampler == nullptr) {
@@ -414,6 +417,7 @@ llama_sampler * create_sampler(const tomur_llama_vlm_request * request) {
         llama_sampler_chain_add(
             sampler,
             llama_sampler_init_penalties(
+                llama_vocab_n_tokens(vocab),
                 penalty_last_n,
                 std::max(0.01f, request->repeat_penalty),
                 request->frequency_penalty,
@@ -454,7 +458,7 @@ std::string generate_text(
     llama_pos & n_past,
     std::vector<std::string> & diagnostics,
     int32_t & status_code) {
-    llama_sampler * sampler = create_sampler(request);
+    llama_sampler * sampler = create_sampler(request, vocab);
     if (sampler == nullptr) {
         status_code = 7;
         diagnostics.push_back("sampler-init: failed");

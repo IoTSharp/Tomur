@@ -1304,6 +1304,9 @@ public static class ApiRouteExtensions
             return;
         }
 
+        // 普通文本、视觉和工具调用必须使用同一份 OpenAI 推理参数，避免 context_size 在分支间失效。
+        var options = ToolCallingChatAdapter.CreateOpenAiCompletionOptions(request);
+
         int? toolInputCharacters = null;
         if (hasToolProtocolFields)
         {
@@ -1345,15 +1348,9 @@ public static class ApiRouteExtensions
                 return;
             }
 
-            var visionOptions = LocalInferenceService.MergeOptions(
-                CompletionOptions.Default,
-                request.Temperature,
-                request.TopP,
-                request.MaxTokens);
-
             try
             {
-                var result = multimodalExecution.AnalyzeVision(model, prompt, images, visionOptions, context.RequestAborted);
+                var result = multimodalExecution.AnalyzeVision(model, prompt, images, options, context.RequestAborted);
                 var completionResult = new CompletionResult(
                     result.Text,
                     EstimateVisionUsage(prompt, result.Text),
@@ -1388,11 +1385,6 @@ public static class ApiRouteExtensions
         var messages = request.Messages
             .Select(static message => new ChatTurn(message.Role ?? "user", ExtractOpenAiTextContent(message.Content)))
             .ToArray();
-        var options = LocalInferenceService.MergeOptions(
-            CompletionOptions.Default,
-            request.Temperature,
-            request.TopP,
-            request.MaxTokens);
 
         try
         {
