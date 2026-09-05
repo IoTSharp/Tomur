@@ -96,7 +96,7 @@ dotnet run --project app -- serve --open
 10. 🎛️ Whisper、OCR native、HyperLPR3 / MNN 车牌识别、stable-diffusion.cpp 与 llama.cpp TTS / GGUF TTS 多模态 native runtime。
 11. 🖥️ 系统服务运行模式。
 12. 🧑‍💻 React + Ant Design X Web 工作台。
-13. 🎙️ 本地 Realtime WebSocket 会话网关基础。当前已接入 `tomur.realtime.v1` 协议壳、一次性 ticket、单活跃 session、有界队列和手动 commit 的内存 PCM 缓冲；VAD、增量 ASR/TTS、AudioWorklet、全双工与真实设备 smoke 仍未接通或验证。
+13. 🎙️ 本地 Realtime 语音会话。`tomur.realtime.v1` 已接入一次性 ticket、常驻 Silero/Whisper/TTS、滚动转写、流式文本与短句音频、取消和确认后历史回写；Chat 提供 AudioWorklet 采集播放、设备选择和有界重连。默认半双工，双向模式为要求 AEC 的实验选项；新增 native ABI、构建、真实设备、延迟与发布验收仍待验证，详见 [R20 协议](./docs/r20-realtime-protocol-v1.md)。
 
 Tomur 不会在未接通本地 runtime 时伪造推理结果。模型缺失、native runtime 或托管 provider 不可用、bundle 资产损坏、上下文超限、能力不匹配或内存不足时，API、CLI 和 UI 都应返回可诊断的错误。
 

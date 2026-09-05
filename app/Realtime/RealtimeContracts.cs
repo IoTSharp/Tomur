@@ -68,7 +68,10 @@ internal sealed record RealtimeStatusResponse(
     string TicketPath,
     RealtimeCapabilityStatus Capabilities,
     RealtimeRegistrySnapshot Sessions,
-    RealtimeLimitsResponse Limits);
+    RealtimeLimitsResponse Limits)
+{
+    public RealtimeRuntimeSnapshot Diagnostics { get; init; } = RealtimeDiagnostics.Snapshot;
+}
 
 internal sealed record RealtimeTicketResponse(
     string Ticket,
@@ -184,6 +187,12 @@ internal sealed record RealtimeSessionConfiguration(
     int OutputSampleRate,
     int OutputChannels)
 {
+    public string? Model { get; init; }
+    public string? AsrModel { get; init; }
+    public string? TtsModel { get; init; }
+    public string? Language { get; init; }
+    public bool EchoCancellation { get; init; }
+    public string Mode { get; init; } = "half_duplex";
     public static RealtimeSessionConfiguration CreateDefault()
         => new(
             null,
@@ -196,6 +205,24 @@ internal sealed record RealtimeSessionConfiguration(
             RealtimeProtocol.OutputSampleRate,
             RealtimeProtocol.OutputChannels);
 }
+
+internal sealed record RealtimePipelineEvent(
+    string Type, string EventId, long Sequence, long TimestampUs,
+    string SessionId, string TraceId, string State,
+    long? ResponseEpoch = null, string? ResponseId = null, string? ItemId = null,
+    string? UtteranceId = null, string? Text = null, string? Delta = null,
+    string? Code = null, string? Message = null, bool Fatal = false,
+    long? AudioSequence = null, int? CharacterCount = null,
+    string? ConversationId = null, string? Status = null,
+    string? CaptureStreamId = null, int? BufferedAudioBytes = null, int? DurationMs = null);
+
+internal sealed record RealtimePipelineUpdate(
+    string Type, string State, long? ResponseEpoch = null, string? ResponseId = null,
+    string? ItemId = null, string? UtteranceId = null, string? Text = null,
+    string? Delta = null, string? Code = null, string? Message = null,
+    bool Fatal = false, long? AudioSequence = null, int? CharacterCount = null,
+    string? ConversationId = null, string? Status = null,
+    int? BufferedAudioBytes = null, int? DurationMs = null, string? CaptureStreamId = null);
 
 internal sealed record RealtimeSessionCreatedEvent(
     string Type,

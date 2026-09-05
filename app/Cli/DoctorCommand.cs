@@ -44,6 +44,7 @@ internal static class DoctorCommand
         Console.WriteLine($"{Defaults.ProductName} doctor");
         Console.WriteLine($"  Version: {diagnostics.Version}");
         Console.WriteLine($"  Status: {diagnostics.Status}");
+        Console.WriteLine($"  Realtime: {diagnostics.Details.Realtime.State}; full duplex: {diagnostics.Details.Realtime.FullDuplex}; smoke: {diagnostics.Details.Realtime.Smoke}");
         Console.WriteLine($"  OS: {diagnostics.OSDescription}");
         Console.WriteLine($"  Architecture: {diagnostics.ProcessArchitecture}");
         Console.WriteLine($"  Framework: {diagnostics.FrameworkDescription}");

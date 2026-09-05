@@ -1648,6 +1648,13 @@ function App({
               onSubmitMessage={(value) => void submitMessage(value)}
               onStopGeneration={stopGeneration}
               onRegenerate={() => void regenerate()}
+              ensureVoiceConversation={() => ensureBackendConversation(activeConversation, selectedModelLabel ?? "")}
+              onVoiceCommitted={() => {
+                const conversation = activeConversation;
+                if (conversation.backendId) void getConversationDetail(conversation.backendId, AbortSignal.timeout(5000))
+                  .then(detail => updateConversation(conversation.id, () => ({ ...mapConversationDetail(detail), id: conversation.id })))
+                  .catch(() => undefined);
+              }}
             />
           </div>
         )}

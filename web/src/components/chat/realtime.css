@@ -1,0 +1,22 @@
+.realtime-voice {
+  flex: 0 0 auto;
+  padding: 8px 20px;
+  border-top: 1px solid #d9d9d9;
+  min-width: 0;
+}
+.realtime-controls { width: 100%; }
+.realtime-controls .ant-btn { min-width: 44px; height: 44px; }
+.realtime-controls .ant-select { width: 148px; max-width: 100%; }
+.realtime-controls meter { width: 64px; height: 12px; }
+.realtime-transcript {
+  max-height: 200px;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  margin-top: 8px;
+}
+.realtime-voice .ant-alert { margin-top: 8px; }
+@media (max-width: 640px) {
+  .realtime-voice { padding: 8px 12px; }
+  .realtime-controls .ant-select { width: 136px; }
+  .realtime-transcript { max-height: 132px; }
+}

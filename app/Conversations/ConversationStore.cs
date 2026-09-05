@@ -317,6 +317,24 @@ public sealed class ConversationStore
             message);
     }
 
+    internal void UpdateAcknowledgedVoiceMessage(string conversationId, string messageId, string content, string status)
+    {
+        if (content.Length is < 1 or > 8192) throw new ArgumentOutOfRangeException(nameof(content));
+        using var connection = database.OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "UPDATE conversation_messages SET content = $content, status = $status WHERE id = $message AND conversation_id = $conversation AND role = 'assistant' AND modality = 'audio'";
+        command.Parameters.AddWithValue("$content", content);
+        command.Parameters.AddWithValue("$status", status);
+        command.Parameters.AddWithValue("$message", NormalizeId(messageId));
+        command.Parameters.AddWithValue("$conversation", NormalizeId(conversationId));
+        if (command.ExecuteNonQuery() != 1)
+            throw new InvalidOperationException("The acknowledged voice message no longer exists.");
+        UpdateConversationAfterActivity(connection, transaction, conversationId, null, null, DateTimeOffset.UtcNow, setLastMessageAt: true);
+        transaction.Commit();
+    }
+
     public ConversationTailDeleteResponse DeleteMessageTail(
         string conversationId,
         string messageId)

@@ -1,10 +1,10 @@
 # R20 Realtime 原生协议 v1
 
-> 本文冻结 R20 首个实现切片的线级协议与安全边界，不表示 P0 或 P1 已完成。当前切片只建立本地 WebSocket 网关、认证、配额、控制事件和输入缓冲边界；VAD、增量 ASR、增量文本、增量 TTS、全双工、barge-in、AudioWorklet 和 OpenAI Realtime 风格适配均未接入。
+> 本文记录 R20 原生网关与语音管线的代码契约，不构成构建、真实设备或性能证据。常驻语音、流式文本/短句音频、AudioWorklet、取消与确认后历史已接入；默认半双工，双向模式为 AEC 必需的实验选项。OpenAI Realtime 风格适配仍未实现，所有 smoke 状态保持 pending。
 
 ## 协议概览
 
-R20 v1 是 Tomur 的本地优先原生 Realtime 协议。首个实现切片用于验证连接生命周期、安全边界、帧格式、顺序、背压和清理行为，不产生 transcript 或音频输出，也不把输入 PCM 持久化到文件、SQLite 或日志。
+R20 v1 是 Tomur 的本地优先原生 Realtime 协议。有效配置后执行 Silero VAD、Whisper、文本模型和 TTS 的本地级联链路。输入 PCM 和 partial 只驻留内存，final transcript 与客户端确认的助手内容进入现有 conversation store。
 
 | 项目 | 冻结值 |
 | --- | --- |
@@ -17,7 +17,7 @@ R20 v1 是 Tomur 的本地优先原生 Realtime 协议。首个实现切片用�
 | MVP 网络边界 | 仅 loopback |
 | 输入音频 | signed PCM16 little-endian、16 kHz、mono、20 ms/frame |
 | 输入 payload | 每帧固定 640 bytes |
-| 当前处理模式 | 有界 push-to-talk 输入缓冲；pipeline 未接通 |
+| 当前处理模式 | 手动提交或 server VAD；默认半双工，实验性双向要求 AEC |
 
 客户端必须只请求 `tomur.realtime.v1`。服务端不得在缺少、拼写错误或同时包含未支持版本的 subprotocol 时静默升级，也不得协商到其他协议。
 
@@ -104,9 +104,9 @@ Ticket 的 TTL 为 30 秒，内存容量为全局 128、每来源 16。签发前
 - VAD、ASR warm session、TTS warm session 和 full duplex 是否可用；
 - 当前 status DTO 对外发布的资源限制。
 
-首个切片即使 gateway 可用，也必须报告 pipeline、VAD、增量 ASR、增量 TTS 和 full duplex 未接入。Status 响应不得包含 ticket、API key prefix、session token、原始音频或 transcript。
+Status 分别报告 `model_ready`、`session_loaded` 和本进程真实执行后的 `warm_executed`；`full_duplex` 固定保持 `degraded_unverified`，`smoke` 固定保持 `pending`。`diagnostics` 提供输入缓冲字节、待播放毫秒、turn 数、最近错误、final ASR 执行时间和从提交到首个 PCM 的服务端时间。后两项不是跨客户端时钟的端到端指标，也不证明首个样本可听。响应不得包含凭据、音频或 transcript。
 
-未来客户端自动重试上限暂定为 3 次，但当前 status DTO 不发布 `maximum_client_reconnects`，gateway 也不跨连接跟踪或强制执行该策略；内置 Realtime 客户端、backoff 和断线恢复尚未接入。`limits.graceful_close_timeout_milliseconds = 2000` 发布 close 的墙钟截止，最多 32 次 receive 仍是服务端内部协议边界。
+内置浏览器客户端对异常断线最多重连三次，backoff 为 1.5、3、4.5 秒，且不延长客户端 15 分钟总截止；只恢复配置与已提交 conversation，不重放 PCM 或旧 response。协议、认证和配额拒绝不自动重试。`limits.graceful_close_timeout_milliseconds = 2000` 为 transport close 截止，不是强行释放仍在 native 栈上的句柄的期限。
 
 ## 控制事件
 
@@ -139,7 +139,7 @@ JSON WebSocket message 可以由多个 WebSocket fragment 组成，但服务端�
 | 事件 | 允许阶段 | 语义 |
 | --- | --- | --- |
 | `session.authenticate` | 未认证，且只能是首事件 | 提交 `ticket`；upgrade 已通过 Bearer 认证时再次发送返回可恢复的 `already_authenticated` |
-| `session.update` | 已认证 | 更新当前切片支持的 session 配置；固定音频格式不可改为其他值 |
+| `session.update` | 已认证且未配置 | 校验模型与资源，加载语音 session；已配置时返回 `session_already_configured`，变更配置须重连 |
 | `session.ping` | 已认证 | 服务端返回 `session.pong`，并用 `client_event_id` 关联本事件的 `event_id` |
 | `session.close` | 已认证 | 请求正常关闭；可选 `reason` 只接受 `client_closed`、`user_requested`、`page_unload`，省略或其他值统一归一化为 `client_closed` |
 | `input_audio_buffer.commit` | 已认证 | 提交指定 `capture_stream_id` 的当前输入缓冲 |
@@ -163,10 +163,59 @@ JSON WebSocket message 可以由多个 WebSocket fragment 组成，但服务端�
 | `input_audio_buffer.started` | capture stream 的首个有效输入 frame | 返回 `capture_stream_id` 和 `first_sequence`；binary sequence 仍以输入帧头为准 |
 | `input_audio_buffer.committed` | 有效 commit | 返回 `buffered_audio_bytes` 和 `duration_ms` |
 | `input_audio_buffer.cleared` | 有效 clear | 返回已清理的 `capture_stream_id`、原因、丢弃 frame 数和 payload byte 数 |
-| `response.cancelled` | 有效 `response.cancel` | 当前切片没有 active response 时返回请求的 `response_epoch`，且 `reason` 为 `not_active` |
+| `response.cancelled` | 有效取消或确认插话 | 返回旧 `response_epoch`，立即清除客户端尚未消费的音频；`status` 区分 `client_requested` 与 `barge_in` |
 | `error` | 非终止或终止错误 | 返回稳定 code、非敏感 message、`fatal` 和必要的作用域标识 |
 
-`response.text.displayed` 与 `response.audio.playback_consumed` 是客户端 acknowledgement，不要求额外成功事件。若引用的 response 当前不活跃，服务端返回可恢复的 `response_not_active`。
+`response.text.displayed` 与 `response.audio.playback_consumed` 不要求额外成功事件。已结束的旧 epoch 确认不会进入新 response；当前 epoch 的越界、回退或不匹配确认返回 `invalid_display_ack` / `invalid_playback_ack`。
+
+### 配置与流式事件
+
+`session.created` 后发送 `session.update`，并等待 `session.updated` 后采集音频。完整配置示例中的模型与 conversation 必须替换为本地有效 ID：
+
+```json
+{
+  "type": "session.update",
+  "event_id": "configure-1",
+  "sequence": 2,
+  "timestamp_us": 1000,
+  "session": {
+    "conversation_id": "local-conversation-id",
+    "model": "local-chat-model",
+    "asr_model": "whisper-large-v3-turbo-q5",
+    "tts_model": "outetts-0.2-500m-q4km",
+    "language": null,
+    "turn_detection": "server_vad",
+    "mode": "half_duplex",
+    "echo_cancellation": true,
+    "input_audio_format": "pcm16le",
+    "input_sample_rate": 16000,
+    "input_channels": 1,
+    "input_frame_duration_ms": 20,
+    "output_audio_format": "pcm16le",
+    "output_sample_rate": 24000,
+    "output_channels": 1
+  }
+}
+```
+
+`turn_detection` 支持 `manual`、`server_vad`；`mode` 支持 `half_duplex` 和显式 `duplex_experimental`。实验模式要求 `echo_cancellation=true`，浏览器仅在实际 track settings 报告 AEC 时允许选择成功；声明本身不构成回声质量证据。半双工在回复执行或尚有待消费输出时不启动新的输入 utterance，用户可主动取消回复后继续说话。
+
+| 事件 | 内容与边界 |
+| --- | --- |
+| `session.ready` | 语音模型驻留；`status=models_resident_degraded_unverified`，不是 warm 或性能通过 |
+| `session.state` | 当前 listening/user_speaking/transcribing/thinking/speaking 等状态 |
+| `input_audio_buffer.speech_started` | 服务端 VAD 确认开始；包含 utterance 与 capture stream，客户端清除旧输出 |
+| `input_audio_buffer.speech_stopped` | endpoint 或手动提交已封存输入 |
+| `input_audio_transcription.delta` | 同一 utterance 的临时完整窗口 `text`，替换上一次 partial，不能简单追加 |
+| `input_audio_transcription.done` | 唯一 final `text`，对应已保存的用户回合 |
+| `response.created` | final ASR 开始前建立 `response_epoch`、`response_id`、`item_id` 映射，允许在转写期间取消；输出 sequence 从 1 开始 |
+| `response.text.delta` | 真实 token `delta`，`character_count` 为累计 UTF-16 code unit 数 |
+| `response.text.done` | 文本生成结束，不表示音频播放结束 |
+| kind `2` binary | 当前 response 的真实短句 PCM，不附加固定静音 |
+| `response.audio.done` | 合成/发送结束，播放仍可能有待消费队列 |
+| `response.done` | 生成完成且全部输出音频已被客户端确认消费，随后恢复 listening 并刷新会话历史 |
+
+Whisper partial 每新增一秒音频且前次处理已完成时尝试一次，窗口最多四秒，部分取消不产生 final。VAD 为 512-sample recurrent 窗口，阈值为 0.6/0.35，连续 100 ms 高概率开始、600 ms 低概率结束，pre-roll 300 ms。短句聚合上限 160 个 UTF-16 code unit，标点切分最短 12，750 ms 等待后允许提前 flush；不切断 surrogate pair。
 
 ## Binary audio frame
 
@@ -189,23 +238,23 @@ JSON WebSocket message 可以由多个 WebSocket fragment 组成，但服务端�
 
 kind `1` 的输入格式固定为 PCM16LE、16 kHz、mono、20 ms。每帧包含 320 个 signed 16-bit samples，因此 payload 必须恰好为 640 bytes，完整 binary message 必须恰好为 684 bytes。
 
-每个新 `capture_stream_id` 的 binary sequence 从 `1` 开始。当前缓冲必须先 commit 或 clear，之后同一连接才可以切换到新的 `capture_stream_id`；缓冲仍存在时直接切换会返回终止错误 `capture_stream_changed`。duplicate、gap、回退或跨 capture stream 复用 sequence 都不能静默接受。输入 timestamp 表示该帧首个 sample 的客户端单调采集时间；它用于同一客户端时钟域内的顺序与延迟测量，不代表 UTC。
+每个新 `capture_stream_id` 的 binary sequence 从 `1` 开始。连续采集的 capture stream 跨 VAD endpoint 和 commit 保持不变，只有显式 clear 或重连才重置 ID/sequence。duplicate、gap、回退或跨 capture stream 复用 sequence 都不能静默接受。输入 timestamp 表示该帧首个 sample 的客户端单调采集时间，不代表 UTC，也不继承 response epoch。
 
 当前切片对单个 utterance 最多接收 30 秒或 960,000 payload bytes，即最多 1,500 个标准输入 frame。达到任一上限后，不再接受额外 PCM，必须产生稳定诊断并清理或关闭，不得继续增长缓冲。
 
 ### Output PCM
 
-kind `2` 为未来 24 kHz mono PCM16 输出保留，其 ID 是 `response_id`，sequence 在每个 response 内从 `1` 开始。首个切片不得发送 kind `2` frame；提前发送空白或静音 PCM 不能用来表示 pipeline 可用或满足首音频延迟。
+kind `2` 为 24 kHz mono PCM16 输出，payload 为 2..4800 个偶数字节，ID 是 `response_id`，sequence 在每个 response 内从 `1` 开始。timestamp 从 0 开始，下一帧必须接续上帧 payload 的样本时长。浏览器将其重采样至实际 AudioContext 采样率；播放 underrun 显式展示，溢出终止。固定静音不能用来表示 pipeline 可用或满足首音频延迟。
 
 ## Commit、clear 与持久化
 
-`input_audio_buffer.commit` 必须引用当前有效的 `capture_stream_id`。在首个切片中，有效 commit 的确定行为是：
+`input_audio_buffer.commit` 必须引用当前有效的 `capture_stream_id`。有效 commit 的行为是：
 
-1. 封存并清空该 capture stream 的内存缓冲。
-2. 发送 `input_audio_buffer.committed`，报告 `buffered_audio_bytes` 和 `duration_ms`。
-3. 发送非终止 `error`，code 固定为 `realtime_pipeline_unavailable`，`fatal` 为 `false`。
-4. 不生成 speech started/stopped、partial/final transcript、assistant text 或 output audio。
-5. 不创建 conversation message、artifact 或 diagnostic，不把 PCM 写入文件、SQLite、普通日志或 trace。
+1. 封存当前 utterance 并清空其内存缓冲，保留独立 capture stream 序号。
+2. 响应任务先取得音频快照与旧取消源的清理责任，发送 `input_audio_buffer.committed`、speech stopped 和 `response.created`；等待旧 native 工作退出期间也允许客户端取消，事件发送失败同样进入清理路径。
+3. 等待已取消的 partial/旧 response 退出后，执行唯一 final ASR，空结果返回 `transcript_empty`。输入事件保留提交时的 capture ID，不因后续 clear 或新流而改变。
+4. 保存用户 final，读取最多 24 条已提交历史，经有界 token/短句队列合成音频；不执行模型声明的工具。
+5. PCM 不进入文件、SQLite 或日志。`displayed` 只能确认已经开始发送的 UTF-16 前缀；`playback_consumed` 必须对应已发送 sequence 的准确结束 timestamp。完整短句最后一帧被消费后，该短句的源文本才可作为 played 前缀。两类确认取最大前缀，递增更新同一个 assistant item；取消记录 interrupted，未确认尾部不进入下一轮上下文。
 
 `input_audio_buffer.clear` 省略、设为 `null` 或空白 `capture_stream_id` 时立即丢弃当前缓冲；提供 ID 时，该 ID 必须是当前有效的 `capture_stream_id`，否则返回可恢复的 `capture_stream_mismatch` 且不清理缓冲。成功后发送 `input_audio_buffer.cleared`。clear 是内存生命周期操作，不表示撤销已经提交的外部副作用。
 
@@ -217,15 +266,15 @@ kind `2` 为未来 24 kHz mono PCM16 输出保留，其 ID 是 `response_id`，s
 connecting -> listening -> user_speaking -> transcribing -> thinking -> speaking
 ```
 
-并包含 `interrupted`、`reconnecting`、`failed` 和 `closed`。首个切片实际执行的正常输入路径为：
+并包含 `interrupted`、客户端 `reconnecting`、`failed` 和 `closed`。正常回合完成后回到 listening，实验性双向允许输出期间建立新的 utterance：
 
 ```text
-connecting -> listening -> user_speaking -> transcribing -> listening
+speaking -> interrupted -> listening -> user_speaking -> transcribing
 ```
 
-任一阶段都可以按协议进入 `failed` 或 `closed`。当前 `user_speaking` 仅表示客户端已经开始提交输入 PCM，是 transport 缓冲状态，不是 VAD 检测结论；`transcribing` 仅标记手动 commit 边界，不表示 ASR 已运行。commit 返回 `realtime_pipeline_unavailable` 后，连接恢复到 `listening`，除非同时触发资源、安全或协议终止条件。
+server VAD 模式的 user_speaking 为模型检测结论；manual 模式为客户端明确采集开始。插话先取消旧 epoch，旧 token/PCM 不得越过发送栅栏；最多保留一个正在退出的 native response，下一回合等待其退出后才使用相同句柄。持续取消不能形成无界任务链。
 
-客户端每次重新连接都必须建立新 session、重新认证并从 sequence `1` 开始。协议为未来客户端冻结最多 3 次自动重试和有界 backoff 策略，但当前切片尚未接入客户端自动重连，也不由 gateway 跨连接计数或强制执行；当前 gateway 不恢复旧 PCM、旧 response、旧 acknowledgement 或可能有副作用的工具执行。
+每次重连建立新 session、重新认证并从 sequence `1` 开始，绑定同一 conversation。只使用已经持久化的历史，不恢复旧 PCM、旧 response 或未确认 acknowledgement。
 
 ## 资源限制与 overflow
 
@@ -246,11 +295,23 @@ connecting -> listening -> user_speaking -> transcribing -> listening
 | pending connections | 全局 8 / 每来源 2 | upgrade 前拒绝 |
 | active Realtime sessions | 1 | `session_busy`，不排队 |
 | ticket | TTL 30 秒 / 全局 128 / 每来源 16 | 过期清理；任一容量满则拒绝签发 |
-| 未来客户端自动重试策略 | 最多 3 次 | 尚未接入；未来客户端停止自动重试并展示诊断，gateway 不把它作为当前连接配额 |
+| 客户端自动重试 | 最多 3 次，1.5/3/4.5 秒 backoff | 仅异常断线；协议或配额失败直接显示诊断 |
+| native 语音 load | 60 秒 | 协作取消；释放已创建句柄 |
+| partial / final ASR | 4 / 30 秒 | partial 取消；final 超限诊断 |
+| 单短句 TTS | 30 秒、30 秒音频 | abort/cancel，不产生占位音频 |
+| response / turns | 120 秒 / 100 回合 | 取消或结束 session |
+| token / 短句队列 | 256 / 8 items | 明确 overflow 并取消 response |
+| response 文本 / 短句总数 | 8192 UTF-16 code units / 128 段 | 超限诊断，不静默丢弃尾部 |
+| native PCM 队列 | 320 chunks，每 chunk 最大 4800 bytes | callback 返回取消，不阻塞 native 等待网络 |
+| 客户端发送缓存 | 128 KiB | 停止采集并关闭 |
+| 已发送未消费音频 | 2 秒，最多等待 5 秒 | `playback_backpressure`，取消 response |
+| 浏览器播放环形缓冲 | 3 秒、32 个 chunk 边界 | overflow 关闭；不足时显式 underrun 并重新缓冲 |
 
 事件计数同时包含完整 JSON 控制 message 和完整 binary frame，避免通过 binary 流绕过速率与 session 总量限制。合法 ping 和 PCM 会刷新 idle deadline；未完成 fragment、无效消息和被拒绝的凭据不会无限延长连接寿命。
 
-所有 channel 都必须有固定容量。控制事件不得使用静默 `DropOldest`；输入 queue overflow、gap、duplicate 或慢消费必须通过 `error` 和明确 close/reset 行为暴露。当前没有 output audio，因此不得预建无界输出缓冲。
+所有 channel 都有固定容量，控制事件不使用静默 DropOldest。资源预留在普通模型执行锁之前取得；Realtime 与普通 Chat/ASR/TTS/OCR/图像推理不能并发获取模型。unload 与 native repair 发起取消，在 session-owned 工作和句柄释放前返回 `realtime_resource_busy`/409，调用方在释放后重试。语音路径固定使用 CPU 参数，并按模型体积加上下文余量做保守内存预算，实际 RSS、并存与延迟仍须真实测量。
+
+正常关闭在任务退出、确认内容落库和 native 句柄回收后发送关闭响应；结束时记录尚在 engine 缓冲中的输入。资源抢占会唤醒正在等待输入的连接并返回 `session_stopped`，静音期间也不会无限占用语音模型。`response.done` 等待最终播放确认最多 5 秒，不能在音频仍排队时提前显示 listening。
 
 ## 错误与关闭
 
@@ -262,8 +323,8 @@ connecting -> listening -> user_speaking -> transcribing -> listening
   "event_id": "server-event-0004",
   "sequence": 4,
   "timestamp_us": 928000,
-  "code": "realtime_pipeline_unavailable",
-  "message": "Realtime audio processing is not connected in this protocol slice.",
+  "code": "realtime_native_abi_unavailable",
+  "message": "The installed speech libraries do not provide Realtime session ABI v1.",
   "fatal": false
 }
 ```
@@ -303,7 +364,7 @@ connecting -> listening -> user_speaking -> transcribing -> listening
 | `input_audio_not_allowed` | 当前 session 状态不允许接收输入音频 |
 | `audio_sequence_mismatch` | capture stream sequence gap、重复、乱序或未从 `1` 开始 |
 | `audio_timestamp_reordered` | 输入音频 timestamp 相对前一帧回退 |
-| `capture_stream_changed` | 当前缓冲 commit/clear 前切换了 `capture_stream_id` |
+| `capture_stream_changed` | 未 clear 或重连就切换了 `capture_stream_id`；commit 不重置输入流 |
 | `binary_header_too_short` | binary message 不足 44-byte header |
 | `binary_magic_mismatch` | binary magic 不是 ASCII `TMR1` |
 | `binary_version_mismatch` | binary frame version 不是 `1` |
@@ -330,7 +391,22 @@ connecting -> listening -> user_speaking -> transcribing -> listening
 | `utterance_id_invalid` | 提供的 `utterance_id` 不是非空 UUID |
 | `response_epoch_invalid` | `response.cancel` 的 `response_epoch` 不是正整数 |
 | `response_not_active` | displayed/played acknowledgement 引用的 response 当前不活跃 |
-| `realtime_pipeline_unavailable` | 网关存在，但 VAD/ASR/LLM/TTS pipeline 未连接 |
+| `session_configuration_required` | 发送 audio 前必须完成 session.update |
+| `session_already_configured` | 已驻留的配置不能原位修改，须重连 |
+| `realtime_model_unavailable` | 指定本地模型不存在或能力不匹配 |
+| `realtime_native_abi_unavailable` | Whisper/TTS 库缺失、损坏或没有 Realtime ABI v1 |
+| `realtime_memory_budget_exceeded` | 所选模型超过保守内存估算预算 |
+| `realtime_resource_busy` | 另一推理入口正在使用资源，或语音句柄尚未释放 |
+| `vad_execution_failed` / `asr_execution_failed` / `tts_execution_failed` | 本地语音执行失败 |
+| `asr_timeout` / `response_timeout` | native 或响应超出时间预算 |
+| `transcript_empty` | 未识别出有效语音，未生成占位用户内容 |
+| `utterance_too_long` / `turn_limit_exceeded` | 30 秒发言或 100 回合上限 |
+| `response_cancellation_pending` | 已有旧 native 工作正在退出，不继续扩展任务链 |
+| `tts_segment_limit` | 单个响应超过 128 个短句 |
+| `session_stopped` | 会话时限或进程内资源所有者终止会话 |
+| `text_queue_overflow` / `tts_text_queue_overflow` / `tts_output_overflow` | 有界 token/短句/PCM 队列溢出 |
+| `playback_backpressure` | 输出未消费水位持续超限 |
+| `invalid_display_ack` / `invalid_playback_ack` | 确认越界、回退或与已发送边界不匹配 |
 | `session_idle_timeout` | 已认证 session 连续 30 秒没有收到完整消息 |
 | `session_duration_exceeded` | session 达到 15 分钟总时长上限 |
 | `transport_error` | WebSocket 或底层 I/O 在接收期间异常结束 |
@@ -352,14 +428,12 @@ WebSocket close code 冻结如下。正常关闭使用标准 code；终止错误
 
 ## 当前能力边界
 
-该协议冻结不构成以下能力的接入或验证证据：
+原生级联链路已接入，仍有以下明确边界：
 
-- Silero VAD session、speech started/stopped 或 pre-roll；
-- 常驻 Whisper session、滚动窗口、partial/final transcript 或 native abort；
-- 异步 LLM token channel、短句聚合或 response epoch 取消栅栏；
-- 常驻 TTS acoustic/WavTokenizer session、PCM callback 或 audio delta；
-- AudioWorklet、输入降采样、24 kHz 输出重采样或 jitter buffer；
-- echo cancellation、barge-in、全双工或断线恢复；
-- OpenAI Realtime 风格兼容。
+- 当前发布库必须重新包含 `tomur_realtime_speech_*` / `tomur_realtime_tts_*` ABI v1；旧库返回明确不可用诊断，不回退为伪流式批处理。
+- Whisper partial 是有界重叠窗口的替换结果；TTS 是短句增量，不是直接 speech-to-speech，也不是 vocoder 每个音频 token 的连续生成。
+- warm TTS RTF、首个有意义 partial、CER/WER、AEC/barge-in、Soak、AOT 与跨平台发布均未验证。
+- Realtime 当前不执行工具，也不把语音识别结果作为副作用确认；未知工具事件明确拒绝。
+- OpenAI Realtime 风格适配仍待实现，不能把本协议宣称为 OpenAI Realtime 兼容。
 
-在真实协议测试、安全测试、资源回收测试和后续语音质量证据完成前，不得宣称 R20 P0 或 P1 完成，也不得把 `gateway available` 表述为 `Realtime voice ready`。
+原始证据入口为 [R20 smoke](./r20-realtime-voice-smoke.md)。代码接入不改变 pending 验收状态。

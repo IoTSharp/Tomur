@@ -50,7 +50,14 @@ public static class ApiRouteExtensions
             LocalInferenceService inferenceService,
             RuntimeDiagnosticsProvider diagnosticsProvider) =>
         {
-            inferenceService.Unload();
+            try { inferenceService.Unload(); }
+            catch (InferenceException exception)
+            {
+                await JsonHttpResponse.WriteAsync(context,
+                    new RuntimeSessionControlError(exception.Code, exception.Message, exception.Actions),
+                    AppJsonSerializerContext.Default.RuntimeSessionControlError, StatusCodes.Status409Conflict);
+                return;
+            }
             var response = diagnosticsProvider.GetRuntimeStatus();
             await JsonHttpResponse.WriteAsync(context, response, AppJsonSerializerContext.Default.RuntimeStatusResponse);
         });
@@ -278,7 +285,15 @@ public static class ApiRouteExtensions
             HttpContext context,
             INativeBundlePreparer nativeBundlePreparer) =>
         {
-            var response = nativeBundlePreparer.Prepare();
+            NativeBundlePrepareResult response;
+            try { response = nativeBundlePreparer.Prepare(); }
+            catch (InferenceException exception)
+            {
+                await JsonHttpResponse.WriteAsync(context,
+                    new RuntimeSessionControlError(exception.Code, exception.Message, exception.Actions),
+                    AppJsonSerializerContext.Default.RuntimeSessionControlError, StatusCodes.Status409Conflict);
+                return;
+            }
             var statusCode = response.Status == "error"
                 ? StatusCodes.Status503ServiceUnavailable
                 : StatusCodes.Status200OK;

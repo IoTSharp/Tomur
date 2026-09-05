@@ -29,6 +29,7 @@ public sealed class IsolatedImageGenerationService
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(model);
+        using var resources = Realtime.RealtimeResourceCoordinator.EnterOperation();
         ArgumentNullException.ThrowIfNull(options);
 
         var workerDirectory = Path.Combine(Path.GetTempPath(), "tomur-image-worker", Guid.NewGuid().ToString("N"));

@@ -1,6 +1,8 @@
 #include "llama.h"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
@@ -266,6 +268,25 @@ using model_ptr = std::unique_ptr<llama_model, model_deleter>;
 using context_ptr = std::unique_ptr<llama_context, context_deleter>;
 using sampler_ptr = std::unique_ptr<llama_sampler, sampler_deleter>;
 
+struct realtime_tts_session {
+    model_ptr acoustic;
+    model_ptr vocoder;
+    context_ptr acoustic_context;
+    context_ptr vocoder_context;
+    std::atomic<bool> cancelled{false};
+    int (*external_cancelled)(void *) = nullptr;
+    void * external_user = nullptr;
+    std::chrono::steady_clock::time_point deadline;
+};
+
+static bool realtime_abort(void * opaque) {
+    auto * session = static_cast<realtime_tts_session *>(opaque);
+    return session->cancelled.load() || std::chrono::steady_clock::now() >= session->deadline ||
+        (session->external_cancelled && session->external_cancelled(session->external_user));
+}
+
+static bool realtime_load_progress(float, void * opaque) { return !realtime_abort(opaque); }
+
 static void fill_hann_window(int length, bool periodic, float * output) {
     int offset = periodic ? 0 : -1;
     for (int i = 0; i < length; i++) {
@@ -279,7 +300,8 @@ static void twiddle(float * real, float * imag, int k, int n) {
     *imag = std::sin(angle);
 }
 
-static void irfft(int n, const float * input_complex, float * output_real) {
+static void irfft(int n, const float * input_complex, float * output_real,
+    realtime_tts_session * resident = nullptr) {
     int bins = n / 2 + 1;
 
     std::vector<float> real_input(bins);
@@ -292,6 +314,7 @@ static void irfft(int n, const float * input_complex, float * output_real) {
     std::vector<float> real_output(n);
     std::vector<float> imag_output(n);
     for (int k = 0; k < n; ++k) {
+        if (resident && k % 16 == 0 && realtime_abort(resident)) return;
         for (int m = 0; m < bins; ++m) {
             float twiddle_real;
             float twiddle_imag;
@@ -312,12 +335,15 @@ static void fold(
     int64_t n_win,
     int64_t n_hop,
     int64_t n_pad,
-    std::vector<float> & output) {
+    std::vector<float> & output,
+    realtime_tts_session * resident = nullptr) {
     int64_t width = n_out;
     output.resize(width, 0.0f);
 
     int64_t column_index = 0;
-    for (int64_t column = 0; column < width; ++column) {
+    const int64_t columns = static_cast<int64_t>(data.size()) / n_win;
+    for (int64_t column = 0; column < columns; ++column) {
+        if (resident && realtime_abort(resident)) throw std::runtime_error("TTS cancelled");
         int64_t start = column * n_hop - n_pad;
         int64_t end = start + n_win;
 
@@ -336,12 +362,12 @@ static std::vector<float> embeddings_to_audio(
     const float * embeddings,
     int n_codes,
     int n_embd,
-    int n_threads) {
-    if (embeddings == nullptr || n_codes <= 0 || n_embd <= 0 || n_embd % 2 != 0) {
+    int n_threads, realtime_tts_session * resident = nullptr) {
+    const int n_fft = 1280;
+    if (embeddings == nullptr || n_codes <= 0 || n_codes > k_max_predict || n_embd != n_fft + 2) {
         throw std::runtime_error("WavTokenizer did not return a valid embedding matrix");
     }
 
-    const int n_fft = 1280;
     const int n_hop = 320;
     const int n_win = 1280;
     const int n_pad = (n_win - n_hop) / 2;
@@ -356,12 +382,14 @@ static std::vector<float> embeddings_to_audio(
     std::vector<float> stft(n_spec);
 
     for (int code = 0; code < n_codes; ++code) {
+        if (resident && realtime_abort(resident)) throw std::runtime_error("TTS cancelled");
         for (int embd = 0; embd < n_embd; ++embd) {
             transposed[embd * n_codes + code] = embeddings[code * n_embd + embd];
         }
     }
 
     for (int embd = 0; embd < n_embd / 2; ++embd) {
+        if (resident && realtime_abort(resident)) throw std::runtime_error("TTS cancelled");
         for (int code = 0; code < n_codes; ++code) {
             float mag = std::exp(transposed[embd * n_codes + code]);
             float phase = transposed[(embd + n_embd / 2) * n_codes + code];
@@ -372,6 +400,7 @@ static std::vector<float> embeddings_to_audio(
     }
 
     for (int code = 0; code < n_codes; ++code) {
+        if (resident && realtime_abort(resident)) throw std::runtime_error("TTS cancelled");
         for (int embd = 0; embd < n_embd / 2; ++embd) {
             stft[code * n_embd + 2 * embd + 0] = complex_spec[2 * (embd * n_codes + code) + 0];
             stft[code * n_embd + 2 * embd + 1] = complex_spec[2 * (embd * n_codes + code) + 1];
@@ -382,28 +411,49 @@ static std::vector<float> embeddings_to_audio(
     std::vector<float> envelope_columns(static_cast<size_t>(n_codes * n_fft));
     int worker_count = std::max(1, n_threads);
     std::vector<std::thread> workers(static_cast<size_t>(worker_count));
+    std::atomic<bool> worker_failed{false};
+    std::mutex worker_error_gate;
+    std::exception_ptr worker_error;
     for (int worker = 0; worker < worker_count; ++worker) {
-        workers[static_cast<size_t>(worker)] = std::thread([&, worker]() {
-            for (int code = worker; code < n_codes; code += worker_count) {
-                irfft(n_fft, stft.data() + code * n_embd, result.data() + code * n_fft);
-                for (int index = 0; index < n_fft; ++index) {
-                    result[static_cast<size_t>(code * n_fft + index)] *= hann[static_cast<size_t>(index)];
-                    envelope_columns[static_cast<size_t>(code * n_fft + index)] = hann[static_cast<size_t>(index)] * hann[static_cast<size_t>(index)];
+        try {
+            workers[static_cast<size_t>(worker)] = std::thread([&, worker]() {
+                try {
+                    for (int code = worker; code < n_codes; code += worker_count) {
+                        if (worker_failed.load() || (resident && realtime_abort(resident))) return;
+                        irfft(n_fft, stft.data() + code * n_embd, result.data() + code * n_fft, resident);
+                        for (int index = 0; index < n_fft; ++index) {
+                            result[static_cast<size_t>(code * n_fft + index)] *= hann[static_cast<size_t>(index)];
+                            envelope_columns[static_cast<size_t>(code * n_fft + index)] = hann[static_cast<size_t>(index)] * hann[static_cast<size_t>(index)];
+                        }
+                    }
+                } catch (...) {
+                    worker_failed.store(true);
+                    if (resident) resident->cancelled.store(true);
+                    std::lock_guard<std::mutex> lock(worker_error_gate);
+                    if (!worker_error) worker_error = std::current_exception();
                 }
-            }
-        });
+            });
+        } catch (...) {
+            worker_failed.store(true);
+            if (resident) resident->cancelled.store(true);
+            for (auto & started : workers) if (started.joinable()) started.join();
+            throw;
+        }
     }
 
     for (auto & worker : workers) {
         worker.join();
     }
+    if (worker_error) std::rethrow_exception(worker_error);
+    if (resident && realtime_abort(resident)) throw std::runtime_error("TTS cancelled");
 
     std::vector<float> audio;
     std::vector<float> envelope;
-    fold(result, n_out, n_win, n_hop, n_pad, audio);
-    fold(envelope_columns, n_out, n_win, n_hop, n_pad, envelope);
+    fold(result, n_out, n_win, n_hop, n_pad, audio, resident);
+    fold(envelope_columns, n_out, n_win, n_hop, n_pad, envelope, resident);
 
     for (size_t i = 0; i < audio.size(); ++i) {
+        if (resident && i % 4096 == 0 && realtime_abort(resident)) throw std::runtime_error("TTS cancelled");
         if (std::abs(envelope[i]) > 1e-12f) {
             audio[i] /= envelope[i];
         } else {
@@ -414,14 +464,15 @@ static std::vector<float> embeddings_to_audio(
     return audio;
 }
 
-static std::vector<int16_t> floats_to_pcm16(std::vector<float> audio) {
-    const auto silence = std::min<size_t>(audio.size(), k_default_sample_rate / 4);
+static std::vector<int16_t> floats_to_pcm16(std::vector<float> audio, bool realtime = false) {
+    const auto silence = realtime ? 0 : std::min<size_t>(audio.size(), k_default_sample_rate / 4);
     for (size_t i = 0; i < silence; ++i) {
         audio[i] = 0.0f;
     }
 
     std::vector<int16_t> pcm(audio.size());
     for (size_t i = 0; i < audio.size(); ++i) {
+        if (!std::isfinite(audio[i])) throw std::runtime_error("TTS produced a non-finite audio sample");
         auto sample = std::clamp(audio[i] * 32767.0f, -32768.0f, 32767.0f);
         pcm[i] = static_cast<int16_t>(sample);
     }
@@ -739,7 +790,7 @@ static std::vector<llama_token> generate_codes(
     llama_sampler * sampler,
     std::vector<llama_token> guide_tokens,
     int initial_position,
-    int n_predict) {
+    int n_predict, realtime_tts_session * resident = nullptr) {
     std::vector<llama_token> codes;
     batch_handle batch(1, 0, 1);
     int n_past = initial_position;
@@ -747,6 +798,7 @@ static std::vector<llama_token> generate_codes(
     bool next_token_uses_guide_token = true;
 
     while (n_decode <= n_predict) {
+        if (resident && realtime_abort(resident)) throw std::runtime_error("TTS cancelled");
         batch_clear(batch.batch);
 
         llama_token token = sample_token(context, sampler);
@@ -778,7 +830,8 @@ static std::vector<llama_token> generate_codes(
     return codes;
 }
 
-static tts_audio synthesize(const tomur_tts_request & request, std::vector<std::string> & diagnostics) {
+static tts_audio synthesize(const tomur_tts_request & request, std::vector<std::string> & diagnostics,
+    realtime_tts_session * resident = nullptr) {
     ensure_backend_initialized();
 
     const std::string text = read_string(request.text_utf8);
@@ -790,7 +843,15 @@ static tts_audio synthesize(const tomur_tts_request & request, std::vector<std::
     auto model_params = llama_model_default_params();
     model_params.n_gpu_layers = std::max(0, request.gpu_layers);
 
-    model_ptr text_to_codes_model(llama_model_load_from_file(acoustic_model_path.c_str(), model_params));
+    realtime_tts_session temporary;
+    auto & storage = resident ? *resident : temporary;
+    if (resident) {
+        if (realtime_abort(resident)) throw std::runtime_error("TTS cancelled or timed out");
+        model_params.progress_callback = realtime_load_progress;
+        model_params.progress_callback_user_data = resident;
+    }
+    auto & text_to_codes_model = storage.acoustic;
+    if (!text_to_codes_model) text_to_codes_model.reset(llama_model_load_from_file(acoustic_model_path.c_str(), model_params));
     if (!text_to_codes_model) {
         throw std::runtime_error("failed to load OuteTTS acoustic GGUF model");
     }
@@ -807,10 +868,17 @@ static tts_audio synthesize(const tomur_tts_request & request, std::vector<std::
     context_params.offload_kqv = request.gpu_layers > 0;
     context_params.op_offload = request.gpu_layers > 0;
 
-    context_ptr text_to_codes_context(llama_init_from_model(text_to_codes_model.get(), context_params));
+    if (resident) {
+        context_params.abort_callback = realtime_abort;
+        context_params.abort_callback_data = resident;
+    }
+    auto & text_to_codes_context = storage.acoustic_context;
+    if (!text_to_codes_context) text_to_codes_context.reset(llama_init_from_model(text_to_codes_model.get(), context_params));
     if (!text_to_codes_context) {
         throw std::runtime_error("failed to create OuteTTS acoustic model context");
     }
+    if (resident && llama_get_memory(text_to_codes_context.get()))
+        llama_memory_clear(llama_get_memory(text_to_codes_context.get()), true);
 
     const llama_vocab * vocab = llama_model_get_vocab(text_to_codes_model.get());
     if (vocab == nullptr) {
@@ -869,7 +937,7 @@ static tts_audio synthesize(const tomur_tts_request & request, std::vector<std::
         sampler.get(),
         std::move(guide_tokens),
         static_cast<int>(prompt_tokens.size()),
-        k_max_predict);
+        std::min(k_max_predict, k_context_size - static_cast<int>(prompt_tokens.size()) - 1), resident);
 
     auto generated_tokens = static_cast<int>(codes.size());
     codes.erase(
@@ -882,19 +950,21 @@ static tts_audio synthesize(const tomur_tts_request & request, std::vector<std::
     if (codes.empty()) {
         throw std::runtime_error("OuteTTS did not generate any audio code tokens");
     }
+    if (resident && codes.size() > 2200) throw std::runtime_error("TTS segment exceeds the audio budget");
 
     for (auto & token : codes) {
         token -= k_audio_token_min;
     }
 
-    model_ptr codes_to_speech_model(llama_model_load_from_file(voice_model_path.c_str(), model_params));
+    auto & codes_to_speech_model = storage.vocoder;
+    if (!codes_to_speech_model) codes_to_speech_model.reset(llama_model_load_from_file(voice_model_path.c_str(), model_params));
     if (!codes_to_speech_model) {
         throw std::runtime_error("failed to load WavTokenizer GGUF model");
     }
 
     auto vocoder_context_params = llama_context_default_params();
-    vocoder_context_params.n_ctx = std::max<int>(static_cast<int>(codes.size()), 512);
-    vocoder_context_params.n_batch = std::max<int>(static_cast<int>(codes.size()), 512);
+    vocoder_context_params.n_ctx = resident ? k_max_predict : std::max<int>(static_cast<int>(codes.size()), 512);
+    vocoder_context_params.n_batch = vocoder_context_params.n_ctx;
     vocoder_context_params.n_ubatch = vocoder_context_params.n_batch;
     vocoder_context_params.n_seq_max = 1;
     vocoder_context_params.n_threads = threads;
@@ -904,12 +974,20 @@ static tts_audio synthesize(const tomur_tts_request & request, std::vector<std::
     vocoder_context_params.offload_kqv = request.gpu_layers > 0;
     vocoder_context_params.op_offload = request.gpu_layers > 0;
 
-    context_ptr codes_to_speech_context(llama_init_from_model(codes_to_speech_model.get(), vocoder_context_params));
+    if (resident) {
+        vocoder_context_params.abort_callback = realtime_abort;
+        vocoder_context_params.abort_callback_data = resident;
+    }
+    auto & codes_to_speech_context = storage.vocoder_context;
+    if (!codes_to_speech_context) codes_to_speech_context.reset(llama_init_from_model(codes_to_speech_model.get(), vocoder_context_params));
     if (!codes_to_speech_context) {
         throw std::runtime_error("failed to create WavTokenizer context");
     }
 
     llama_set_embeddings(codes_to_speech_context.get(), true);
+    if (resident && llama_get_memory(codes_to_speech_context.get()))
+        llama_memory_clear(llama_get_memory(codes_to_speech_context.get()), true);
+    if (resident && realtime_abort(resident)) throw std::runtime_error("TTS cancelled or timed out");
     batch_handle vocoder_batch(static_cast<int32_t>(codes.size()), 0, 1);
     for (size_t i = 0; i < codes.size(); ++i) {
         batch_add(vocoder_batch.batch, codes[i], static_cast<llama_pos>(i), 0, true);
@@ -923,10 +1001,20 @@ static tts_audio synthesize(const tomur_tts_request & request, std::vector<std::
 
     const int n_embd = llama_model_n_embd_out(codes_to_speech_model.get());
     const float * embeddings = llama_get_embeddings(codes_to_speech_context.get());
-    auto audio = embeddings_to_audio(embeddings, static_cast<int>(codes.size()), n_embd, threads);
+    auto audio = embeddings_to_audio(embeddings, static_cast<int>(codes.size()), n_embd, threads, resident);
+    if (resident && realtime_abort(resident)) throw std::runtime_error("TTS cancelled or timed out");
+    if (resident) {
+        // A short ramp preserves real onset samples without injecting silence.
+        const size_t ramp = std::min<size_t>(120, audio.size() / 2);
+        for (size_t i = 0; i < ramp; ++i) {
+            const float gain = static_cast<float>(i) / static_cast<float>(ramp);
+            audio[i] *= gain;
+            audio[audio.size() - 1 - i] *= gain;
+        }
+    }
 
     return tts_audio {
-        floats_to_pcm16(std::move(audio)),
+        floats_to_pcm16(std::move(audio), resident != nullptr),
         k_default_sample_rate,
         static_cast<int>(prompt_tokens.size()),
         generated_tokens,
@@ -1006,4 +1094,62 @@ TOMUR_TTS_EXPORT void tomur_tts_result_free(tomur_tts_result * result) {
     std::free(result->diagnostics_json);
     std::free(result->error_utf8);
     std::free(result);
+}
+
+TOMUR_TTS_EXPORT int tomur_realtime_tts_abi() { return 1; }
+
+TOMUR_TTS_EXPORT void * tomur_realtime_tts_create(const char * acoustic, const char * vocoder,
+    int (*cancelled)(void *), void * user) {
+    if (!acoustic || !vocoder || !cancelled) return nullptr;
+    try {
+        ensure_backend_initialized();
+        auto session = std::make_unique<realtime_tts_session>();
+        session->external_cancelled = cancelled;
+        session->external_user = user;
+        session->deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+        auto params = llama_model_default_params();
+        params.n_gpu_layers = 0;
+        params.progress_callback = realtime_load_progress;
+        params.progress_callback_user_data = session.get();
+        session->acoustic.reset(llama_model_load_from_file(acoustic, params));
+        if (!session->acoustic) return nullptr;
+        session->vocoder.reset(llama_model_load_from_file(vocoder, params));
+        if (!session->vocoder) return nullptr;
+        session->external_cancelled = nullptr;
+        session->external_user = nullptr;
+        return session.release();
+    } catch (...) { return nullptr; }
+}
+
+TOMUR_TTS_EXPORT void tomur_realtime_tts_reset(void * opaque) {
+    if (opaque) static_cast<realtime_tts_session *>(opaque)->cancelled.store(false);
+}
+
+TOMUR_TTS_EXPORT void tomur_realtime_tts_cancel(void * opaque) {
+    if (opaque) static_cast<realtime_tts_session *>(opaque)->cancelled.store(true);
+}
+
+// Callback memory is borrowed for the duration of the call. Returning zero
+// cancels output immediately; no exception may cross this ABI.
+TOMUR_TTS_EXPORT int tomur_realtime_tts_synthesize(void * opaque, const char * text, int threads,
+    int (*on_pcm)(const int16_t *, int, void *), void * user) {
+    auto * session = static_cast<realtime_tts_session *>(opaque);
+    if (!session || !text || !on_pcm || std::strlen(text) > 2048) return -1;
+    try {
+        session->deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        tomur_tts_request request{text, nullptr, nullptr, nullptr, 24000, std::clamp(threads, 1, 32), 0};
+        std::vector<std::string> diagnostics;
+        auto audio = synthesize(request, diagnostics, session);
+        if (audio.pcm.size() > 24000 * 30) return -3;
+        for (size_t offset = 0; offset < audio.pcm.size(); offset += 2400) {
+            if (realtime_abort(session)) return -2;
+            const int count = static_cast<int>(std::min<size_t>(2400, audio.pcm.size() - offset));
+            if (!on_pcm(audio.pcm.data() + offset, count, user)) return -2;
+        }
+        return 0;
+    } catch (...) { return -4; }
+}
+
+TOMUR_TTS_EXPORT void tomur_realtime_tts_destroy(void * opaque) {
+    delete static_cast<realtime_tts_session *>(opaque);
 }

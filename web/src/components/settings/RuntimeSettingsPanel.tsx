@@ -44,6 +44,18 @@ export function RuntimeSettingsPanel({
 
   return (
     <Space direction="vertical" size={16} className="drawer-stack">
+      {runtimeStatus?.realtime && <Descriptions title="语音会话" size="small" column={2}
+        items={[
+          { key: "state", label: "状态", children: runtimeStatus.realtime.state },
+          { key: "resident", label: "语音模型驻留", children: runtimeStatus.realtime.models_resident ? "是" : "否" },
+          { key: "asr", label: "转写已执行", children: runtimeStatus.realtime.asr_warm ? "是" : "否" },
+          { key: "tts", label: "合成已执行", children: runtimeStatus.realtime.tts_warm ? "是" : "否" },
+          { key: "duplex", label: "全双工", children: runtimeStatus.realtime.full_duplex },
+          { key: "smoke", label: "设备验收", children: runtimeStatus.realtime.smoke },
+          { key: "input", label: "输入缓冲", children: formatBytes(runtimeStatus.realtime.input_buffered_bytes) },
+          { key: "output", label: "待播放", children: `${runtimeStatus.realtime.output_unconsumed_ms} ms` },
+          { key: "error", label: "最近错误", children: runtimeStatus.realtime.last_error ?? "无" }
+        ]} />}
       {managedSessionLoaded && session
         ? <ManagedExecutionSummary session={session} />
         : <AccelerationSummary acceleration={runtimeStatus?.acceleration} />}

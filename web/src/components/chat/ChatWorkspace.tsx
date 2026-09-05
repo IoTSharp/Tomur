@@ -1,4 +1,7 @@
 import type { BubbleItemType } from "@ant-design/x";
+import { useState } from "react";
+import { RealtimeVoiceBar } from "./RealtimeVoiceBar";
+import "./realtime.css";
 import type { ChatOptions } from "../../app/chatOptions";
 import { promptItems, promptText } from "../../app/constants";
 import { resolvePromptText } from "../../app/promptContext";
@@ -67,7 +70,9 @@ export function ChatWorkspace({
   onChatOptionsChange,
   onSubmitMessage,
   onStopGeneration,
-  onRegenerate
+  onRegenerate,
+  ensureVoiceConversation,
+  onVoiceCommitted
 }: {
   activeConversation: Conversation;
   bubbleItems: BubbleItemType[];
@@ -111,7 +116,10 @@ export function ChatWorkspace({
   onSubmitMessage: (value: string) => void | Promise<void>;
   onStopGeneration: () => void;
   onRegenerate: () => void | Promise<void>;
+  ensureVoiceConversation: () => Promise<string>;
+  onVoiceCommitted: () => void;
 }) {
+  const [voiceActive, setVoiceActive] = useState(false);
   return (
     <main className="workspace">
       <WorkspaceHeader
@@ -152,10 +160,15 @@ export function ChatWorkspace({
         }}
       />
 
+      <RealtimeVoiceBar key={activeConversation.id} model={selectedModelLabel} options={chatOptions}
+        disabled={sending || recording || uploadingAttachment} ensureConversation={ensureVoiceConversation}
+        onCommitted={onVoiceCommitted} onActiveChange={setVoiceActive} />
+
       <ComposerBar
         input={input}
         sending={sending}
         recording={recording}
+        voiceActive={voiceActive}
         uploadingAttachment={uploadingAttachment}
         multimodalAction={multimodalAction}
         speechEnabled={speechEnabled}

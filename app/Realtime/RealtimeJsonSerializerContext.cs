@@ -3,6 +3,8 @@ using System.Text.Json.Serialization;
 namespace Tomur.Realtime;
 
 [JsonSerializable(typeof(RealtimeLimitsResponse))]
+[JsonSerializable(typeof(RealtimePipelineEvent))]
+[JsonSerializable(typeof(RealtimeRuntimeSnapshot))]
 [JsonSerializable(typeof(RealtimeRegistrySnapshot))]
 [JsonSerializable(typeof(RealtimeCapabilityStatus))]
 [JsonSerializable(typeof(RealtimeStatusResponse))]

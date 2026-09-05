@@ -61,6 +61,8 @@ add_subdirectory(
 )
 
 target_sources(whisper PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/whisper_bridge.c)
+target_sources(whisper PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/realtime_bridge.cpp)
+target_compile_features(whisper PRIVATE cxx_std_17)
 
 function(tomur_link_whisper_shared_backend target_name imported_target)
     if(TARGET ${imported_target})

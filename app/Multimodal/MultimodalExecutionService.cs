@@ -120,6 +120,7 @@ public sealed class MultimodalExecutionService
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        using var resources = Realtime.RealtimeResourceCoordinator.EnterOperation();
         EnsureBackendReady("vlm", model.Id);
         EnsureImages(images);
         var mmprojPath = ResolveRequiredBundleAsset(model, "mmproj");
@@ -177,6 +178,7 @@ public sealed class MultimodalExecutionService
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        using var resources = Realtime.RealtimeResourceCoordinator.EnterOperation();
         EnsureBackendReady("ocr", model.Id);
         var mmprojPath = ResolveRequiredBundleAsset(model, "mmproj");
 
@@ -232,6 +234,7 @@ public sealed class MultimodalExecutionService
         ArgumentNullException.ThrowIfNull(options);
 
         cancellationToken.ThrowIfCancellationRequested();
+        using var resources = Realtime.RealtimeResourceCoordinator.EnterOperation();
         EnsureBackendReady("image-generation", model.Id);
 
         var started = DateTimeOffset.UtcNow;
@@ -370,6 +373,7 @@ public sealed class MultimodalExecutionService
         ArgumentNullException.ThrowIfNull(audioBytes);
 
         cancellationToken.ThrowIfCancellationRequested();
+        using var resources = Realtime.RealtimeResourceCoordinator.EnterOperation();
         EnsureBackendReady("asr", model.Id);
 
         var started = DateTimeOffset.UtcNow;
@@ -486,6 +490,7 @@ public sealed class MultimodalExecutionService
         ArgumentNullException.ThrowIfNull(options);
 
         cancellationToken.ThrowIfCancellationRequested();
+        using var resources = Realtime.RealtimeResourceCoordinator.EnterOperation();
         EnsureBackendReady("tts", model.Id);
 
         var started = DateTimeOffset.UtcNow;
@@ -618,7 +623,7 @@ public sealed class MultimodalExecutionService
         return new StableDiffusionBundle(diffusionModelPath, vaePath, llmPath);
     }
 
-    private string ResolveRequiredBundleAsset(LocalModelDescriptor model, string assetKey)
+    internal string ResolveRequiredBundleAsset(LocalModelDescriptor model, string assetKey)
     {
         if (string.IsNullOrWhiteSpace(model.PackageId))
         {
@@ -662,6 +667,13 @@ public sealed class MultimodalExecutionService
         }
 
         var path = Path.GetFullPath(Path.Combine(paths.ModelsDirectory, relativePath.Replace('/', Path.DirectorySeparatorChar)));
+        var withinModels = Path.GetRelativePath(paths.ModelsDirectory, path);
+        if (Path.IsPathRooted(withinModels) || withinModels == ".." || withinModels.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+            throw new InferenceException("model_bundle_path_invalid", "The model bundle asset is outside the local models directory.", []);
+        if (asset.ExpectedSha256 is not null && (!asset.Sha256Verified ||
+            !string.Equals(asset.ExpectedSha256, asset.ActualSha256, StringComparison.OrdinalIgnoreCase)))
+            throw new InferenceException("model_bundle_checksum_invalid", "The required model asset has not passed its declared checksum verification.",
+                ["Reinstall the local model bundle before starting inference."]);
         if (!File.Exists(path))
         {
             throw new InferenceException(

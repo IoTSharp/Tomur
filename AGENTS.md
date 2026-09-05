@@ -63,6 +63,7 @@
 - Realtime v1 首个发布边界仅允许 loopback；必须校验 Host、浏览器 Origin、subprotocol、连接配额和身份凭据。一次性 ticket、API key、session token 或重连 token 不得进入 URL query 或日志。
 - Realtime 认证失败、协议错误或配额拒绝必须在分配 native session 前结束；控制事件、音频帧、队列、超时、单次发言和 session 必须有明确上限，不得静默丢弃或无界缓冲。
 - Realtime gateway available、VAD/ASR/TTS model ready、session warm、full duplex connected 与 realtime smoke passed 必须分开表达；未接通增量本地 runtime 时返回明确不可用诊断，不得伪造 transcript、文本或音频。
+- Realtime Web 默认使用半双工；双向模式必须显式选择实验选项并确认设备 AEC 已启用，未取得性能、回声与质量证据前始终报告 degraded/unverified。语音模型按 session 驻留，普通推理、模型卸载和 runtime repair 必须遵守同一进程内资源预留与取消边界。
 - 未接通本地 runtime 时，API 必须返回清晰的未配置或不可用诊断，不得伪造推理结果。
 - Streaming、错误响应、模型未下载、runtime 不可用、上下文超限等协议行为必须明确设计。
 

@@ -174,6 +174,7 @@ public sealed class SessionManager : IDisposable
 
     private T Execute<T>(CancellationToken cancellationToken, Func<CancellationToken, T> action)
     {
+        using var resources = Realtime.RealtimeResourceCoordinator.EnterOperation();
         executionGate.Wait(cancellationToken);
         CancellationTokenSource? requestCancellation = null;
         try
@@ -453,6 +454,7 @@ public sealed class SessionManager : IDisposable
 
     public void Unload()
     {
+        using var resources = Realtime.RealtimeResourceCoordinator.EnterOperation(interrupt: true);
         CancellationTokenSource? cancellation;
         lock (gate)
         {
@@ -498,7 +500,9 @@ public sealed class SessionManager : IDisposable
         CancellationToken cancellationToken,
         out bool releasedSession)
     {
-        executionGate.Wait(cancellationToken);
+        var resources = Realtime.RealtimeResourceCoordinator.EnterOperation();
+        try { executionGate.Wait(cancellationToken); }
+        catch { resources.Dispose(); throw; }
         try
         {
             lock (gate)
@@ -508,21 +512,27 @@ public sealed class SessionManager : IDisposable
                 UnloadCore();
             }
 
-            return new ExecutionLease(executionGate);
+            return new ExecutionLease(executionGate, resources);
         }
         catch
         {
             executionGate.Release();
+            resources.Dispose();
             throw;
         }
     }
 
-    private sealed class ExecutionLease(SemaphoreSlim executionGate) : IDisposable
+    private sealed class ExecutionLease(SemaphoreSlim executionGate, IDisposable resources) : IDisposable
     {
         private SemaphoreSlim? gate = executionGate;
 
         public void Dispose()
-            => Interlocked.Exchange(ref gate, null)?.Release();
+        {
+            var owned = Interlocked.Exchange(ref gate, null);
+            if (owned is null) return;
+            owned.Release();
+            resources.Dispose();
+        }
     }
 
     public SessionSnapshot GetSnapshot()

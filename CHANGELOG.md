@@ -4,11 +4,21 @@
 
 ## 未发布
 
+### R20 Realtime 原生语音管线
+
+在既有认证网关上接通常驻 Silero VAD/Whisper 与 TTS acoustic/WavTokenizer session，提供 speech endpoint、滚动 partial/唯一 final transcript、有界 token 与短句队列、24 kHz PCM callback、播放水位和 response epoch 取消栅栏。客户端确认的助手前缀递增写入同一 conversation，原始麦克风 PCM 与 partial 只驻留内存。进程内资源协调覆盖文本与多模态推理、模型卸载、隔离图像请求和 native repair；释放完成前返回结构化 busy，不排队加载另一套模型。
+
+Chat 新增 AudioWorklet 语音入口、输入与播放设备、静音、手动提交、取消、结束、有限重连，以及 44.1/48 kHz 采集与输出重采样、有界播放缓冲和 underrun 状态。默认半双工，实验性双向要求浏览器报告 AEC；runtime API、doctor 和 Settings 分别显示驻留、执行、缓冲与未验证状态。新增 .NET 端点检测/资源边界、DSP 夹具和浏览器取消/重连/迟到授权测试代码。
+
+补齐提交发送失败、转写期间取消、输入流切换和会话关闭的资源归属；播放消费完成后再恢复 listening。Whisper 加载异常释放部分 native context，TTS 重叠相加按实际列数执行，并加入频谱维度、DSP 取消和线程异常回收。
+
+本轮未执行构建、测试、native 编译、服务启动或真实模型/设备 smoke；现有发布库必须包含新增 Realtime ABI 后才能使用语音管线。OpenAI Realtime 风格适配仍待实现，性能、AEC、质量、跨平台和发布验收保持 pending，R20 不标记完成。
+
 ### R20 Realtime 会话网关基础
 
 已接入 Tomur 原生 `tomur.realtime.v1` WebSocket 协议基础：新增 `/api/realtime/v1`、`POST /api/realtime/tickets` 与 `GET /api/realtime/status`，建立 loopback Host/Origin/subprotocol 校验、Bearer 与短期一次性 ticket 认证、重放保护、pending/单活跃 session 配额、严格递增事件序号、44 字节固定 PCM 帧头、有界收发队列、手动 commit 的内存内输入音频缓冲、超时和结构化关闭诊断。原始 PCM 在 commit、clear、错误或断开时清零回收，不进入 conversation store、文件或日志。
 
-当前 `input_audio_buffer.commit` 在记录已提交的内存边界后返回 `realtime_pipeline_unavailable`，不伪造 transcript、文本或音频。VAD session、常驻 Whisper、增量文本/TTS、AudioWorklet、全双工与 barge-in 尚未接入；新增协议与 smoke 文档的证据状态保持 pending。本轮未执行构建、测试、服务启动或真实设备 smoke，不构成 R20 P0/P1 完成证据。
+该基础切片的 `input_audio_buffer.commit` 只返回 `realtime_pipeline_unavailable`，未执行推理；后续原生语音管线接入见上一节。该切片没有构建、测试、服务启动或真实设备 smoke 证据，不构成 R20 P0/P1 完成证据。
 
 ### 车牌识别 ARM64 发布
 

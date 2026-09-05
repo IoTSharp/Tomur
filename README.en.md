@@ -96,7 +96,7 @@ The default local service URL is `http://127.0.0.1:5137`.
 10. 🎛️ Multimodal native runtimes for Whisper, OCR native, HyperLPR3/MNN plate recognition, stable-diffusion.cpp, and llama.cpp TTS / GGUF TTS.
 11. 🖥️ System service mode.
 12. 🧑‍💻 React + Ant Design X web workspace.
-13. 🎙️ Local Realtime WebSocket session-gateway foundation. The `tomur.realtime.v1` protocol shell, one-time tickets, a single-active-session lease, bounded queues, and manual-commit in-memory PCM buffering are connected. VAD, incremental ASR/TTS, AudioWorklet, full duplex, and real-device smoke remain unconnected or unverified.
+13. 🎙️ Local Realtime voice sessions. `tomur.realtime.v1` connects one-time tickets, resident Silero/Whisper/TTS sessions, rolling transcription, streaming text and sentence audio, cancellation, and acknowledged conversation history. Chat includes AudioWorklet capture/playback, device selection, and bounded reconnection. Half duplex is the default; experimental duplex requires AEC. The new native ABI, builds, real devices, latency, and release acceptance remain unverified. See the [R20 protocol](./docs/r20-realtime-protocol-v1.md).
 
 Tomur does not fabricate inference results when the local runtime is unavailable. Missing models, unavailable native runtime or managed providers, damaged bundle assets, context length limits, capability mismatches, and insufficient memory are reported as diagnosable errors through the API, CLI, and UI.
 

@@ -1,6 +1,6 @@
 # R20 Realtime 双向语音 smoke 记录
 
-> 当前结论：全部 R20 smoke 项均为 `pending`。本文只是证据入口和验收矩阵，不包含已执行结果，不表示 P0 或 P1 完成。VAD、增量 ASR、增量 TTS、full duplex、barge-in 和 AudioWorklet 尚未接入；gateway、构建或 fake engine 单独通过也不能改写这一结论。
+> 当前结论：全部 R20 smoke 项均为 `pending`。原生语音管线、AudioWorklet 与取消/确认边界已有代码，但本轮没有执行构建、测试、native 编译、服务启动或真实模型/设备验证。默认半双工，实验性双向仍为 degraded；gateway、构建或 fake engine 单独通过不能改写 R20 的验收结论。
 
 ## 当前状态
 
@@ -8,10 +8,10 @@
 | --- | --- | --- |
 | 原生协议 v1 契约 | pending | 协议字段已记录在 [r20-realtime-protocol-v1.md](./r20-realtime-protocol-v1.md)，尚无执行证据。 |
 | WebSocket gateway | pending | 尚未记录 upgrade、认证、事件顺序、binary frame、背压或清理 smoke。 |
-| Push-to-talk pipeline | pending | `input_audio_buffer.commit` 当前只允许返回 `realtime_pipeline_unavailable`，不得产生伪 transcript/audio。 |
-| VAD | pending | Silero sidecar 资产存在不代表 VAD ABI、session 或 speech event 已接入。 |
+| Push-to-talk pipeline | pending | 已接入真实 ASR -> 文本 -> 短句 TTS；模型或 Realtime ABI 缺失必须返回明确诊断。 |
+| VAD | pending | 已接入 Silero recurrent ABI、pre-roll 与 speech endpoint；尚无事件精度/召回证据。 |
 | 增量 ASR | pending | 现有文件级 Whisper smoke 不证明常驻 session、partial/final 或 native abort。 |
-| 增量文本 | pending | 现有 token callback 不证明网络解耦、response epoch 或慢客户端背压。 |
+| 增量文本 | pending | 已接入 token/短句有界队列、发送取消栅栏和确认前缀；未执行竞态与慢客户端测试。 |
 | 增量 TTS | pending | 现有整段 WAV smoke 不证明模型常驻、PCM callback、audio delta 或实时系数。 |
 | AudioWorklet 与连续播放 | pending | 固定帧采集、重采样、jitter buffer、漂移和 underrun 尚未验证。 |
 | Full duplex 与 barge-in | pending | AEC、误触发、插话召回和停止播放延迟尚无真实设备证据。 |
@@ -30,7 +30,7 @@
 | MVP 暴露范围 | loopback only |
 | 输入音频 | PCM16LE、16 kHz、mono、20 ms、640 bytes/frame |
 | Binary header | 44 bytes，详见协议文档 |
-| 当前 commit 结果 | `realtime_pipeline_unavailable` |
+| 当前 commit 结果 | 有效 session 执行本地管线；旧 native 库返回 `realtime_native_abi_unavailable` |
 
 测试不得把凭据放入 URL、文件名、控制台命令历史或普通日志。证据中的 API key、ticket、session token、cookie、Authorization header 和未来 reconnect token 必须写成 `[REDACTED]`。
 
@@ -113,10 +113,10 @@ docs/r20-smoke-evidence/<yyyy-mm-dd>/<run-id>/
 | `R20-CTL-003` | event_id 重复 | `duplicate_event_id`；不得重复执行动作 | pending |
 | `R20-CTL-004` | `session.update` 使用固定输入格式 | 返回 `session.updated` 与实际采用配置 | pending |
 | `R20-CTL-005` | `session.ping` | 2 秒 send deadline 内返回 `session.pong`，其 `client_event_id` 等于 ping 的 `event_id` | pending |
-| `R20-CTL-006` | `session.close` 的 reason 省略、为 allowlist 值或为任意其他文本 | 返回 `session.closed`；只保留 `client_closed`、`user_requested`、`page_unload`，其余统一为 `client_closed`，2 秒内释放连接资源 | pending |
+| `R20-CTL-006` | `session.close` 的 reason 省略、为 allowlist 值或为任意其他文本 | 只保留允许的 reason；transport close 最多 2 秒，native 协作退出后才释放句柄和资源预留 | pending |
 | `R20-CTL-007` | 未知或未来事件 | `unsupported_event`，不能静默忽略 | pending |
-| `R20-CTL-008` | 不存在 active response 的 `response.cancel` | 幂等 `response.cancelled`，`reason=not_active`，不产生内容 | pending |
-| `R20-CTL-009` | 不存在或不活跃 response 的 displayed/consumed ack | 可恢复的 `response_not_active` | pending |
+| `R20-CTL-008` | 不存在 active response 的 `response.cancel` | 幂等 `response.cancelled`，`status=not_active`，不产生内容 | pending |
+| `R20-CTL-009` | 不存在或已结束 epoch 的 displayed/consumed ack | 不写入当前 response；当前 epoch 的越界/回退确认返回 invalid ack 诊断 | pending |
 | `R20-CTL-010` | JSON 恰好 16 KiB 与超过 16 KiB | 边界值行为一致；超限为 `message_too_large` | pending |
 | `R20-CTL-011` | 32 与 33 fragments | 32 可重组；33 为 `fragment_limit_exceeded` | pending |
 | `R20-CTL-012` | 无效 UTF-8、空 JSON 或错误字段类型 | `invalid_event`，服务不崩溃 | pending |
@@ -131,14 +131,14 @@ docs/r20-smoke-evidence/<yyyy-mm-dd>/<run-id>/
 | `R20-BIN-004` | magic/version/kind/flags 任一错误 | 返回对应 `binary_magic_mismatch`、`binary_version_mismatch`、`binary_kind_unsupported` 或 `binary_flags_unsupported` | pending |
 | `R20-BIN-005` | payload length 与实际长度不一致或声明过大 | `binary_length_mismatch` 或 `binary_payload_too_large` | pending |
 | `R20-BIN-006` | 输入 payload 为 638、639、641 或 642 bytes | `input_audio_frame_size_invalid`；只接受固定 640 bytes | pending |
-| `R20-BIN-007` | capture sequence 从 `1` 连续增长 | 首帧发送 `input_audio_buffer.started` | pending |
+| `R20-BIN-007` | capture sequence 从 `1` 连续增长 | 持续接收；server VAD 确认开始后发送 speech_started | pending |
 | `R20-BIN-008` | capture sequence duplicate/gap/回退 | `audio_sequence_mismatch`，不静默补帧 | pending |
-| `R20-BIN-009` | 当前 capture 已 commit/clear 后，同一连接切换新 capture_stream_id | 新 stream sequence 从 `1` 开始，旧缓冲不串入；未先 commit/clear 的直接切换返回 `capture_stream_changed` 并关闭 | pending |
+| `R20-BIN-009` | 当前 capture 已 clear 后，同一连接切换新 capture_stream_id | 新 stream sequence 从 `1` 开始；commit 保持原 stream 连续递增，未 clear 直接切换返回 capture_stream_changed | pending |
 | `R20-BIN-010` | 30 秒、1,500 帧、960,000 payload bytes | 精确边界可接受 | pending |
-| `R20-BIN-011` | 超过 30 秒或 960,000 bytes | `input_audio_buffer_overflow`，缓冲不再增长 | pending |
+| `R20-BIN-011` | 超过 30 秒或 960,000 bytes | `utterance_too_long`，缓冲不再增长 | pending |
 | `R20-BIN-012` | `input_audio_buffer.clear` 省略/null/空白 capture_stream_id | 清理当前缓冲，返回 cleared 计数，内存缓冲归零 | pending |
-| `R20-BIN-013` | 有效 `input_audio_buffer.commit` | 先返回 `buffered_audio_bytes`/`duration_ms`，再返回非终止 `realtime_pipeline_unavailable` | pending |
-| `R20-BIN-014` | commit 后检查输出 | 无 transcript、assistant text、kind `2` frame 或静音占位音频 | pending |
+| `R20-BIN-013` | 有效 session 的 `input_audio_buffer.commit` | 返回提交字节/时长，唯一 final、文本 delta 与真实 PCM；同一 capture stream 连续递增 | pending |
+| `R20-BIN-014` | native 库缺少 Realtime ABI | session.update 返回 realtime_native_abi_unavailable；无伪造 transcript/text/PCM | pending |
 | `R20-BIN-015` | commit/clear 后检查本地状态 | PCM 不写文件、不进 SQLite、不进普通日志/trace | pending |
 | `R20-BIN-016` | `input_audio_buffer.clear` 提供 capture_stream_id | 匹配当前流时清理；无效或不匹配时返回可恢复的 `capture_stream_mismatch` 且保留缓冲 | pending |
 
@@ -157,15 +157,22 @@ docs/r20-smoke-evidence/<yyyy-mm-dd>/<run-id>/
 | `R20-LIM-007` | session 达到 15 分钟 | `session_duration_exceeded`，以 `4008` 有界终止且不接受后续 frame | pending |
 | `R20-LIM-008` | close peer 不响应或持续发送在途数据 | 2 秒或最多 32 次 receive 任一边界先到后中止 close 等待并释放本地资源 | pending |
 | `R20-LIM-009` | 页面卸载、网络断开和进程停止 | queue、CTS、task、socket 和 session lease 全部回收 | pending |
-| `R20-LIM-010` | 未来客户端连续自动重试策略 | 尚未接入；接入后最多 3 次并使用有界 backoff，不恢复旧 PCM、response 或副作用；当前 gateway 不跨连接计数 | pending |
+| `R20-LIM-010` | 客户端异常断线自动重试 | 最多 3 次，1.5/3/4.5 秒 backoff，不延长 15 分钟总截止，不恢复旧 PCM/response；协议和配额拒绝不重试 | pending |
 | `R20-LIM-011` | 多项超限并发发生 | 只完成一次关闭，计数不为负且 active lease 可再次获取 | pending |
 | `R20-LIM-012` | 正常、认证、协议、策略、busy、timeout 与 overflow 关闭 | WebSocket code 分别为 `1000`、`4001`、`4002`、`4003`、`4004`、`4008`、`4009`，并与结构化 `error.code` 一致 | pending |
+| `R20-LIM-013` | commit 事件发送失败或转写期间取消 | 快照清零、旧响应退出与 CTS 回收均完成；下一回合不发送旧 epoch 输出 | pending |
+| `R20-LIM-014` | 静音期间请求 unload/repair | 停止等待输入，返回 session_stopped 并回收 native；释放前 busy，释放后可重试 | pending |
+| `R20-LIM-015` | 最后一片音频仍在播放或客户端不再确认 | 消费完成前不报告 listening；最终确认最多等待 5 秒，超时取消 | pending |
+| `R20-LIM-016` | 连接中结束，随后浏览器授予麦克风权限 | 不创建新 WebSocket；迟到的 MediaStream track 全部停止 | pending |
+| `R20-LIM-017` | 流式文本恰好以高代理字符结束 | displayed 确认停在完整 Unicode 前缀，后续低代理字符到达后继续 | pending |
+| `R20-LIM-018` | Whisper/Silero 加载中止和 TTS DSP 中止 | 部分模型缓冲、context 和工作线程全部回收；TTS 重叠相加结果与修改前批处理基线一致 | pending |
+| `R20-LIM-019` | commit 后立即 clear 并开启新输入流 | 旧 final 仍携带提交时的 capture ID，新流序号从 1 开始；不混淆两次 utterance | pending |
 
 每个用例必须有测试自身的墙钟上限。执行结束后记录 pending/active count、仍存活的 session-owned tasks、channel item count、CTS、socket 和 native handle；仅观察进程总体存活不能证明清理完成。
 
 ## 后续语音质量 smoke
 
-以下用例在对应能力接入前不可执行，状态仍统一为 `pending`，不得用 fake engine 或批处理接口改成 passed。
+以下用例需要重新编译的 Realtime native ABI、真实本地模型与设备；状态统一为 `pending`，不得用 fake engine 或批处理接口改成 passed。
 
 | ID | 能力 | 通过门槛 | 状态 |
 | --- | --- | --- | --- |

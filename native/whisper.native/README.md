@@ -19,3 +19,12 @@ cmake --build --preset windows-x64 --target install
 cmake --preset linux-x64
 cmake --build --preset linux-x64 --target install
 ```
+## R20 Session ABI
+
+`realtime_bridge.cpp` 随既有 whisper 动态库编译，不增加独立运行进程或新的 ggml 资产目录。新增 `tomur_realtime_speech_abi`（返回 1）、`speech_create/reset/cancel/destroy`、`vad_process/reset` 与 `transcribe` 导出，完整前缀均为 `tomur_realtime_`。
+
+create 通过受取消回调和 60 秒截止控制的 model loader 加载 Whisper 与 Silero；process 接受 512 个 float 样本并保留 Silero recurrent state。transcribe 的 30 秒窗口、30 秒截止、16 KiB 文本缓冲和 abort callback 由 bridge 与宿主共同约束。VAD 与 ASR 使用不同 context；同一个 ASR context 不允许两个 transcribe 同时执行。
+
+模型读取按最多 1 MiB 分块检查取消。Whisper 子模块的加载失败路径同时释放已分配的权重缓冲；VAD loader 使用 RAII 回收部分构建的 context，并在 C ABI 内捕获加载异常。取消不会通过返回未初始化的模型字节来模拟 EOF。构建此 ABI 时必须包含这些子模块修复。
+
+宿主取消后必须等待调用返回，再 destroy；不能通过并发释放句柄强制中断 native。旧库没有这些导出时，Realtime 返回 `realtime_native_abi_unavailable`。源码接入尚未经过 native 编译、模型或设备 smoke，现有文件级导出保持兼容。

@@ -404,12 +404,12 @@ GLM 基础代码顺序、性能计划、集中验证门槛与发布标准见 [pr
 当前基线：
 
 1. `POST /v1/audio/transcriptions`、`POST /v1/audio/speech` 与 `POST /api/conversations/{conversationId}/voice-turns` 已提供文件级 ASR、整段 WAV TTS 和顺序式单回合语音处理；这些接口继续作为批处理兼容面和非 Realtime fallback。
-2. Web 工作台已经提供按钮式录音、16 kHz mono PCM WAV 转换、语音回合提交和 TTS 产物播放，但当前必须停止录音后整段上传，并等待 ASR、文本生成和 TTS 全部完成，不是持续双向流。
-3. 默认 Whisper bundle 已包含 Silero VAD sidecar 资产，但应用层尚无 VAD session、native bridge、speech start/stop 事件或独立 readiness 诊断；资产存在不代表 VAD 已接入。
-4. Whisper 当前每次请求创建 context 并执行一次阻塞式 `whisper_full`；TTS 当前每次请求重新加载 acoustic 与 WavTokenizer 模型并在完整合成后一次返回 PCM，二者都没有 Realtime 所需的常驻 session、增量结果和 native 取消闭环。
+2. Web 工作台保留按钮式录音和 WAV 回合，并接入独立 AudioWorklet 连续采集播放、模式与设备选择、静音、取消、结束和最多三次重连；默认半双工，双向模式保持实验性和 degraded 诊断。
+3. Silero sidecar 已通过独立 session ABI 接入 512-sample 循环状态窗口；应用层维护 300 ms pre-roll、100 ms speech-start 与 600 ms silence endpoint，阈值和真实设备质量尚待验证。
+4. Realtime 路径已接入常驻 Whisper context、4 秒重叠 partial 快照和唯一 final；TTS acoustic/WavTokenizer 模型常驻，按短句复用 context 和发送 PCM callback，native load/decode/DSP 与托管任务接入取消。文件级 ASR/TTS 保持原有接口。
 5. R8 真实模型 smoke 只证明批处理公开接口可执行，其中 ASR 记录为 `30016 ms`、TTS 记录为 `9574 ms`；该证据不代表实时延迟达标，见 [R8 Multimodal Smoke Report](./docs/r8-smoke-report.md)。
-6. 文本生成已有 token callback、请求取消、会话消息与产物持久化，可以作为 Realtime 文本阶段的基础；当前全局文本 session 仍由单执行门串行化，尚无独立 Realtime 资源协调、增量语音推理、输出音频背压或 barge-in 执行链。
-7. `tomur.realtime.v1` WebSocket 网关、一次性 ticket、单活跃 session、有界队列和手动 commit 输入缓冲已经接入，但尚未执行构建、协议或真实设备 smoke；AudioWorklet、VAD、ASR partial transcript、TTS audio delta、连续播放缓冲和断线恢复仍未实现。
+6. 已接入有界 token/短句/PCM 队列、统一进程内资源预留、输出播放水位、response epoch 取消栅栏和客户端确认后递增持久化。普通推理遇资源预留返回 busy；卸载和 repair 取消语音会话并在资源尚未回收时返回 409。
+7. 原生会话主链路代码已接通，补齐加载中止、提交发送失败、转写取消、播放结束确认和会话关闭清理；新增 .NET、44.1/48 kHz DSP 与浏览器取消/重连测试代码。本轮未执行构建、测试、native 编译或服务启动。OpenAI Realtime 适配、真实模型/设备、P0 go/no-go、性能质量与发布证据仍未完成，R20 保持进行中。
 
 产品与工程边界：
 
@@ -430,7 +430,7 @@ GLM 基础代码顺序、性能计划、集中验证门槛与发布标准见 [pr
 
 #### P0. 🚧 协议、性能与资源可行性闸门
 
-当前实施切片：先冻结 Tomur Realtime v1 原生控制事件、二进制 PCM 帧头、连接认证、单活跃 session 与有界队列契约，建立不分配 native session 的网关生命周期基础。VAD、增量 ASR、增量 TTS、全双工、前端 AudioWorklet 与真实设备延迟证据仍保持计划状态。
+当前实施切片：在现有网关上接通常驻 Silero/Whisper/TTS session、滚动转写、短句音频输出、响应取消与确认后持久化，并接入 Chat 内 AudioWorklet 采集播放、设备选择和有界重连。统一资源预留覆盖普通推理、模型卸载和 runtime repair；首版使用保守 CPU 语音路径，性能及 AEC 未验收时保持 degraded，不自动报告 full duplex ready。代码接入、构建通过与真实设备验收分别记录。
 
 1. 定义 `session`、`capture stream`、`utterance`、`turn`、`response`、`item`、`event`、`sequence` 和 `response epoch` 生命周期，冻结握手、认证首事件、固定二进制帧头、音频 append/commit/clear、gap、speech started/stopped、transcript delta/done、text delta/done、audio delta/done、text displayed acknowledgement、playback consumed acknowledgement、cancel、error 和 close 的事件语义。
 2. 定义状态机：`connecting -> listening -> user_speaking -> transcribing -> thinking -> speaking`，以及 `interrupted`、`reconnecting`、`failed` 和 `closed` 转移；每个转移都明确资源所有权、取消对象和允许接收的事件。
@@ -452,7 +452,7 @@ GLM 基础代码顺序、性能计划、集中验证门槛与发布标准见 [pr
 6. Web 端建立独立 Realtime session 状态模块；AudioWorklet 负责固定帧采集、输入降采样和声级数据，播放模块通过有界 jitter buffer、输出重采样、媒体时间线与设备时钟漂移修正把 24 kHz 网络 PCM 连续送入 44.1/48 kHz AudioContext，并监控 `WebSocket.bufferedAmount`。DSP 使用 44.1/48 kHz 确定性夹具验证，音频线程不得产生无界分配；达到高水位时按 P0 策略停止当前 utterance 或关闭 session，不把压力转移成无界浏览器内存。
 7. 保留现有录音按钮和 voice turn 请求作为 fallback，并为麦克风拒绝、AudioWorklet 不可用、握手失败、runtime busy、输入/输出 overflow 和 session 超时提供明确状态。
 
-#### P2. ⏳ VAD 与增量 ASR
+#### P2. 🚧 VAD 与增量 ASR
 
 1. 为现有 Silero sidecar 建立独立 VAD native ABI 和托管 session，支持阈值、最短语音、最短静音、speech padding、最大 utterance、reset、cancel 和释放。
 2. 服务端 VAD 作为 turn boundary 的权威来源，维护有界 pre-roll，按固定音频帧产生 speech started/stopped，并将检测前缀绑定到新 utterance，避免插话首词因 response epoch 切换而丢失；客户端声级或轻量检测只用于即时反馈和 pause/duck，收到权威 speech started 后才清空旧播放队列，误判必须恢复，不替代服务端最终边界。
@@ -460,7 +460,7 @@ GLM 基础代码顺序、性能计划、集中验证门槛与发布标准见 [pr
 4. partial 只作为临时会话项发送；VAD endpoint 或手动 commit 后生成唯一 final transcript，再复用现有 conversation store 持久化为一个用户回合。
 5. 使用确定性音频夹具覆盖静音、背景噪声、短促声、连续长语音、双语、重叠窗口、超长发言、取消和损坏 frame，并分别记录 VAD、partial 和 final 的结果与延迟。
 
-#### P3. ⏳ 增量文本与 TTS 音频输出
+#### P3. 🚧 增量文本与 TTS 音频输出
 
 1. 为 Realtime 路径建立异步文本生成适配器，把现有 token callback 转换为不阻塞 native decode 的 `IAsyncEnumerable` 或有界 channel；网络慢写不得占用模型生成线程。
 2. 实现 Unicode、标点、最小/最大字符数和最大等待时间约束的短句聚合器，在不等待完整助手回复的前提下形成可合成片段，并在取消时丢弃尚未提交的片段。
@@ -469,7 +469,7 @@ GLM 基础代码顺序、性能计划、集中验证门槛与发布标准见 [pr
 5. 重新验证当前输出开头固定静音的必要性；不得以固定 250 ms 静音掩盖波形边界问题。分片拼接需要通过淡入淡出、零交叉或等价策略避免爆音，同时记录首个可听样本延迟。
 6. TTS 模型在参考硬件上达不到实时系数、首音频预算或连续播放稳定性时保持不可用或 degraded 诊断，不以提前发送静音 PCM 声称首音频达标。
 
-#### P4. ⏳ 全双工、barge-in 与生命周期
+#### P4. 🚧 全双工、barge-in 与生命周期
 
 1. 助手播报期间保持麦克风采集和 VAD 运行；浏览器启用可用的 echo cancellation、noise suppression 和自动增益策略，并记录设备不支持时的 fallback。
 2. 客户端轻量检测到可能插话时立即 pause/duck；服务端从独立 capture stream 的有界 pre-roll 确认有效 speech started 后，为完整输入前缀建立新 utterance/turn、递增 response epoch、取消 LLM/TTS、重置待合成片段，并通知客户端停止和清空当前播放。客户端误判或服务端未确认时必须恢复旧 response 播放或进入确定的取消状态。
@@ -478,7 +478,7 @@ GLM 基础代码顺序、性能计划、集中验证门槛与发布标准见 [pr
 5. 支持用户主动取消、静音、结束会话、页面卸载、网络断开、模型 unload、runtime repair 和进程停止；所有路径都必须在有界时间内释放音频轨道、channel、CancellationTokenSource 和 native handle。
 6. 建立有界断线恢复语义，只恢复 session 配置和已提交 conversation item，不重放未确认的原始音频、不继续旧 response，也不重复执行可能有副作用的工具。
 
-#### P5. ⏳ Chat 语音体验、诊断与协议适配
+#### P5. 🚧 Chat 语音体验、诊断与协议适配
 
 1. 在现有 Chat-first 工作台内提供进入语音模式、静音、结束、取消当前回复和设备选择；不新增管理后台式首页或语音一级导航，退出语音模式后返回同一 conversation。
 2. UI 明确展示 `connecting`、`listening`、`user_speaking`、`transcribing`、`thinking`、`speaking`、`interrupted`、`reconnecting` 和错误状态，并同时呈现 partial/final transcript、文本回复和必要诊断。

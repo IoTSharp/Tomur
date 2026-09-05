@@ -16,6 +16,7 @@ internal static class RealtimeRouteExtensions
         services.AddSingleton<RealtimeSessionRegistry>();
         services.AddSingleton<RealtimeRequestValidator>();
         services.AddSingleton<RealtimeGateway>();
+        services.AddSingleton<RealtimeRuntimeFactory>();
         return services;
     }
 

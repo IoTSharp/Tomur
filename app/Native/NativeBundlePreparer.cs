@@ -23,6 +23,7 @@ public sealed class NativeBundlePreparer : INativeBundlePreparer
 
     public NativeBundlePrepareResult Prepare(string runtimeDirectory)
     {
+        using var resources = Realtime.RealtimeResourceCoordinator.EnterOperation(interrupt: true);
         ArgumentException.ThrowIfNullOrWhiteSpace(runtimeDirectory);
 
         var manifestPath = NativeBundlePaths.ResolveManifestPath();

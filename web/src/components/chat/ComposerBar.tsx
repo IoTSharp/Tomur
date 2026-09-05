@@ -10,6 +10,7 @@ export function ComposerBar({
   input,
   sending,
   recording,
+  voiceActive = false,
   uploadingAttachment,
   multimodalAction,
   speechEnabled,
@@ -36,6 +37,7 @@ export function ComposerBar({
   input: string;
   sending: boolean;
   recording: boolean;
+  voiceActive?: boolean;
   uploadingAttachment: boolean;
   multimodalAction: "image" | "transcription" | null;
   speechEnabled: boolean;
@@ -60,7 +62,7 @@ export function ComposerBar({
   onRegenerate: () => void;
 }) {
   return (
-    <footer className="composer">
+    <footer className="composer" inert={voiceActive} aria-disabled={voiceActive}>
       <div className="attachment-strip">
         <Attachments
           disabled={sending || recording || uploadingAttachment}

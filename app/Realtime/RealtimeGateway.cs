@@ -10,17 +10,20 @@ internal sealed class RealtimeGateway
     private readonly RealtimeTicketStore tickets;
     private readonly RealtimeSessionRegistry sessions;
     private readonly ILoggerFactory loggerFactory;
+    private readonly RealtimeRuntimeFactory runtimeFactory;
 
     public RealtimeGateway(
         RealtimeRequestValidator requests,
         RealtimeTicketStore tickets,
         RealtimeSessionRegistry sessions,
-        ILoggerFactory loggerFactory)
+        ILoggerFactory loggerFactory,
+        RealtimeRuntimeFactory runtimeFactory)
     {
         this.requests = requests;
         this.tickets = tickets;
         this.sessions = sessions;
         this.loggerFactory = loggerFactory;
+        this.runtimeFactory = runtimeFactory;
     }
 
     public async Task WriteStatusAsync(HttpContext context)
@@ -38,14 +41,7 @@ internal sealed class RealtimeGateway
             RealtimeProtocol.Name,
             RealtimeProtocol.WebSocketPath,
             RealtimeProtocol.TicketPath,
-            new RealtimeCapabilityStatus(
-                "available_unverified",
-                "unavailable",
-                "not_connected",
-                "not_connected",
-                "not_connected",
-                "not_implemented",
-                "pending"),
+            runtimeFactory.GetCapabilities(),
             snapshot,
             RealtimeLimitsResponse.Create());
         context.Response.Headers.CacheControl = "no-store";
@@ -137,7 +133,7 @@ internal sealed class RealtimeGateway
             using var socket = await context.WebSockets.AcceptWebSocketAsync(RealtimeProtocol.Name).ConfigureAwait(false);
             var connection = new RealtimeConnection(
                 tickets,
-                loggerFactory.CreateLogger<RealtimeConnection>());
+                loggerFactory.CreateLogger<RealtimeConnection>(), runtimeFactory);
             await connection.RunAsync(
                 socket,
                 lease!,

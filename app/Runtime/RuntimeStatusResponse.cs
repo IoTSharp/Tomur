@@ -26,6 +26,9 @@ public sealed record RuntimeStatusResponse(
     [property: JsonPropertyName("runtime")] RuntimeDiagnostic Runtime,
     [property: JsonPropertyName("diagnostics")] IReadOnlyList<DiagnosticItem> Diagnostics)
 {
+    [JsonPropertyName("realtime")]
+    public global::Tomur.Realtime.RealtimeRuntimeSnapshot Realtime { get; init; } = global::Tomur.Realtime.RealtimeDiagnostics.Snapshot;
+
     [JsonPropertyName("managed_providers")]
     public ModelProviderStatus ManagedProviders { get; init; } = new(
         "not_checked",

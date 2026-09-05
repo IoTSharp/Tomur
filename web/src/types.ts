@@ -273,6 +273,20 @@ export interface VersionResponse {
 }
 
 export interface RuntimeStatusResponse {
+  realtime?: {
+    state: string;
+    models_resident: boolean;
+    asr_warm: boolean;
+    tts_warm: boolean;
+    full_duplex: string;
+    smoke: string;
+    input_buffered_bytes: number;
+    output_unconsumed_ms: number;
+    turns: number;
+    last_error?: string;
+    asr_final_ms?: number;
+    first_audio_ms?: number;
+  };
   status: string;
   checked_at: string;
   version: string;

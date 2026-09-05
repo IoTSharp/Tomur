@@ -12,13 +12,16 @@ internal sealed class RealtimeConnection
 {
     private readonly RealtimeTicketStore tickets;
     private readonly ILogger<RealtimeConnection> logger;
+    private readonly RealtimeRuntimeFactory? runtimeFactory;
 
     public RealtimeConnection(
         RealtimeTicketStore tickets,
-        ILogger<RealtimeConnection> logger)
+        ILogger<RealtimeConnection> logger,
+        RealtimeRuntimeFactory? runtimeFactory = null)
     {
         this.tickets = tickets;
         this.logger = logger;
+        this.runtimeFactory = runtimeFactory;
     }
 
     public async Task RunAsync(
@@ -257,7 +260,9 @@ internal sealed class RealtimeConnection
                 RealtimeInboundMessage message;
                 try
                 {
-                    if (!await reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
+                    using var processing = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken,
+                        state.Engine?.Stopping ?? CancellationToken.None);
+                    if (!await reader.WaitToReadAsync(processing.Token).ConfigureAwait(false))
                     {
                         break;
                     }
@@ -379,10 +384,25 @@ internal sealed class RealtimeConnection
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
         }
+        catch (OperationCanceledException) when (state.PeerCloseObserved)
+        {
+            await CloseFromPeerAsync(state, writer, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (state.Engine?.Stopping.IsCancellationRequested == true)
+        {
+            await QueueFatalAsync(state, writer, "session_stopped",
+                "The voice session was stopped by its lifetime or local resource owner.",
+                RealtimeCloseCode.PolicyViolation, cancellationToken).ConfigureAwait(false);
+        }
         finally
         {
             state.RejectPendingAuthentication();
-            writer.TryComplete();
+            try
+            {
+                if (state.Engine is not null)
+                    await state.Engine.DisposeAsync().ConfigureAwait(false);
+            }
+            finally { writer.TryComplete(); }
         }
     }
 
@@ -458,8 +478,8 @@ internal sealed class RealtimeConnection
             RealtimeInputAudioCommitEvent commit => await CommitAudioAsync(commit, state, writer, cancellationToken).ConfigureAwait(false),
             RealtimeInputAudioClearEvent clear => await ClearAudioAsync(clear, state, writer, cancellationToken).ConfigureAwait(false),
             RealtimeResponseCancelEvent cancel => await CancelResponseAsync(cancel.ResponseEpoch, state, writer, cancellationToken).ConfigureAwait(false),
-            RealtimeTextDisplayedEvent displayed => await RejectInactiveResponseAsync(displayed.ResponseEpoch, state, writer, cancellationToken).ConfigureAwait(false),
-            RealtimePlaybackConsumedEvent played => await RejectInactiveResponseAsync(played.ResponseEpoch, state, writer, cancellationToken).ConfigureAwait(false),
+            RealtimeTextDisplayedEvent displayed => await AcknowledgeAsync(displayed, state, writer, cancellationToken).ConfigureAwait(false),
+            RealtimePlaybackConsumedEvent played => await AcknowledgeAsync(played, state, writer, cancellationToken).ConfigureAwait(false),
             _ => await RejectUnsupportedStateAsync(clientEvent.Type!, state, writer, cancellationToken).ConfigureAwait(false)
         };
     }
@@ -496,7 +516,13 @@ internal sealed class RealtimeConnection
         }
 
         var header = parsed.Header;
-        if (state.StateMachine.State is not RealtimeSessionState.Listening and
+        if (runtimeFactory is not null && state.Engine is null)
+        {
+            await QueueFatalAsync(state, writer, "session_configuration_required", "Send a valid session.update before sending audio.",
+                RealtimeCloseCode.ProtocolError, cancellationToken).ConfigureAwait(false);
+            return false;
+        }
+        if (state.Engine is null && state.StateMachine.State is not RealtimeSessionState.Listening and
             not RealtimeSessionState.UserSpeaking)
         {
             await QueueFatalAsync(
@@ -548,6 +574,23 @@ internal sealed class RealtimeConnection
                 frameError.ReceivedSequence,
                 header.Identifier.ToString("N")).ConfigureAwait(false);
             return false;
+        }
+
+        if (state.Engine is not null)
+        {
+            state.RecordAudioFrame(header.PayloadLength);
+            try
+            {
+                await state.Engine.PushAsync(payload[RealtimeProtocol.BinaryHeaderSize..], header.Identifier).ConfigureAwait(false);
+                return true;
+            }
+            catch (Exception error) when (error is RealtimeTransportException or Tomur.Inference.InferenceException)
+            {
+                await QueueFatalAsync(state, writer,
+                    error is RealtimeTransportException transport ? transport.Code : ((Tomur.Inference.InferenceException)error).Code,
+                    error.Message, RealtimeCloseCode.PolicyViolation, cancellationToken).ConfigureAwait(false);
+                return false;
+            }
         }
 
         if (!state.AudioBuffer!.TryAppend(payload.Span[RealtimeProtocol.BinaryHeaderSize..]))
@@ -619,7 +662,7 @@ internal sealed class RealtimeConnection
                 state.StateName,
                 RealtimeProtocol.Name,
                 state.Configuration,
-                CreateCapabilities(),
+                runtimeFactory?.GetCapabilities() ?? CreateCapabilities(),
                 RealtimeLimitsResponse.Create()),
             RealtimeJsonSerializerContext.Default.RealtimeSessionCreatedEvent,
             cancellationToken).ConfigureAwait(false);
@@ -644,6 +687,12 @@ internal sealed class RealtimeConnection
             return true;
         }
 
+        if (state.Engine is not null)
+        {
+            await QueueErrorAsync(state, writer, "session_already_configured", "Reconnect to change a resident voice session configuration.", false, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+
         if (state.AudioBuffer!.Length != 0)
         {
             await QueueErrorAsync(
@@ -656,7 +705,32 @@ internal sealed class RealtimeConnection
             return true;
         }
 
-        state.Configuration = update.Session!;
+        if (runtimeFactory is not null)
+        {
+            RealtimeSessionEngine? engine = null;
+            try
+            {
+                engine = new RealtimeSessionEngine(runtimeFactory, update.Session!,
+                    (value, token) => QueuePipelineAsync(state, writer, value, token),
+                    (bytes, epoch, token) => QueueAsync(writer, RealtimeOutboundMessage.Binary(bytes, epoch), token),
+                    cancellationToken);
+                state.Engine = engine;
+                if (state.PeerCloseObserved) engine.RequestStop();
+                await engine.OpenAsync().ConfigureAwait(false);
+                state.Configuration = engine.Configuration;
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                state.Engine = null;
+                if (engine is not null) await engine.DisposeAsync().ConfigureAwait(false);
+                await QueueErrorAsync(state, writer,
+                    exception is Tomur.Inference.InferenceException inference ? inference.Code : "realtime_session_open_failed",
+                    exception is Tomur.Inference.InferenceException ? exception.Message : "The resident voice session could not be opened.",
+                    false, cancellationToken).ConfigureAwait(false);
+                return true;
+            }
+        }
+        else state.Configuration = update.Session!;
         var metadata = state.NextServerEvent();
         await QueueJsonAsync(
             writer,
@@ -703,6 +777,20 @@ internal sealed class RealtimeConnection
         ChannelWriter<RealtimeOutboundMessage> writer,
         CancellationToken cancellationToken)
     {
+        if (state.Engine is not null)
+        {
+            if (!TryParseRequiredId(commit.CaptureStreamId, out var capture) || state.CaptureStreamId != capture)
+            {
+                await QueueErrorAsync(state, writer, "capture_stream_mismatch", "capture_stream_id does not match the active capture stream.", false, cancellationToken).ConfigureAwait(false);
+                return true;
+            }
+            try { await state.Engine.CommitAsync(commit.UtteranceId).ConfigureAwait(false); }
+            catch (RealtimeTransportException error)
+            {
+                await QueueErrorAsync(state, writer, error.Code, error.Message, false, cancellationToken).ConfigureAwait(false);
+            }
+            return true;
+        }
         if (!TryParseRequiredId(commit.CaptureStreamId, out var captureStreamId) ||
             state.CaptureStreamId != captureStreamId)
         {
@@ -799,7 +887,9 @@ internal sealed class RealtimeConnection
         }
 
         var previous = state.CaptureStreamId?.ToString("N");
-        var discarded = state.DiscardAudio();
+        var engineBytes = state.Engine?.BufferedBytes ?? 0;
+        state.Engine?.Clear();
+        var discarded = state.DiscardAudio(engineBytes);
         if (state.StateMachine.State == RealtimeSessionState.UserSpeaking)
         {
             state.StateMachine.TransitionOrThrow(RealtimeSessionState.Listening);
@@ -844,6 +934,12 @@ internal sealed class RealtimeConnection
             return true;
         }
 
+        if (state.Engine is not null)
+        {
+            await state.Engine.InterruptAsync(responseEpoch).ConfigureAwait(false);
+            return true;
+        }
+
         var metadata = state.NextServerEvent();
         await QueueJsonAsync(
             writer,
@@ -860,6 +956,40 @@ internal sealed class RealtimeConnection
             RealtimeJsonSerializerContext.Default.RealtimeResponseCancelledEvent,
             cancellationToken).ConfigureAwait(false);
         return true;
+    }
+
+    private async Task<bool> AcknowledgeAsync(IRealtimeClientEvent acknowledgement,
+        RealtimeConnectionState state, ChannelWriter<RealtimeOutboundMessage> writer, CancellationToken token)
+    {
+        if (state.Engine is null)
+            return await RejectInactiveResponseAsync(acknowledgement is RealtimeTextDisplayedEvent text ? text.ResponseEpoch :
+                ((RealtimePlaybackConsumedEvent)acknowledgement).ResponseEpoch, state, writer, token).ConfigureAwait(false);
+        try
+        {
+            if (acknowledgement is RealtimeTextDisplayedEvent displayed) state.Engine.Acknowledge(displayed);
+            if (acknowledgement is RealtimePlaybackConsumedEvent played) state.Engine.Acknowledge(played);
+        }
+        catch (RealtimeTransportException error)
+        {
+            await QueueErrorAsync(state, writer, error.Code, error.Message, false, token).ConfigureAwait(false);
+        }
+        return true;
+    }
+
+    private static Task QueuePipelineAsync(RealtimeConnectionState state, ChannelWriter<RealtimeOutboundMessage> writer,
+        RealtimePipelineUpdate value, CancellationToken token)
+    {
+        if (value.Type == "input_audio_buffer.committed") state.RecordEngineCommit();
+        return QueueAsync(writer, new RealtimeOutboundMessage(JsonSerializer.SerializeToUtf8Bytes(new RealtimePipelineEvent(value.Type, "pending", 0, 0,
+            state.SessionId!, state.TraceId, value.State, value.ResponseEpoch, value.ResponseId,
+            value.ItemId, value.UtteranceId, value.Text, value.Delta, value.Code, value.Message, value.Fatal,
+            value.AudioSequence, value.CharacterCount, value.ConversationId, value.Status,
+            value.CaptureStreamId,
+            value.BufferedAudioBytes, value.DurationMs),
+            RealtimeJsonSerializerContext.Default.RealtimePipelineEvent), null, null,
+            ResponseEpoch: value.Type is "response.text.delta" or "response.text.done" or "response.audio.done" or "response.created" or "response.done" or "session.state"
+                ? value.ResponseEpoch : null,
+            TextCharacters: value.Type == "response.text.delta" ? value.CharacterCount : null), token);
     }
 
     private async Task<bool> RejectInactiveResponseAsync(
@@ -927,6 +1057,7 @@ internal sealed class RealtimeConnection
         CancellationToken cancellationToken)
     {
         state.Close();
+        if (state.Engine is not null) await state.Engine.DisposeAsync().ConfigureAwait(false);
         await QueueAsync(
             writer,
             RealtimeOutboundMessage.Close(WebSocketCloseStatus.NormalClosure, "peer_closed"),
@@ -953,6 +1084,7 @@ internal sealed class RealtimeConnection
         CancellationToken cancellationToken)
     {
         state.Close();
+        if (state.Engine is not null) await state.Engine.DisposeAsync().ConfigureAwait(false);
         var metadata = state.NextServerEvent();
         await QueueJsonAsync(
             writer,
@@ -992,6 +1124,7 @@ internal sealed class RealtimeConnection
         long? responseEpoch = null)
     {
         state.Fail();
+        if (state.Engine is not null) RealtimeDiagnostics.Update(status => status with { LastError = code });
         await QueueErrorAsync(
             state,
             writer,
@@ -1003,6 +1136,7 @@ internal sealed class RealtimeConnection
             receivedSequence,
             captureStreamId,
             responseEpoch).ConfigureAwait(false);
+        if (state.Engine is not null) await state.Engine.DisposeAsync().ConfigureAwait(false);
         await QueueAsync(
             writer,
             RealtimeOutboundMessage.Close(RealtimeCloseStatus.From(closeCode), code),
@@ -1071,6 +1205,7 @@ internal sealed class RealtimeConnection
         CancellationToken cancellationToken)
     {
         var waitingForPeerClose = false;
+        long controlSequence = 0;
         try
         {
             for (var sent = 0; sent < (RealtimeProtocol.MaxEventsPerSession * 2) + 4; sent++)
@@ -1084,6 +1219,9 @@ internal sealed class RealtimeConnection
                 {
                     continue;
                 }
+
+                if (message.ResponseEpoch is { } epoch && state.Engine?.IsCurrent(epoch) != true)
+                    continue;
 
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 timeout.CancelAfter(RealtimeProtocol.SendTimeout);
@@ -1108,10 +1246,14 @@ internal sealed class RealtimeConnection
 
                 var disposition = state.TryStartApplicationSend(
                     socket,
-                    message.Payload,
+                    message.IsBinary ? message.Payload : StampOutboundEvent(message.Payload, controlSequence + 1, state.TraceId),
+                    message.IsBinary ? WebSocketMessageType.Binary : WebSocketMessageType.Text,
+                    message.ResponseEpoch,
+                    message.TextCharacters,
+                    message.AudioSequence,
                     timeout.Token,
                     out var sendOperation);
-                if (disposition == RealtimeApplicationSendDisposition.PeerCloseObserved)
+                if (disposition is RealtimeApplicationSendDisposition.PeerCloseObserved or RealtimeApplicationSendDisposition.ResponseCancelled)
                 {
                     // Preserve the queued close response, but never send application data
                     // after the peer's close frame has been observed.
@@ -1123,6 +1265,7 @@ internal sealed class RealtimeConnection
                     return;
                 }
 
+                if (!message.IsBinary) controlSequence++;
                 await sendOperation.ConfigureAwait(false);
             }
         }
@@ -1133,6 +1276,28 @@ internal sealed class RealtimeConnection
                 connectionCancellation.Cancel();
             }
         }
+    }
+
+    private static byte[] StampOutboundEvent(ReadOnlyMemory<byte> payload, long sequence, string traceId)
+    {
+        using var document = JsonDocument.Parse(payload);
+        using var stream = new MemoryStream();
+        using (var json = new Utf8JsonWriter(stream))
+        {
+            json.WriteStartObject();
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                switch (property.Name)
+                {
+                    case "sequence": json.WriteNumber("sequence", sequence); break;
+                    case "timestamp_us": json.WriteNumber("timestamp_us", RealtimeProtocol.GetMonotonicTimestampMicroseconds()); break;
+                    case "event_id": json.WriteString("event_id", $"srv_{traceId[..8]}_{sequence}"); break;
+                    default: property.WriteTo(json); break;
+                }
+            }
+            json.WriteEndObject();
+        }
+        return stream.ToArray();
     }
 
     private static async Task ReceiveCloseHandshakeAsync(
@@ -1276,7 +1441,11 @@ internal sealed class RealtimeConnection
             return false;
         }
 
-        if (!string.Equals(configuration.TurnDetection, "manual", StringComparison.Ordinal) ||
+        if (configuration.Model is { Length: > 128 } || configuration.AsrModel is { Length: > 128 } ||
+            configuration.TtsModel is { Length: > 128 } || configuration.Language is { Length: > 16 } ||
+            configuration.Mode is not "half_duplex" and not "duplex_experimental" ||
+            (configuration.Mode == "duplex_experimental" && !configuration.EchoCancellation) ||
+            configuration.TurnDetection is not "manual" and not "server_vad" ||
             !string.Equals(configuration.InputAudioFormat, "pcm16le", StringComparison.Ordinal) ||
             configuration.InputSampleRate != RealtimeProtocol.InputSampleRate ||
             configuration.InputChannels != RealtimeProtocol.InputChannels ||
@@ -1285,7 +1454,7 @@ internal sealed class RealtimeConnection
             configuration.OutputSampleRate != RealtimeProtocol.OutputSampleRate ||
             configuration.OutputChannels != RealtimeProtocol.OutputChannels)
         {
-            error = "Protocol v1 requires manual turn detection, 16 kHz mono PCM16LE 20 ms input frames and 24 kHz mono PCM16LE output.";
+            error = "Protocol v1 requires manual/server_vad turn detection, half_duplex or explicitly experimental duplex with AEC, 16 kHz mono PCM16LE 20 ms input and 24 kHz mono PCM16LE output.";
             return false;
         }
 
@@ -1391,11 +1560,16 @@ internal sealed class RealtimeConnection
 
         public bool IsTerminating => Volatile.Read(ref terminating) != 0;
 
+        public bool PeerCloseObserved { get { lock (transportGate) return peerCloseObserved; } }
+
         public int CloseHandshakeReceiveLimit => Volatile.Read(ref closeHandshakeReceiveLimit);
 
         public RealtimeStateMachine StateMachine { get; } = new();
 
-        public string StateName => RealtimeProtocol.GetStateName(StateMachine.State);
+        public RealtimeSessionEngine? Engine { get; set; }
+
+        public string StateName => IsTerminating ? RealtimeProtocol.GetStateName(StateMachine.State) :
+            Engine?.State ?? RealtimeProtocol.GetStateName(StateMachine.State);
 
         public RealtimeSessionConfiguration Configuration { get; set; } = RealtimeSessionConfiguration.CreateDefault();
 
@@ -1547,6 +1721,7 @@ internal sealed class RealtimeConnection
             {
                 peerCloseObserved = true;
             }
+            Engine?.RequestStop();
         }
 
         public bool TryStartApplicationReceive(
@@ -1593,6 +1768,10 @@ internal sealed class RealtimeConnection
         public RealtimeApplicationSendDisposition TryStartApplicationSend(
             WebSocket socket,
             ReadOnlyMemory<byte> payload,
+            WebSocketMessageType messageType,
+            long? responseEpoch,
+            int? textCharacters,
+            long? audioSequence,
             CancellationToken cancellationToken,
             out ValueTask sendOperation)
         {
@@ -1610,11 +1789,17 @@ internal sealed class RealtimeConnection
                     return RealtimeApplicationSendDisposition.TransportClosed;
                 }
 
-                sendOperation = socket.SendAsync(
+                ValueTask Send() => socket.SendAsync(
                     payload,
-                    WebSocketMessageType.Text,
+                    messageType,
                     endOfMessage: true,
                     cancellationToken);
+                if (responseEpoch is { } epoch && Engine is not null)
+                {
+                    if (!Engine.TryStartResponseSend(epoch, textCharacters, audioSequence, Send, out sendOperation))
+                        return RealtimeApplicationSendDisposition.ResponseCancelled;
+                }
+                else sendOperation = Send();
                 return RealtimeApplicationSendDisposition.Started;
             }
         }
@@ -1637,9 +1822,11 @@ internal sealed class RealtimeConnection
             ResetAudio();
         }
 
-        public (int Frames, int Bytes) DiscardAudio()
+        public void RecordEngineCommit() => CommittedUtterances++;
+
+        public (int Frames, int Bytes) DiscardAudio(int additionalBytes = 0)
         {
-            var bytes = AudioBuffer?.Length ?? 0;
+            var bytes = (AudioBuffer?.Length ?? 0) + additionalBytes;
             var frames = bytes / RealtimeProtocol.InputFramePayloadBytes;
             DiscardedAudioFrames += frames;
             DiscardedAudioBytes += bytes;
@@ -1697,11 +1884,19 @@ internal sealed class RealtimeConnection
 
         private void BeginTermination()
         {
+            Engine?.RequestStop();
             lock (transportGate)
             {
                 if (terminating != 0)
                 {
                     return;
+                }
+
+                if (Engine is { } engine)
+                {
+                    var bytes = engine.BufferedBytes;
+                    DiscardedAudioBytes += bytes;
+                    DiscardedAudioFrames += bytes / RealtimeProtocol.InputFramePayloadBytes;
                 }
 
                 if (applicationReceiveInProgress)
@@ -1772,6 +1967,7 @@ internal sealed class RealtimeConnection
     private enum RealtimeApplicationSendDisposition
     {
         Started,
+        ResponseCancelled,
         PeerCloseObserved,
         TransportClosed
     }
@@ -1861,12 +2057,19 @@ internal sealed class RealtimeInboundMessage : IDisposable
 internal sealed record RealtimeOutboundMessage(
     ReadOnlyMemory<byte> Payload,
     WebSocketCloseStatus? CloseStatus,
-    string? CloseDescription)
+    string? CloseDescription,
+    bool IsBinary = false,
+    long? ResponseEpoch = null,
+    int? TextCharacters = null,
+    long? AudioSequence = null)
 {
     public bool IsClose => CloseStatus is not null;
 
     public static RealtimeOutboundMessage Text(byte[] payload)
         => new(payload, null, null);
+
+    public static RealtimeOutboundMessage Binary(byte[] payload, long epoch)
+        => new(payload, null, null, true, epoch, AudioSequence: checked((long)System.Buffers.Binary.BinaryPrimitives.ReadUInt64LittleEndian(payload.AsSpan(24, 8))));
 
     public static RealtimeOutboundMessage Close(WebSocketCloseStatus status, string description)
         => new(ReadOnlyMemory<byte>.Empty, status, description);
