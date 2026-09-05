@@ -24,6 +24,7 @@ using Tomur.Multimodal;
 using Tomur.Native;
 using Tomur.PlateRecognition;
 using Tomur.Providers;
+using Tomur.Realtime;
 using Tomur.Runtime;
 using Tomur.Serialization;
 using Tomur.Services;
@@ -151,6 +152,11 @@ internal static class ServeCommand
                 HttpLoggingFields.Duration;
         });
 
+        // Make HttpLogging the only information-level ASP.NET request logger across
+        // all providers so another middleware category cannot bypass its path policy.
+        builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
+        builder.Logging.AddFilter("Microsoft.AspNetCore.HttpLogging", LogLevel.Information);
+
         // Shape what the ring buffer captures: keep first-party (Tomur.*) and lifetime/request
         // logs, but hold the rest of the ASP.NET framework at Warning so routing/static-file
         // noise stays out. HttpLogging is the single source of per-request lines.
@@ -198,9 +204,11 @@ internal static class ServeCommand
         builder.Services.AddSingleton<RuntimeDiagnosticsProvider>();
         builder.Services.AddSingleton<LocalModelCatalog>();
         builder.Services.AddSingleton<VersionProvider>();
+        builder.Services.AddRealtimeGateway();
         builder.Services.ConfigureHttpJsonOptions(options =>
         {
             options.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonSerializerContext.Default);
+            options.SerializerOptions.TypeInfoResolverChain.Insert(0, RealtimeJsonSerializerContext.Default);
         });
         ConfigureAgentTelemetry(builder);
 
@@ -208,6 +216,7 @@ internal static class ServeCommand
 
         var app = builder.Build();
         app.UseHttpLogging();
+        app.UseRealtimeGateway();
         app.MapApiRoutes();
         app.MapWhen(ShouldUseSpa, spaApp =>
         {

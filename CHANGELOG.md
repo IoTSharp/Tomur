@@ -4,6 +4,12 @@
 
 ## 未发布
 
+### R20 Realtime 会话网关基础
+
+已接入 Tomur 原生 `tomur.realtime.v1` WebSocket 协议基础：新增 `/api/realtime/v1`、`POST /api/realtime/tickets` 与 `GET /api/realtime/status`，建立 loopback Host/Origin/subprotocol 校验、Bearer 与短期一次性 ticket 认证、重放保护、pending/单活跃 session 配额、严格递增事件序号、44 字节固定 PCM 帧头、有界收发队列、手动 commit 的内存内输入音频缓冲、超时和结构化关闭诊断。原始 PCM 在 commit、clear、错误或断开时清零回收，不进入 conversation store、文件或日志。
+
+当前 `input_audio_buffer.commit` 在记录已提交的内存边界后返回 `realtime_pipeline_unavailable`，不伪造 transcript、文本或音频。VAD session、常驻 Whisper、增量文本/TTS、AudioWorklet、全双工与 barge-in 尚未接入；新增协议与 smoke 文档的证据状态保持 pending。本轮未执行构建、测试、服务启动或真实设备 smoke，不构成 R20 P0/P1 完成证据。
+
 ### 车牌识别 ARM64 发布
 
 新增仓库级多阶段 Dockerfile，由 BuildKit/Compose 的目标 CPU 架构选择 `linux-x64` 或 `linux-arm64` RID，并从固定子模块构建 llama.cpp、HyperLPR3、MNN 2.2.0 与 OpenCV 4.12.0。MNN 2.2.0 的 GCC 13 头文件和 GNU AArch64 汇编兼容修复以版本化补丁在构建副本中校验后应用，不修改子模块；Linux ARM64 车牌原生阶段已通过 ELF 架构、公开 C ABI、MNN 静态链接和非系统动态依赖闭包检查。真实图片识别和目标机 smoke 仍待执行。
