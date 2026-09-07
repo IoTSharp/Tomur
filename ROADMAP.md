@@ -125,6 +125,7 @@ Tomur 的自包含目标是降低本地部署前置条件，避免要求用户�
 | 06 | R18 | ⏳ 计划中 | 回归 smoke、发布证据与长期维护 |
 | 07 | R19 | ⏳ 计划中 | TomurLPR 纯 C# 车牌识别提供器 |
 | 08 | R20 | 🚧 进行中 | Realtime 双向语音与会话网关 |
+| 09 | R21 | ⏳ 计划中 | ONNX 视觉模型提供器与统一视觉能力矩阵 |
 
 已完成历史、验收边界和 smoke 记录入口见 [CHANGELOG.md](./CHANGELOG.md)。后续阶段不得把尚未接通或未经验证的 runtime 能力写成已实现。
 
@@ -514,3 +515,46 @@ GLM 基础代码顺序、性能计划、集中验证门槛与发布标准见 [pr
 10. 原始麦克风音频默认不持久化、不写日志；保留音频必须由用户可见设置明确启用。Realtime 工具调用继续遵守 allowlist、参数校验、幂等键、最大轮次和副作用确认边界；取消栅栏后不启动新副作用，已经提交的副作用始终记录最终状态。
 11. 现有文件级 ASR、整段 TTS、voice turn、文本 Chat 和会话历史行为保持兼容；Realtime 不可用时用户仍可回退到按钮式录音或文本对话。
 12. fake engine 测试、构建通过、native library 可见、模型 ready、真实推理通过、延迟达标、长会话通过和跨平台通过分别记录；只有完整证据闭环后才可将 R20 标记为完成。
+
+### 09. ⏳ R21: ONNX 视觉模型提供器与统一视觉能力矩阵
+
+目标：参考 [javpower/rust-onnx-infer](https://gitee.com/javpower/rust-onnx-infer) 公开的 40+ 视觉引擎覆盖，建立 Tomur 单进程内统一的 ONNX 视觉模型资产、推理契约、诊断和 API 规划。R21 是能力排期，不表示任何新增视觉模型已经接入或通过真实模型验证；完整清单见 [R21 ONNX 视觉模型参考清单](./docs/r21-onnx-vision-provider.md)。
+
+当前边界：
+
+1. 参考范围完整覆盖图像分类、YOLO/RT-DETR/DETR/RF-DETR 检测、实例/交互式/开放词表分割、SAM/SAM2、DART、BiRefNet、Real-ESRGAN 与图像增强、LightGlue/DeDoDe/LoMa-R/RoMaV2、姿态、人脸、PaddleOCR、深度、风格迁移、ReID、表格、OBB、语义分割、人体解析、人像抠图、去模糊、图像质量、二维码、动作/手势、车牌、手部和 WholeBody。
+2. 上述能力纳入统一目标矩阵，但按模型格式、算子覆盖、资源预算、敏感数据边界和第三方许可分批接入；不得把上游 Rust crate、Rust 进程或另一套 HTTP 服务作为 Tomur 依赖。
+3. 纯 C# provider 通过 `providers/` 稳定契约静态纳入主程序；ONNX 图执行的纯 C# 算子子集与显式 native 加速路径分开声明，native ONNX Runtime/Execution Provider 必须纳入 bundle、许可清单和诊断面。
+4. 模型权重、tokenizer、字典、标签和测试图片继续由 `<data>/models` 管理；许可或归属不清晰的资产不得进入默认 Catalog、程序或发布包，只允许用户自行提供并在 manifest 中标注来源。
+5. 视觉结果默认不写入普通日志或 SQLite；人脸、行人、车牌等敏感结果只在请求生命周期内保留，用户显式保存时才进入本地生成物路径。
+
+#### P0. ⏳ 来源、许可与模型 Catalog
+
+1. 固定参考提交、引擎/模型能力矩阵和上游 MIT OR Apache-2.0 归属，记录每个模型权重、tokenizer、字典、标签和测试资产的独立许可。
+2. 扩展模型 manifest，声明视觉任务、架构、输入布局/尺寸、输出 schema、后处理版本、模型文件 checksum、provider、native/managed 执行路径与硬件建议。
+3. 为未下载、许可待审、资产缺失、模型不匹配和不支持算子设计 Catalog/CLI/API/UI 的明确状态；不得将仅登记的模型暴露为可用。
+
+#### P1. ⏳ 统一图像与推理契约
+
+1. 建立有界的图像容器、色彩空间、resize、padding、批量、取消和资源释放契约，覆盖同步与异步请求，避免无界张量或图像复制。
+2. 建立分类、检测、分割、关键点、embedding、匹配、深度、matting、OCR 和增强结果的稳定序列化 schema；模型元数据标签缺失时必须要求显式标签或返回诊断。
+3. 按算子白名单实现可审计的纯 C# ONNX 子集；未知算子、动态 shape、layout、精度或模型版本必须拒绝加载并给出原因。native ONNX Runtime/EP 仅作为显式 backend，不得隐式回退。
+
+#### P2. ⏳ 高优先级视觉闭环
+
+1. 先完成分类、目标检测、实例分割、OCR、姿态、基础人脸检测、二维码和图像增强的最小端到端闭环，提供本地 API、Catalog 可见性和 Chat 上下文诊断入口。
+2. 接入 SAHI 切片推理与有界合并策略，覆盖大图检测/分割的 NMS、NMM、GREEDYNMM、IoU/IOS，并记录切片数量和峰值内存。
+3. 保留现有 PaddleOCR、HyperLPR3/MNN、stable-diffusion.cpp 等 native 路径和 R19 TomurLPR 计划，新增 ONNX provider 作为并行选择，不改变默认行为。
+
+#### P3. ⏳ 高级视觉流水线
+
+1. 分批接入 SAM/SAM2、Grounding DINO/Grounded-SAM/DART、YOLOE、BiRefNet、Real-ESRGAN、特征匹配、深度、ReID、表格识别、OBB、人体解析、WholeBody 和动作/手势。
+2. 对涉及 tokenizer、视觉提示、时序窗口或多模型串联的能力建立显式 session 生命周期、输入校验、取消和中间结果诊断；不得以静态占位结果代替模型输出。
+3. 对人脸识别、活体、行人 ReID、车牌和图像质量等敏感或易被误解的能力，明确用途、置信度、误差和默认不持久化边界。
+
+#### P4. ⏳ 质量、性能与发布证据
+
+1. 为每个能力族建立最小真实模型 smoke，记录 CPU/GPU/EP、冷/热延迟、吞吐、峰值内存、取消、并发、模型 unload 和 native/managed 资源回收。
+2. 建立固定图像/视频/文本提示夹具，分别验证坐标还原、掩码合并、CTC 解码、旋转框角度、关键点顺序、embedding 维度、HTML 输出和跨分辨率行为。
+3. 执行非 AOT 自包含、Native AOT、Windows/Linux/macOS 目标 RID 和 bundle 完整性验证；纯 C# 算子、native EP、模型资产和第三方许可分别记录，不以一次构建成功替代真实推理证据。
+4. R21 的完整能力清单、来源和当前证据入口维护在 `docs/r21-onnx-vision-provider.md`；本阶段初始状态为 `⏳ 计划中`，未执行构建、测试、模型下载或真实视觉 smoke。

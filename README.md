@@ -97,6 +97,7 @@ dotnet run --project app -- serve --open
 11. 🖥️ 系统服务运行模式。
 12. 🧑‍💻 React + Ant Design X Web 工作台。
 13. 🎙️ 本地 Realtime 语音会话。`tomur.realtime.v1` 已接入一次性 ticket、常驻 Silero/Whisper/TTS、滚动转写、流式文本与短句音频、取消和确认后历史回写；Chat 提供 AudioWorklet 采集播放、设备选择和有界重连。默认半双工，双向模式为要求 AEC 的实验选项；新增 native ABI、构建、真实设备、延迟与发布验收仍待验证，详见 [R20 协议](./docs/r20-realtime-protocol-v1.md)。
+14. 🖼️ ONNX 视觉模型提供器（规划中）。参考 `rust-onnx-infer` 的分类、检测、分割、OCR、姿态、人脸、深度、增强、匹配等完整能力矩阵，按 R21 分阶段接入；当前尚未接入或验证，详见 [R21 参考清单](./docs/r21-onnx-vision-provider.md)。
 
 Tomur 不会在未接通本地 runtime 时伪造推理结果。模型缺失、native runtime 或托管 provider 不可用、bundle 资产损坏、上下文超限、能力不匹配或内存不足时，API、CLI 和 UI 都应返回可诊断的错误。
 
@@ -332,6 +333,8 @@ tomur native build --rid win-x64 --backend intel
 ## 🙏 致谢
 
 Tomur 的纯 C# GLM / MoE provider 在设计灵感与工程思路上受到 [JustVugg/colibri](https://github.com/JustVugg/colibri) 的启发，特别是其使用纯 C 探索 MoE 模型运行、从磁盘流式读取 routed experts，以及管理常驻权重与多级缓存的实践。感谢 JustVugg 公开并分享这些工作。Tomur 以 C# 独立实现相关能力，Colibri 不作为 Tomur 的运行时依赖。
+
+R21 的视觉能力矩阵、统一同步/异步推理接口和 ONNX 模型组织思路受到 [javpower/rust-onnx-infer](https://gitee.com/javpower/rust-onnx-infer) 的公开工作启发。感谢 javpower 分享这套 Rust/ONNX Runtime 视觉推理实现。Tomur 将在 C# 单进程边界内独立实现和验证相关能力，不把该项目作为运行时依赖；具体代码与模型资产仍须逐项遵守上游及第三方许可。
 
 ## 📄 开源许可
 

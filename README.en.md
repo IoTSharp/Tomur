@@ -97,6 +97,7 @@ The default local service URL is `http://127.0.0.1:5137`.
 11. 🖥️ System service mode.
 12. 🧑‍💻 React + Ant Design X web workspace.
 13. 🎙️ Local Realtime voice sessions. `tomur.realtime.v1` connects one-time tickets, resident Silero/Whisper/TTS sessions, rolling transcription, streaming text and sentence audio, cancellation, and acknowledged conversation history. Chat includes AudioWorklet capture/playback, device selection, and bounded reconnection. Half duplex is the default; experimental duplex requires AEC. The new native ABI, builds, real devices, latency, and release acceptance remain unverified. See the [R20 protocol](./docs/r20-realtime-protocol-v1.md).
+14. 🖼️ ONNX vision model provider (planned). The R21 matrix covers the classification, detection, segmentation, OCR, pose, face, depth, enhancement, matching, and related capabilities described by `rust-onnx-infer`; integration is staged and has not been connected or validated. See the [R21 reference list](./docs/r21-onnx-vision-provider.md).
 
 Tomur does not fabricate inference results when the local runtime is unavailable. Missing models, unavailable native runtime or managed providers, damaged bundle assets, context length limits, capability mismatches, and insufficient memory are reported as diagnosable errors through the API, CLI, and UI.
 
@@ -312,6 +313,8 @@ Use `--backend cpu` or `--backend cuda13` to build a single variant. `--backend 
 ## 🙏 Acknowledgements
 
 Tomur's pure C# GLM / MoE providers were inspired by the design ideas and engineering exploration in [JustVugg/colibri](https://github.com/JustVugg/colibri), especially its pure C approach to MoE model execution, streaming routed experts from disk, and managing resident weights and multi-level caches. We thank JustVugg for making this work public. Tomur implements the related capabilities independently in C#, and Colibri is not a Tomur runtime dependency.
+
+R21's vision capability matrix, unified synchronous/asynchronous inference contract, and ONNX model organization are informed by the public work in [javpower/rust-onnx-infer](https://gitee.com/javpower/rust-onnx-infer). We thank javpower for sharing this Rust/ONNX Runtime vision inference implementation. Tomur will implement and validate the related capabilities independently within its C# single-process boundary; the project is not a Tomur runtime dependency, and any code or model asset reuse remains subject to upstream and third-party licenses.
 
 ## 📄 License
 
