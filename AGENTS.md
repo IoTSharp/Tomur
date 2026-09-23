@@ -57,6 +57,7 @@
 - OpenAI / Ollama 兼容聊天端点必须支持标准工具声明、模型返回 tool calls，以及客户端执行工具后通过后续消息回灌结果；兼容端点不得在服务端擅自执行客户端声明的任意函数。
 - `POST /api/agents/chat` 可以让模型在有界服务端循环中自主选择 Tomur 本地工具；循环必须限制最大轮次并校验工具参数。
 - 只读 Tomur 工具可以自动执行；任何有副作用的工具都必须位于请求显式 allowlist 内，并在执行前取得明确确认，不得因模型选择而绕过安全边界。
+- R22 决策能力通过同进程 C# provider 接入独立 Sezika 类库，使用独立 decision 契约；类型化预测不得冒充聊天生成，模型/工具/action 建议不得视为执行授权。
 - R13 协议能力聚合包含 Claude Code 所需的 Anthropic Messages 兼容入口：`GET /v1/models?limit=1000`、`POST /v1/messages` 与 `POST /v1/messages/count_tokens`。
 - Claude Code / Anthropic Messages 兼容入口必须映射到 Tomur 本地模型与本地 runtime；未下载模型、runtime 不可用或上下文超限时返回对应协议风格的清晰诊断，不得伪造推理结果。
 - R20 Tomur Realtime v1 原生入口固定为 `GET /api/realtime/status`、`POST /api/realtime/tickets` 与 WebSocket `/api/realtime/v1`，subprotocol 保持为 `tomur.realtime.v1`。
@@ -88,6 +89,7 @@
 - 纯托管性能路径可以使用 `unsafe`、`Span<T>`、`MemoryMarshal`、`RandomAccess`、内存映射和 `System.Runtime.Intrinsics`，同时必须保留边界检查、模型元数据校验、资源上限和取消响应。
 - 托管 provider 通过 `Tomur.csproj` 的项目引用静态纳入主程序，并通过稳定契约项目与宿主隔离；Native AOT 与非 AOT 发布使用各自构建时包含的 provider 集合，不从外部目录动态加载任意托管程序集。
 - AOT / trimming 警告必须逐项处理，不得用 blanket suppression 掩盖。
+- Sezika 决策 provider 的模型、CPU/GPU 算子与调度必须使用 C#，运行时仅允许系统/显卡驱动调用，不以 native 数值库替代。ILGPU 规划作为构建期 kernel 编译器；AOT runtime 不依赖其运行时 IL 读取或 Reflection.Emit。GPU/AOT 路径需独立实卡验证，该约束不替代 Tomur 现有 native runtime 路线。
 
 ## Native 能力范围
 

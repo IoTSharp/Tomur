@@ -343,3 +343,5 @@ Tomur 由 IoTSharp contributors 以 [Apache License 2.0](./LICENSE) 发布。该
 ## 🗺️ 路线图
 
 长期阶段计划、完成口径和后续工作维护在 [ROADMAP.md](./ROADMAP.md)；已完成历史维护在 [CHANGELOG.md](./CHANGELOG.md)。README 只保留项目首页所需的定位、使用路径和当前边界。
+
+R22 规划通过同进程 C# provider 接入 [Sezika](https://github.com/IoTSharp/Sezika) 多语言非自回归决策引擎，为本地状态提供类型化选择、评分和真假概率。Sezika 已有纯 C# CPU typed engine，以及 CUDA Driver 固定 PTX/GEMM 决策头和 win-x64 Native AOT smoke；真实发布模型、完整 GPU encoder 与 Tomur provider/API 仍待接入和验证。见 [R22 设计](./docs/r22-decision-engine.md)。

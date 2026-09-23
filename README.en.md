@@ -323,3 +323,5 @@ Tomur is released by IoTSharp contributors under the [Apache License 2.0](./LICE
 ## 🗺️ Roadmap
 
 Long-term stage plans, completion scope, and follow-up work are maintained in [ROADMAP.md](./ROADMAP.md); completed history is maintained in [CHANGELOG.md](./CHANGELOG.md). This README keeps the project positioning, usage path, and current boundaries concise.
+
+R22 plans to integrate [Sezika](https://github.com/IoTSharp/Sezika), a multilingual non-autoregressive decision engine, through an in-process C# provider for typed choices, scores and truth probabilities. Sezika now has an executable pure C# CPU typed engine and a CUDA Driver fixed PTX/GEMM decision-head plus win-x64 Native AOT smoke. A real released model, the complete GPU encoder, and the Tomur provider/API remain to be integrated and verified. See the [R22 design](./docs/r22-decision-engine.md).

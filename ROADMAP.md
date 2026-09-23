@@ -126,6 +126,7 @@ Tomur 的自包含目标是降低本地部署前置条件，避免要求用户�
 | 07 | R19 | ⏳ 计划中 | TomurLPR 纯 C# 车牌识别提供器 |
 | 08 | R20 | 🚧 进行中 | Realtime 双向语音与会话网关 |
 | 09 | R21 | ⏳ 计划中 | ONNX 视觉模型提供器与统一视觉能力矩阵 |
+| 10 | R22 | ⏳ 计划中 | Sezika 多语言非自回归决策引擎对接 |
 
 已完成历史、验收边界和 smoke 记录入口见 [CHANGELOG.md](./CHANGELOG.md)。后续阶段不得把尚未接通或未经验证的 runtime 能力写成已实现。
 
@@ -558,3 +559,35 @@ GLM 基础代码顺序、性能计划、集中验证门槛与发布标准见 [pr
 2. 建立固定图像/视频/文本提示夹具，分别验证坐标还原、掩码合并、CTC 解码、旋转框角度、关键点顺序、embedding 维度、HTML 输出和跨分辨率行为。
 3. 执行非 AOT 自包含、Native AOT、Windows/Linux/macOS 目标 RID 和 bundle 完整性验证；纯 C# 算子、native EP、模型资产和第三方许可分别记录，不以一次构建成功替代真实推理证据。
 4. R21 的完整能力清单、来源和当前证据入口维护在 `docs/r21-onnx-vision-provider.md`；本阶段初始状态为 `⏳ 计划中`，未执行构建、测试、模型下载或真实视觉 smoke。
+
+### 10. ⏳ R22: Sezika 多语言非自回归决策引擎对接
+
+目标：通过同进程 C# 类库接入独立开源项目 [Sezika](https://github.com/IoTSharp/Sezika)，为本地 state 与类型化问题提供 Choice、Score、Boolean 决策。Sezika 已完成可执行的纯 C# CPU typed engine，以及 CUDA Driver 固定 PTX/GEMM 决策头和 win-x64 Native AOT smoke；Tomur 仍未引用 provider、注册真实发布模型或实现决策 API。详细落点见 [R22 决策引擎设计](./docs/r22-decision-engine.md)。
+
+边界：Sezika 的模型、CPU/GPU 算子和调度由 C# 实现，只允许系统/显卡驱动作为运行时 native 调用例外。固定 PTX/GEMM、CUDA Driver 资源生命周期与 win-x64 Native AOT smoke 已有独立证据；完整 GPU encoder、真实发布模型和 Tomur 宿主链路仍需逐项验证。原版 ILGPU 的运行时动态编译/launcher 路径不视为 AOT 兼容，不影响既有 Tomur native providers。
+
+#### P0. ⏳ 依赖、协议与 GPU/AOT 关口
+
+1. 固定模型/编译器版本、许可、tensor/tokenizer/schema/calibration manifest 和真实模型推理证据仍待完成；代码、权重、tokenizer、训练数据与 GPU kernel 产物分别管理。Sezika tiny CPU typed engine 和固定 CUDA PTX/GEMM smoke 已有独立证据。
+2. 已完成 C# 固定 kernel → CUDA Driver → win-x64 Native AOT 的最小实卡关口；继续扩展到完整 GPU encoder 时仍不能依赖 Reflection.Emit、运行时 IL 读取或 native 数值库规避问题。
+3. 冻结状态、问题与答案结构、输入/候选/token/并发/内存/显存上限、拒答、错误与取消语义。probability、集中度、校准适用范围和真实准确率分开表达。
+
+#### P1. ⏳ 同进程 provider 与资产
+
+1. 新增独立 `IDecisionProvider`/session 契约和 `providers/Decision` 薄适配；通过固定版本包静态引用 Sezika，provider ID 按能力命名为 `managed-decision`，不把 decision 伪装为 chat generation。
+2. Catalog/installed/pull 增加显式 `decision` capability，模型继续存放 `<data>/models`；许可待审、缺片、校验失败或架构不匹配时不标可用，不将研究候选直接登记为默认可运行模型。
+3. 接入总 CPU/内存/显存预算、排队、session 驻留、卸载、取消和与 Chat/Realtime 共存的资源策略；GPU in-flight 工作完成前不释放资源。
+
+#### P2. ⏳ API、Agent 与诊断
+
+1. 在现有宿主提供拟议 `GET /api/decisions/status` 和 `POST /api/decisions`，静态注册 JSON 类型、请求上限及实际身份/Host 策略；不能假设普通 API 已存在统一鉴权。
+2. `POST /v1/systemone` 作为后续可选兼容入口；逐项核对 Choice/Score/Noul、criteria、legend、usage、错误与限制，不能把同名路径写成 Jev 模型能力或 confidence 语义完全等价。
+3. `decision.predict` 仅为只读预测工具。路由/工具建议继续经过 Tomur 的 allowlist、参数验证和显式确认；预测概率或行动 head 不提供执行授权。
+4. doctor、API、Settings/Chat 诊断分别显示 provider、driver、资产、schema、session、校准、真实预测、多语质量、AOT 和性能状态，保持 Chat-first 信息架构。
+
+#### P3. ⏳ 质量与发布证据
+
+1. 中英真实模型的 Choice/Score/Boolean 经 Tomur 与独立 Sezika 结果对齐；逐语言、任务和领域报告 accuracy/F1、NLL/Brier/ECE、score MAE 与拒答覆盖率。
+2. 验证缺模型、非法 schema、预算超限、队列满、鉴权、取消、卸载竞态、GPU 缺失/显存不足/设备错误，覆盖宿主 `InvariantGlobalization` 下的多语 tokenizer 行为。
+3. 用户明确要求时执行目标 RID CPU/CUDA 的构建、测试、AOT publish 和真实 smoke；分别记录冷/热、搬运/kernel/端到端、p50/p95、峰值内存/显存与资源回收。
+4. 不继承 Laya 的 T4 延迟、语言覆盖或 Jev 的托管服务性能声明；只根据 Sezika/Tomur 自身证据启用自动路由。没有完整证据前保持计划/未验证状态。
