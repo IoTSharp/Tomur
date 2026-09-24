@@ -1,6 +1,6 @@
 # R22 多语言决策引擎对接
 
-状态：计划中，2026-09-23。Sezika 已完成可执行的纯 C# CPU typed decision engine，以及 CUDA Driver 固定 PTX vector-add/GEMM、决策头和 win-x64 Native AOT smoke；Tomur 尚未新增 provider、模型包或可用决策端点。
+状态：分阶段推进，2026-09-23。Sezika 已完成可执行的纯 C# CPU typed decision engine，以及 CUDA Driver 固定 PTX vector-add/GEMM、决策头和 win-x64 Native AOT smoke；Tomur 已建立独立 `managed-decision` 契约，但尚未新增 provider 适配、模型包或可用决策端点。任务依赖与状态见 [Tomur T22 任务板](../ROADMAP.md#r22-任务板t22-编号) 及 [Sezika S0–S7 任务板](https://github.com/IoTSharp/Sezika/blob/main/ROADMAP.md#编号任务板)。
 
 ## 定位
 

@@ -572,6 +572,29 @@ GLM 基础代码顺序、性能计划、集中验证门槛与发布标准见 [pr
 2. 已完成 C# 固定 kernel → CUDA Driver → win-x64 Native AOT 的最小实卡关口；继续扩展到完整 GPU encoder 时仍不能依赖 Reflection.Emit、运行时 IL 读取或 native 数值库规避问题。
 3. 冻结状态、问题与答案结构、输入/候选/token/并发/内存/显存上限、拒答、错误与取消语义。probability、集中度、校准适用范围和真实准确率分开表达。
 
+#### R22 任务板（T22 编号）
+
+任务状态使用 `✅ 已完成`、`🚧 进行中`、`⏳ 计划中`、`⛔ 阻塞`。每个任务只在代码、文档或可复核证据已落地后变更状态；同一泳道内的任务可以并行，跨泳道按依赖顺序推进。
+
+| 编号 | 泳道 | 状态 | 任务 | 依赖 | 验收产物 |
+| --- | --- | --- | --- | --- | --- |
+| T22-01 | A 契约 | ✅ 已完成 | 冻结 decision 请求/响应、错误码、拒答、概率与集中度边界 | — | `docs/r22-decision-engine.md` 与 Sezika 契约 |
+| T22-02 | A 契约 | ✅ 已完成 | 在 `providers/Abstractions` 建立 `IDecisionProvider`、session、资源预算和状态窄契约 | T22-01 | `DecisionContracts.cs`、M1 契约测试；source-generated 宿主注册仍归 T22-07 |
+| T22-03 | A 契约 | ⏳ 计划中 | 固定 Sezika 包版本、许可证、模型 revision、tokenizer、head 与校准 manifest | T22-01 | 可审计依赖锁定记录；无兄弟目录 ProjectReference |
+| T22-04 | B 资产 | ⏳ 计划中 | 扩展 Catalog/installed/pull 的 `decision` capability 与完整性状态 | T22-03 | 缺片、hash、许可或架构不匹配均不可用的资产测试 |
+| T22-05 | B 资产 | ⏳ 计划中 | 实现 `providers/Decision` 静态适配并映射 CPU/CUDA backend | T22-02,T22-03 | provider 装配、模型加载和 backend 诊断 |
+| T22-06 | B 资源 | ⏳ 计划中 | 接入 session 驻留、总 CPU/内存/显存预算、排队、取消、unload fence | T22-02,T22-05 | 并发/取消/卸载竞态证据；GPU in-flight 不提前释放 |
+| T22-07 | C API | ⏳ 计划中 | 增加 `GET /api/decisions/status`，暴露 provider/driver/资产/schema/session 状态 | T22-02,T22-04 | source-generated JSON、Host/身份策略和结构化错误 |
+| T22-08 | C API | ⏳ 计划中 | 增加 `POST /api/decisions`，执行有界 typed prediction | T22-04,T22-05,T22-06 | 中英真实模型 Choice/Score/Boolean 与缺失/超限错误 |
+| T22-09 | C API | ⏳ 计划中 | 评估可选 `POST /v1/systemone` 兼容矩阵 | T22-08 | Choice/Score/Noul/usage/错误逐项对照；未通过前不开放 |
+| T22-10 | C Agent | ⏳ 计划中 | 增加只读 `decision.predict` 工具并复用 allowlist/确认边界 | T22-08 | 工具建议不能授权副作用动作的回归证据 |
+| T22-11 | C 诊断 | ⏳ 计划中 | 接入 doctor、Settings/Chat 上下文诊断与多语/AOT/校准状态 | T22-07 | Chat-first 诊断矩阵，未验证状态清晰可见 |
+| T22-12 | D 质量 | ⏳ 计划中 | 建立中英及扩展语言的 accuracy/F1、NLL/Brier/ECE、MAE、拒答报告 | Sezika S4 任务 | 固定数据许可、split、模型 hash 与报告 |
+| T22-13 | D 发布 | ⏳ 计划中 | 执行 Tomur CPU/CUDA 目标 RID build/test/publish/smoke 与资源回收 | T22-06,T22-08,T22-12 | 可复核命令、版本、p50/p95、峰值内存/显存和日志 |
+| T22-14 | D 回归 | ⏳ 计划中 | 验证 Chat、Agent、Realtime、Native provider 与 API 鉴权回归 | T22-07,T22-08,T22-10 | 回归清单与失败诊断；不把预测当执行授权 |
+
+当前可并行泳道：T22-03、T22-04 与 T22-05 的设计审查；T22-07 与 T22-11 的诊断契约草案。T22-06、T22-08 及之后的真实推理必须等待资产和 provider 关口通过。T22-09、T22-12、T22-13、T22-14 在对应证据完成前保持计划状态。
+
 #### P1. ⏳ 同进程 provider 与资产
 
 1. 新增独立 `IDecisionProvider`/session 契约和 `providers/Decision` 薄适配；通过固定版本包静态引用 Sezika，provider ID 按能力命名为 `managed-decision`，不把 decision 伪装为 chat generation。

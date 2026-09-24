@@ -4,6 +4,10 @@
 
 ## 未发布
 
+### R22 Decision provider 契约基础
+
+新增独立的 `managed-decision` provider/session 窄契约，固定 decision capability、Choice/Score/Boolean 类型、请求与资源预算、状态/错误码及 JsonElement 多态边界。契约静态纳入 `providers/Abstractions`，不引用 Sezika 兄弟目录、不执行推理、不新增 HTTP 端点；M1 契约测试已通过。宿主 source-generated JSON 注册、Sezika 固定包、模型资产、API 和真实模型 smoke 仍按 R22 T22-03 及后续任务推进。
+
 ### R20 Realtime 原生语音管线
 
 在既有认证网关上接通常驻 Silero VAD/Whisper 与 TTS acoustic/WavTokenizer session，提供 speech endpoint、滚动 partial/唯一 final transcript、有界 token 与短句队列、24 kHz PCM callback、播放水位和 response epoch 取消栅栏。客户端确认的助手前缀递增写入同一 conversation，原始麦克风 PCM 与 partial 只驻留内存。进程内资源协调覆盖文本与多模态推理、模型卸载、隔离图像请求和 native repair；释放完成前返回结构化 busy，不排队加载另一套模型。
