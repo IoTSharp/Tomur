@@ -4,6 +4,8 @@
 
 ## 未发布
 
+纠正 `qwen35-9b-q4km` 目录资产大小为 5,680,522,464 bytes；固定量化来源 `unsloth/Qwen3.5-9B-GGUF@3885219b6810b007914f3a7950a8d1b469d598a5` 的 LFS 元数据及完整本地 GGUF 长度/hash 均一致。原声明 8,953,803,264 bytes 与对应 SHA-256 资产不符，下载容量显示现在使用已核实的大小。SHA-256、候选 ID 与内存建议保持既有合同。
+
 修复决策资产 manifest 的两个整数读取辅助方法未初始化 `out` 参数导致的 CS0177 构建错误；缺失字段仍返回 false，合法整数解析保持原语义。禁 Web assets 的 Release 主程序构建通过，现有嵌入资源和 nullable 两项警告保留。
 
 修复 llama.cpp 固定提交 `1bc7a5af0d14b1fb72f266abbd1237b394187115` 的托管 ABI：补齐模型加载模式、MTP、每序列输出上限与设备 mmap 能力字段，移除头文件已删除的旧加载开关，明确参数结构中 C bool 的单字节封送，并补齐 Meta 设备枚举值。Windows x64 的 native `sizeof/offsetof` 与实际托管源文件 `Marshal.SizeOf/OffsetOf` 对照覆盖 6 个结构、80 项并全部匹配；该对照不构成真实模型推理、Native AOT 或其他架构的验收证据。

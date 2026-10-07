@@ -80,7 +80,7 @@ public sealed class ModelCatalog
             Format: "gguf",
             Quantization: "Q4_K_M",
             License: "apache-2.0",
-            SizeBytes: 8_953_803_264,
+            SizeBytes: 5_680_522_464,
             ParameterCount: 9_000_000_000,
             PrimaryFileName: "Qwen3.5-9B-Q4_K_M.gguf",
             Recommended: true,
