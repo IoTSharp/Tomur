@@ -234,7 +234,8 @@ internal enum GgmlBackendDeviceType
     Cpu = 0,
     Gpu = 1,
     IntegratedGpu = 2,
-    Accelerator = 3
+    Accelerator = 3,
+    Meta = 4
 }
 
 [StructLayout(LayoutKind.Sequential)]
@@ -251,6 +252,9 @@ internal struct GgmlBackendDeviceCapabilities
 
     [MarshalAs(UnmanagedType.I1)]
     public bool events;
+
+    [MarshalAs(UnmanagedType.U1)]
+    public bool mmap_support;
 }
 
 [StructLayout(LayoutKind.Sequential)]
@@ -272,6 +276,8 @@ internal readonly record struct GgmlBackendDeviceProperties(
     string? DeviceId,
     GgmlBackendDeviceType Type);
 
+// Matches native/llama.cpp/include/llama.h at 1bc7a5af0d14b1fb72f266abbd1237b394187115.
+// Default C packing: x64 size 80; tensor_split=40, kv_overrides=64, booleans=72..77.
 [StructLayout(LayoutKind.Sequential)]
 internal struct LlamaModelParams
 {
@@ -279,37 +285,35 @@ internal struct LlamaModelParams
     public nint tensor_buft_overrides;
     public int n_gpu_layers;
     public int split_mode;
+    public int load_mode;
+    public int lazy_mode;
     public int main_gpu;
     public nint tensor_split;
     public nint progress_callback;
     public nint progress_callback_user_data;
     public nint kv_overrides;
 
-    [MarshalAs(UnmanagedType.I1)]
+    [MarshalAs(UnmanagedType.U1)]
     public bool vocab_only;
 
-    [MarshalAs(UnmanagedType.I1)]
-    public bool use_mmap;
-
-    [MarshalAs(UnmanagedType.I1)]
-    public bool use_direct_io;
-
-    [MarshalAs(UnmanagedType.I1)]
-    public bool use_mlock;
-
-    [MarshalAs(UnmanagedType.I1)]
+    [MarshalAs(UnmanagedType.U1)]
     public bool check_tensors;
 
-    [MarshalAs(UnmanagedType.I1)]
+    [MarshalAs(UnmanagedType.U1)]
     public bool use_extra_bufts;
 
-    [MarshalAs(UnmanagedType.I1)]
+    [MarshalAs(UnmanagedType.U1)]
     public bool no_host;
 
-    [MarshalAs(UnmanagedType.I1)]
+    [MarshalAs(UnmanagedType.U1)]
     public bool no_alloc;
+
+    [MarshalAs(UnmanagedType.U1)]
+    public bool load_mtp;
 }
 
+// Same pinned header: x64 size 160; n_threads=28, cb_eval=88, booleans=128..133,
+// samplers=136, n_samplers=144 (size_t), ctx_other=152.
 [StructLayout(LayoutKind.Sequential)]
 internal struct LlamaContextParams
 {
@@ -319,6 +323,7 @@ internal struct LlamaContextParams
     public uint n_seq_max;
     public uint n_rs_seq;
     public uint n_outputs_max;
+    public uint n_outputs_max_per_seq;
     public int n_threads;
     public int n_threads_batch;
     public int ctx_type;
@@ -341,22 +346,22 @@ internal struct LlamaContextParams
     public nint abort_callback;
     public nint abort_callback_data;
 
-    [MarshalAs(UnmanagedType.I1)]
+    [MarshalAs(UnmanagedType.U1)]
     public bool embeddings;
 
-    [MarshalAs(UnmanagedType.I1)]
+    [MarshalAs(UnmanagedType.U1)]
     public bool offload_kqv;
 
-    [MarshalAs(UnmanagedType.I1)]
+    [MarshalAs(UnmanagedType.U1)]
     public bool no_perf;
 
-    [MarshalAs(UnmanagedType.I1)]
+    [MarshalAs(UnmanagedType.U1)]
     public bool op_offload;
 
-    [MarshalAs(UnmanagedType.I1)]
+    [MarshalAs(UnmanagedType.U1)]
     public bool swa_full;
 
-    [MarshalAs(UnmanagedType.I1)]
+    [MarshalAs(UnmanagedType.U1)]
     public bool kv_unified;
 
     public nint samplers;
@@ -367,7 +372,7 @@ internal struct LlamaContextParams
 [StructLayout(LayoutKind.Sequential)]
 internal struct LlamaSamplerChainParams
 {
-    [MarshalAs(UnmanagedType.I1)]
+    [MarshalAs(UnmanagedType.U1)]
     public bool no_perf;
 }
 
