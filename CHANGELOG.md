@@ -4,6 +4,8 @@
 
 ## 未发布
 
+修复决策资产 manifest 的两个整数读取辅助方法未初始化 `out` 参数导致的 CS0177 构建错误；缺失字段仍返回 false，合法整数解析保持原语义。禁 Web assets 的 Release 主程序构建通过，现有嵌入资源和 nullable 两项警告保留。
+
 ### R22 Decision provider 契约基础
 
 新增独立的 `managed-decision` provider/session 窄契约，固定 decision capability、Choice/Score/Boolean 类型、请求与资源预算、状态/错误码及 JsonElement 多态边界。契约静态纳入 `providers/Abstractions`，不引用 Sezika 兄弟目录、不执行推理、不新增 HTTP 端点；M1 契约测试已通过。宿主 source-generated JSON 注册、Sezika 固定包、模型资产、API 和真实模型 smoke 仍按 R22 T22-03 及后续任务推进。

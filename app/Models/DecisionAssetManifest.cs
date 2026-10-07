@@ -192,11 +192,17 @@ public static class DecisionAssetManifestReader
         return value is not null;
     }
 
-    private static bool TryInt(JsonElement parent, string name, out int value) =>
-        parent.TryGetProperty(name, out var property) && property.TryGetInt32(out value);
+    private static bool TryInt(JsonElement parent, string name, out int value)
+    {
+        value = 0;
+        return parent.TryGetProperty(name, out var property) && property.TryGetInt32(out value);
+    }
 
-    private static bool TryInt64(JsonElement parent, string name, out long value) =>
-        parent.TryGetProperty(name, out var property) && property.TryGetInt64(out value);
+    private static bool TryInt64(JsonElement parent, string name, out long value)
+    {
+        value = 0;
+        return parent.TryGetProperty(name, out var property) && property.TryGetInt64(out value);
+    }
 
     private static bool IsSha256(string value) => value.Length == 64 && value.All(Uri.IsHexDigit);
 
